@@ -1,0 +1,61 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java/Kotlin compile output
+*.class
+*.iml
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files
+.gradle/
+**/build/
+
+# Local configuration (sdk path, etc)
+local.properties
+
+# Proguard folder
+proguard/
+
+# Log files
+*.log
+
+# Android Studio / IntelliJ
+.idea/
+*.iws
+*.ipr
+
+# Kotlin compiler cache
+.kotlin/
+
+# Captures folder
+captures/
+
+# Native build cache
+.externalNativeBuild
+.cxx/
+
+# Keystore / signing — NEVER commit
+*.jks
+*.keystore
+keystore.properties
+
+# Firebase / service account credentials — NEVER commit (google-services.json
+# IS allowed: it's client-side config, not server credentials)
+**/firebase-service-account.json
+**/*-service-account.json
+**/serviceAccountKey.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider paths used by androidx.core.content.FileProvider.
+
+  `shared/` — gallery-viewer share action copies the image here before
+  handing a content:// URI to the share chooser. See
+  ui/chat/GalleryViewerDialog.shareImage.
+-->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>
