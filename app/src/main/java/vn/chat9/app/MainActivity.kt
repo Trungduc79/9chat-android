@@ -283,11 +283,15 @@ class MainActivity : ComponentActivity() {
 
         val container = (application as App).container
         // True if this Activity instance was launched specifically for a call flow
-        // (incoming call or "Gọi lại" callback from missed-call notification).
-        // When the call ends, we finish() the Activity so the user returns to
-        // whatever they were doing before.
+        // (incoming call, "Gọi lại" from missed-call notification, or direct
+        // call dispatch from the bubble — direct_call=true). When the call
+        // ends, we finishAndRemoveTask the Activity so the user returns to
+        // whatever they were doing before. For the bubble case, finishing this
+        // task lets the system resume the bubble's separate task — bubble UI
+        // returns to view, never auto-removed.
         val launchedFromCall = isCallLaunch
             || intent?.getStringExtra("call_action") == "auto_callback"
+            || intent?.getBooleanExtra("direct_call", false) == true
 
         setContent {
             _9chatTheme {

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Desired height for the chat bubble's expanded view. Some OEMs (notably
+      Samsung One UI) ignore the int-dp variant of setDesiredHeight but honor
+      the resource-id variant. Set both in FCMService for max coverage.
+    -->
+    <dimen name="bubble_desired_height">384dp</dimen>
+</resources>

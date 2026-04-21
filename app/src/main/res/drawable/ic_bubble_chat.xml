@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Material Symbols "chat" with the unread-dot variant — thin weight.
+  Source SVG used Material Symbols viewBox (0 -960 960 960). Vector Drawable
+  doesn't accept negative viewport origins, so the path is wrapped in a group
+  with translateY=960 to shift Y from [-960..0] into [0..960].
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M279.5,-389h260q13.8,0 23.65,-9.79 9.85,-9.79 9.85,-23.5T563.15,-446q-9.85,-10 -23.65,-10h-260q-13.8,0 -23.65,9.79 -9.85,9.79 -9.85,23.5t9.85,23.71q9.85,10 23.65,10Zm0,-130h401q13.8,0 23.65,-9.79 9.85,-9.79 9.85,-23.5T704.15,-576q-9.85,-10 -23.65,-10h-401q-13.8,0 -23.65,9.79 -9.85,9.79 -9.85,23.5t9.85,23.71q9.85,10 23.65,10Zm0,-130H593q13.8,0 23.65,-9.79 9.85,-9.79 9.85,-23.5T616.65,-706q-9.85,-10 -23.65,-10H279.5q-13.8,0 -23.65,9.79 -9.85,9.79 -9.85,23.5t9.85,23.71q9.85,10 23.65,10Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M244,-249l-80.88,80.88Q147,-152 126.5,-160.64 106,-169.28 106,-191.5V-788q0,-26.94 19.68,-46.97Q145.36,-855 173,-855h347.5q13.8,0 23.65,9.79 9.85,9.79 9.85,23.5T544.15,-798q-9.85,10 -23.65,10H173v516l43.5,-44H787v-293.5q0,-13.8 9.79,-23.65 9.79,-9.85 23.5,-9.85t23.71,9.85q10,9.85 10,23.65V-316q0,27.64 -20.03,47.32T787,-249H244Zm416.75,-489.28q-34.25,-34.28 -34.25,-83.25t34.28,-83.22Q695.06,-939 744.03,-939t83.22,34.28q34.25,34.28 34.25,83.25t-34.28,83.22Q792.94,-704 743.97,-704t-83.22,-34.28ZM173,-788v472,-472Z" />
+    </group>
+</vector>

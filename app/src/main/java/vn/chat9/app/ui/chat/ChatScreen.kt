@@ -526,8 +526,34 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
         }
     }
 
-    LaunchedEffect(room.id) {
+    // Track viewing status across the Activity lifecycle, not just on
+    // composition. Backend uses `socket.currentRoom` to decide whether to
+    // send a push for new messages — if we leave currentRoom set while the
+    // user has backgrounded the app, server keeps thinking they're viewing
+    // and silently drops every push (no notification, no bubble).
+    //
+    // Emit room.id on RESUME (re-claim viewing) and 0 on PAUSE (clear).
+    // Sending null is a no-op on the server (`if (room_id === null) return`),
+    // so we use 0 which Node coerces back to null via `room_id || null`.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(room.id, lifecycleOwner) {
         container.socket.switchRoom(room.id)
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME ->
+                    container.socket.switchRoom(room.id)
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE ->
+                    container.socket.switchRoom(0)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            // Also clear when ChatScreen leaves composition (back to room
+            // list, navigate elsewhere) so the next push isn't suppressed.
+            container.socket.switchRoom(0)
+        }
     }
 
     // Mark last message as read after messages are loaded

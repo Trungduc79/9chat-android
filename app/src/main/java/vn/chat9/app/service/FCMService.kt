@@ -374,7 +374,8 @@ class FCMService : FirebaseMessagingService() {
                 this, R.drawable.ic_notification
             )
             val bubbleMeta = NotificationCompat.BubbleMetadata.Builder(bubblePending, bubbleIcon)
-                .setDesiredHeight(600)             // ~80% màn hình (đủ cho mini chat)
+                .setDesiredHeight(384)             // int dp variant
+                .setDesiredHeightResId(R.dimen.bubble_desired_height) // Samsung-friendly
                 .setAutoExpandBubble(false)        // Không tự bung — user phải tap
                 .setSuppressNotification(false)    // Vẫn giữ noti trong tray song song bubble
                 .build()
