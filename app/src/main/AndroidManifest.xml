@@ -21,6 +21,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Whitelist app khỏi Doze + Standby Buckets. Bắt buộc để FCM call/message
+         được delivery khi máy ngủ sâu — nếu app bị battery-optimized, kể cả
+         FCM priority=high cũng bị defer. Trên Play Store, quyền này yêu cầu
+         "core functionality" justification (call app + messaging app đều OK). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
 
     <application
         android:name=".App"

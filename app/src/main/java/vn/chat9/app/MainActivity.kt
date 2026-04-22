@@ -1,6 +1,7 @@
 package vn.chat9.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -112,6 +113,68 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             Log.e("Call", "incoming-call wakeLock failed", e)
         }
+    }
+
+    /**
+     * Whitelist 9chat khỏi Doze + Battery Optimization + (Samsung) Sleeping
+     * Apps. Bắt buộc để FCM call/message tới đúng giờ khi máy ngủ sâu.
+     *
+     * Without this:
+     *   - Android Doze defers high-priority FCM after ~30 min idle.
+     *   - Samsung One UI puts the app into "Sleeping apps" / "Deep sleep"
+     *     after ~3 days unused — FCM is fully blocked then.
+     *   - User reports: "Gọi rất lâu hoặc không kết nối; tin nhắn không có
+     *     thông báo" sau khi để máy 1 tiếng.
+     *
+     * Throttled 7 days so we don't nag users who said "Để sau".
+     */
+    private fun ensureBatteryWhitelist() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return // Doze added in M
+        val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+
+        val prefs = getSharedPreferences("perm_prompt", MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val lastAsk = prefs.getLong("battery_last_ask", 0L)
+        if (now - lastAsk < 7 * 24 * 60 * 60 * 1000L) return // throttle 7 days
+        prefs.edit().putLong("battery_last_ask", now).apply()
+
+        val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
+        val extraSamsungGuide = if (isSamsung) {
+            "\n\nMáy Samsung cần thêm: Cài đặt > Pin > Giới hạn ứng dụng nền > " +
+                "Ứng dụng đang ngủ → xóa 9chat (nếu có), và mục \"Ứng dụng " +
+                "không bao giờ ngủ\" → thêm 9chat."
+        } else ""
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Tránh trễ thông báo khi máy ngủ")
+            .setMessage(
+                "Để 9chat nhận được cuộc gọi và tin nhắn ngay cả khi điện thoại " +
+                    "không dùng đến lâu, vui lòng tắt tối ưu hóa pin cho 9chat." +
+                    extraSamsungGuide
+            )
+            .setPositiveButton("Bật ngay") { _, _ ->
+                try {
+                    @SuppressLint("BatteryLife")
+                    val intent = android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    // Fallback: open the app's battery settings page
+                    try {
+                        startActivity(android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.parse("package:$packageName")
+                        ))
+                    } catch (_: Exception) {
+                        Log.e("Battery", "Can't open battery settings", e)
+                    }
+                }
+            }
+            .setNegativeButton("Để sau", null)
+            .show()
     }
 
     /**
@@ -807,6 +870,10 @@ class MainActivity : ComponentActivity() {
                                 // shows a Vietnamese explanation dialog before deep-linking
                                 // to settings, throttled to once / 24h.
                                 ensureFullScreenIntentPermission()
+                                // Battery optimization whitelist — without this, Doze
+                                // defers FCM after 30 min idle and Samsung "Sleeping
+                                // apps" blocks it entirely. Throttled 7 days.
+                                ensureBatteryWhitelist()
                             }
                             HomeScreen(
                                 onLogout = {
