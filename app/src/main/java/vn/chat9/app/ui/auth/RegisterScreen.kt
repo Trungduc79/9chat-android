@@ -128,6 +128,7 @@ fun RegisterScreen(
                                     res.data.refresh_token,
                                     res.data.user
                                 )
+                                container.permissions.refresh(force = true)
                                 onRegisterSuccess()
                             } else {
                                 error = res.message ?: "Đăng ký thất bại"

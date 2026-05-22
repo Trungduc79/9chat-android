@@ -36,6 +36,21 @@ interface ApiService {
     @GET("rooms/detail.php")
     suspend fun getRoomDetail(@Query("id") roomId: Int): ApiResponse<Room>
 
+    @PUT("rooms/settings.php")
+    suspend fun updateRoomSettings(@Body body: @JvmSuppressWildcards Map<String, Any?>): ApiResponse<Room>
+
+    @GET("rooms/members.php")
+    suspend fun getRoomMembers(@Query("room_id") roomId: Int): ApiResponse<List<RoomMember>>
+
+    @POST("rooms/members.php")
+    suspend fun addRoomMember(@Body body: @JvmSuppressWildcards Map<String, Any>): ApiResponse<Any>
+
+    @POST("rooms/leave.php")
+    suspend fun leaveRoom(@Body body: @JvmSuppressWildcards Map<String, Any>): ApiResponse<Any>
+
+    @POST("rooms/disband.php")
+    suspend fun disbandRoom(@Body body: Map<String, Int>): ApiResponse<Any>
+
     // Messages
     @GET("messages/history.php")
     suspend fun getMessages(
@@ -93,7 +108,7 @@ interface ApiService {
     suspend fun unfriend(@Body body: Map<String, Int>): ApiResponse<Any>
 
     @POST("friends/alias.php")
-    suspend fun setFriendAlias(@Body body: Map<String, Any?>): ApiResponse<Any>
+    suspend fun setFriendAlias(@Body body: @JvmSuppressWildcards Map<String, Any?>): ApiResponse<Any>
 
     // Stories
     @GET("stories/list.php")
@@ -136,7 +151,52 @@ interface ApiService {
     @POST("push/subscribe.php")
     suspend fun subscribePush(@Body body: vn.chat9.app.data.model.PushSubscribeRequest): ApiResponse<Any>
 
+    @POST("push/unsubscribe.php")
+    suspend fun unsubscribePush(@Body body: Map<String, String>): ApiResponse<Any>
+
+    @GET("url/preview.php")
+    suspend fun getUrlPreview(@Query("url") url: String): ApiResponse<vn.chat9.app.data.model.UrlPreview>
+
     // Call
     @POST("calls/reject.php")
     suspend fun rejectCall(@Body body: Map<String, String>): ApiResponse<Any>
+
+    // Permissions (Phase 2)
+    @GET("users/permissions.php")
+    suspend fun getMyPermissions(): ApiResponse<PermissionsData>
+
+    // Admin — roles & users (Phase 2.2)
+    @GET("admin/roles/list.php")
+    suspend fun adminListRoles(): ApiResponse<List<RoleSummary>>
+
+    @GET("admin/users/list.php")
+    suspend fun adminListUsers(
+        @Query("q") query: String? = null,
+        @Query("role_id") roleId: Int? = null,
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 20,
+    ): ApiResponse<List<AdminUser>>
+
+    @POST("admin/users/assign-role.php")
+    suspend fun adminAssignRole(@Body body: Map<String, Int>): ApiResponse<Any>
+
+    @POST("admin/users/revoke-role.php")
+    suspend fun adminRevokeRole(@Body body: Map<String, Int>): ApiResponse<Any>
+
+    // Admin — invites (Phase 2.2)
+    @POST("admin/invites/create.php")
+    suspend fun adminCreateInvite(@Body body: @JvmSuppressWildcards Map<String, Any?>): ApiResponse<InviteCreated>
+
+    @GET("admin/invites/list.php")
+    suspend fun adminListInvites(): ApiResponse<List<Invite>>
+
+    @POST("admin/invites/revoke.php")
+    suspend fun adminRevokeInvite(@Body body: Map<String, Int>): ApiResponse<Any>
+
+    // Public/user invite flow
+    @GET("invites/check.php")
+    suspend fun checkInvite(@Query("token") token: String): ApiResponse<InviteCheck>
+
+    @POST("invites/accept.php")
+    suspend fun acceptInvite(@Body body: Map<String, String>): ApiResponse<InviteAccepted>
 }

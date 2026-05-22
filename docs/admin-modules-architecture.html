@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kiến trúc Module Quản trị trong tab Khám phá — 9chat Android</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--card2:#1e222b;--bd:#2c313c;--bd2:#3a4150;--tx:#e6e8ec;--mut:#9aa3b2;--pri:#5e6ad2;--grn:#4cb782;--org:#f2994a;--red:#eb5757;--vio:#9b87f5;--mono:'SF Mono',ui-monospace,Consolas,Menlo,monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.65 system-ui,Segoe UI,Roboto,sans-serif;}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 22px 120px;}
+  h1{font-size:29px;font-weight:600;margin:.2em 0 .1em;letter-spacing:-.3px}
+  h2{font-size:22px;font-weight:600;margin:2.1em 0 .5em;padding-top:.6em;border-top:1px solid var(--bd);color:#fff}
+  h3{font-size:17px;font-weight:600;margin:1.5em 0 .4em;color:#fff}
+  h4{font-size:15px;font-weight:600;margin:1.1em 0 .3em;color:var(--vio)}
+  p{margin:.5em 0}
+  a{color:var(--pri);text-decoration:none}
+  code{font-family:var(--mono);font-size:.86em;background:var(--card2);padding:1px 6px;border-radius:5px;border:1px solid var(--bd)}
+  pre{background:#0b0d11;border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55}
+  pre code{background:none;border:none;padding:0}
+  .lead{color:var(--mut);font-size:16px}
+  table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:13.5px}
+  th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--card2);font-weight:600}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px 18px;margin:1em 0}
+  .note{border-left:3px solid var(--pri);background:rgba(94,106,210,.07)}
+  .warn{border-left:3px solid var(--red);background:rgba(235,87,87,.07)}
+  .ok{border-left:3px solid var(--grn);background:rgba(76,183,130,.07)}
+  .muted{color:var(--mut)}
+  ul,ol{margin:.4em 0 .6em;padding-left:22px}li{margin:.22em 0}
+  .toc{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 22px;margin:1.4em 0}
+  .ascii{white-space:pre;font-family:var(--mono);font-size:12px;line-height:1.35;background:#0b0d11;border:1px solid var(--bd);border-radius:10px;padding:14px;overflow:auto;color:var(--mut)}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px}
+  .t-dec{background:rgba(76,183,130,.18);color:#7fd3a8}
+  .t-res{background:rgba(242,153,74,.18);color:#f6c08a}
+  .step{background:var(--card);border:1px solid var(--bd);border-left:3px solid var(--vio);border-radius:10px;padding:10px 16px;margin:.7em 0}
+  hr{border:none;border-top:1px solid var(--bd);margin:2em 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Module Quản trị trong tab "Khám phá" — Phương án kiến trúc</h1>
+<p class="lead">Kế hoạch triển khai các màn quản trị (Kho, Kế toán, Admin…) thành <b>module độc lập</b>, đặt ở tab Khám phá của 9chat Android, <b>load theo phân quyền</b>. Tài liệu CHỐT TRƯỚC KHI code.</p>
+<p class="muted">2026-05-21 · App <code>vn.chat9.app</code> · Backend RBAC 9chat (migration 028) · Data: vapi (gateway).</p>
+
+<div class="toc"><b>Mục lục</b>
+<ol>
+<li><a href="#dec">Quyết định kiến trúc (đã chốt)</a></li>
+<li><a href="#overview">Tổng quan luồng</a></li>
+<li><a href="#registry">Hệ thống module: Descriptor + Registry</a></li>
+<li><a href="#gate">Phân quyền theo permission code</a></li>
+<li><a href="#lifecycle">⭐ Vòng đời &amp; chống thất thoát tài nguyên</a></li>
+<li><a href="#hub">Tab Khám phá (hub)</a></li>
+<li><a href="#vapi">Cầu nối dữ liệu: vapi gateway</a></li>
+<li><a href="#layout">Cấu trúc package</a></li>
+<li><a href="#steps">Lộ trình triển khai (phased)</a></li>
+<li><a href="#open">Việc cần backend / cần chốt thêm</a></li>
+</ol>
+</div>
+
+<h2 id="dec">1. Quyết định kiến trúc (đã chốt) <span class="tag t-dec">FIXED</span></h2>
+<table>
+<tr><th>#</th><th>Quyết định</th><th>Hệ quả</th></tr>
+<tr><td>1</td><td><b>vapi = API gateway</b>. App gọi vapi <b>trực tiếp</b> bằng <b>API key riêng định danh client "9chat-android"</b>. Danh tính user (9chat) truyền trong payload để audit/fulfillment.</td><td>Không cần proxy 9chat, không token-exchange. vapi ghi <code>created_by_api_key_id</code> = app nào gọi.</td></tr>
+<tr><td>2</td><td><b>Feature package + Registry</b> (1 Gradle module), <b>kèm cơ chế quản lý vòng đời</b> để module không dùng KHÔNG ngốn tài nguyên.</td><td>Nhẹ, hợp hiện trạng. Xem §5 cho cơ chế teardown.</td></tr>
+<tr><td>3</td><td><b>Gate theo permission code</b> (RBAC 9chat, <code>PermissionStore.hasAny(...)</code>).</td><td>Mịn, mở module liên phòng ban dễ. Map ở §4.</td></tr>
+</table>
+
+<h2 id="overview">2. Tổng quan luồng</h2>
+<div class="ascii">9chat App (đã đăng nhập, có JWT 9chat)
+   │  App.container.permissions.refresh()  ← GET /users/permissions.php (RBAC 9chat)
+   ▼
+Tab "Khám phá" (HomeScreen index 2)
+   │  ModuleRegistry.all  →  lọc theo permissions.hasAny(descriptor.required)
+   │     • có quyền kho     → hiện card "Vận hành kho"
+   │     • có quyền kế toán → hiện card "Kế toán"
+   │     • bypass_all/admin → hiện card "Quản trị tổng"
+   │     • không quyền nào  → màn trống "Chưa có chức năng quản trị"
+   ▼  tap card  → navigate(module.route)   (CHỈ LÚC NÀY module mới khởi tạo)
+ModuleHost(route)  →  nested NavGraph của module
+   │  ViewModel scoped vào backStackEntry → tự huỷ khi rời module
+   │  gọi vapi qua VapiClient (API key "9chat-android")
+   ▼  back/thoát module → toàn bộ state + coroutine + observer bị dọn (§5)</div>
+
+<h2 id="registry">3. Hệ thống module: Descriptor + Registry</h2>
+<p>Registry chỉ giữ <b>metadata nhẹ</b> (không khởi tạo gì). Module chỉ "sống" khi user vào.</p>
+<pre><code>// Mô tả 1 module quản trị — DỮ LIỆU THUẦN, không giữ state/đối tượng nặng.
+data class AdminModule(
+    val id: String,                    // "warehouse" | "accounting" | "admin"
+    val title: String,                 // "Vận hành kho"
+    @DrawableRes val icon: Int,
+    val requiredPermissions: List&lt;String&gt;,  // OR: hasAny(...) → đủ 1 là vào được
+    val route: String,                 // route gốc của nested graph module
+    val registerGraph: NavGraphBuilder.(NavHostController) -> Unit, // đăng ký màn (lazy)
+)
+
+// Đăng ký tĩnh — chỉ là danh sách metadata, KHÔNG tạo ViewModel/đối tượng.
+object ModuleRegistry {
+    val all: List&lt;AdminModule&gt; = listOf(
+        WarehouseModule.descriptor,
+        AccountingModule.descriptor,
+        AdminModule_.descriptor,
+    )
+    fun visibleFor(perm: PermissionStore): List&lt;AdminModule&gt; =
+        all.filter { perm.isBypass || perm.hasAny(*it.requiredPermissions.toTypedArray()) }
+}
+
+// Mỗi module tự khai báo descriptor + cách đăng ký màn của nó.
+object WarehouseModule {
+    val descriptor = AdminModule(
+        id = "warehouse",
+        title = "Vận hành kho",
+        icon = R.drawable.ic_module_warehouse,
+        requiredPermissions = listOf("order.view_all", "order.update_status"),
+        route = "module/warehouse",
+        registerGraph = { nav -> warehouseGraph(nav) },  // xem guide kho
+    )
+}</code></pre>
+<div class="card note">Thêm module mới = thêm 1 package + 1 <code>AdminModule</code> vào <code>ModuleRegistry.all</code>. Không đụng tab Khám phá, không đụng module khác → đúng tinh thần "module riêng biệt".</div>
+
+<h2 id="gate">4. Phân quyền theo permission code</h2>
+<p>1 app-module gom nhiều permission code (RBAC 9chat có sẵn). <code>hasAny</code> = đủ 1 quyền là vào được.</p>
+<table>
+<tr><th>App-module</th><th>requiredPermissions (hasAny)</th><th>Role thường có</th></tr>
+<tr><td>Vận hành kho</td><td><code>order.view_all</code>, <code>order.update_status</code>, <code>supplier.view_purchase_order</code></td><td>staff, shipper, manager</td></tr>
+<tr><td>Kế toán</td><td><code>debt.view_all</code>, <code>invoice.view_all</code>, <code>report.financial</code></td><td>accountant, manager</td></tr>
+<tr><td>Quản trị tổng</td><td><code>system.permission_manage</code>, <code>system.settings</code> (hoặc <code>bypass_all</code>)</td><td>owner, manager</td></tr>
+</table>
+<div class="card warn"><b>Cần backend 9chat:</b> nếu muốn module "Kho" tách bạch khỏi quyền order CSKH, nên thêm nhóm permission <code>warehouse.*</code> (vd <code>warehouse.fulfill</code>) vào migration RBAC + gán cho role kho. Trước mắt tái dùng <code>order.*</code>. (Quyết định ở §10.)</div>
+<p class="muted">Default-DENY sẵn có: chưa fetch quyền hoặc lỗi mạng → <code>has()=false</code> → không hiện module (an toàn). Tài khoản <code>customer</code> (mặc định) không có quyền nào trong list → tab Khám phá trống.</p>
+
+<h2 id="lifecycle">5. ⭐ Vòng đời &amp; chống thất thoát tài nguyên <span class="tag t-res">TRỌNG TÂM</span></h2>
+<p>Nguyên tắc: <b>module chỉ tiêu tốn tài nguyên KHI đang mở; rời module = dọn sạch.</b> Cụ thể:</p>
+
+<h4>5.1 Lazy — không khởi tạo cho tới khi vào</h4>
+<ul>
+  <li>Registry chỉ là <b>data class</b> (id/title/icon/perms/route) → gần như 0 chi phí.</li>
+  <li>ViewModel + Composable của module chỉ được tạo khi <code>navigate(module.route)</code>. Compose Navigation lo việc này.</li>
+  <li><code>VapiClient</code> (Retrofit/OkHttp cho vapi) khởi tạo <b>lazy</b> lần đầu có module dùng; OkHttp dùng connection pool nhàn rỗi tự thu hồi.</li>
+</ul>
+
+<h4>5.2 Scoped ViewModel → tự huỷ khi rời module</h4>
+<pre><code>// ViewModel scope vào BackStackEntry của nested graph module.
+// Khi popBackStack khỏi graph → onCleared() → viewModelScope.cancel()
+// → mọi coroutine (poll, collect, upload) bị huỷ ngay. KHÔNG để VM ở app-level.
+@Composable fun moduleVm(nav: NavHostController, graphRoute: String): XxxViewModel {
+    val entry = remember(it) { nav.getBackStackEntry(graphRoute) }
+    return hiltViewModel(entry)
+}</code></pre>
+
+<h4>5.3 DisposableEffect cho mọi listener/sensor</h4>
+<pre><code>// Bất kỳ thứ gì "đăng ký" (socket event, location, camera, broadcast receiver)
+// PHẢI gỡ trong onDispose. Ví dụ nếu module cần realtime:
+DisposableEffect(Unit) {
+    val l: (Array&lt;Any&gt;) -> Unit = { /* ... */ }
+    container.socket.on("warehouse_update", l)
+    onDispose { container.socket.off("warehouse_update", l) }   // ⬅ bắt buộc
+}</code></pre>
+
+<h4>5.4 Quy tắc cứng (review checklist mỗi module)</h4>
+<table>
+<tr><th>Tài nguyên</th><th>Quy tắc</th></tr>
+<tr><td>Coroutine</td><td>Chỉ dùng <code>viewModelScope</code> (scoped) — KHÔNG <code>GlobalScope</code>. Tự huỷ khi rời.</td></tr>
+<tr><td>State / cache</td><td>Giữ trong ViewModel của module; KHÔNG nhồi vào <code>AppContainer</code> (sống suốt đời app).</td></tr>
+<tr><td>Polling / timer</td><td>Cấm polling nền. Cần làm mới → refetch khi mở / pull-to-refresh / sự kiện. Nếu buộc poll → chạy trong <code>repeatOnLifecycle(STARTED)</code>, dừng khi background.</td></tr>
+<tr><td>Ảnh (Coil)</td><td>Dùng Coil (cache có giới hạn sẵn). KHÔNG giữ Bitmap trong VM. Nén ảnh trước upload rồi giải phóng.</td></tr>
+<tr><td>Background service</td><td>Mặc định KHÔNG. Nếu module thật sự cần (vd quét) → start khi vào, <code>stopSelf()</code> khi ra.</td></tr>
+<tr><td>Socket realtime</td><td>Dùng chung <code>container.socket</code> của 9chat; module chỉ <code>on/off</code> trong DisposableEffect. KHÔNG mở socket riêng.</td></tr>
+<tr><td>Observer/Flow</td><td><code>collectAsStateWithLifecycle()</code> (dừng thu khi màn không STARTED).</td></tr>
+</table>
+
+<h4>5.5 "Không load module khác" nghĩa là gì ở đây</h4>
+<p>Với feature-package: code các module <b>compile chung</b> trong APK, nhưng <b>runtime KHÔNG khởi tạo/không chạy</b> module không được cấp quyền (không tạo VM, không gọi API, không observer). → đạt mục tiêu "không ngốn tài nguyên". Nếu sau này muốn <b>không cả tải code</b> module (giảm dung lượng tải) → nâng lên Gradle dynamic-feature (Play Feature Delivery) — để dành Phase sau.</p>
+
+<h2 id="hub">6. Tab Khám phá (hub)</h2>
+<pre><code>// HomeScreen.kt — thay PlaceholderTab("Khám phá") ở case selectedTab == 2:
+2 -> ExploreScreen(onOpenModule = { route -> navigateTo(AppDestination.Module(route)) })
+
+@Composable fun ExploreScreen(onOpenModule: (String) -> Unit) {
+    val container = (LocalContext.current.applicationContext as App).container
+    val perms by container.permissions.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { container.permissions.refresh() }   // đảm bảo có quyền mới
+
+    val modules = remember(perms) { ModuleRegistry.visibleFor(container.permissions) }
+    if (modules.isEmpty()) { EmptyState("Chưa có chức năng quản trị"); return }
+
+    LazyVerticalGrid(columns = GridCells.Fixed(2)) {
+        items(modules, key = { it.id }) { m ->
+            ModuleCard(m) { onOpenModule(m.route) }   // chỉ render card; module CHƯA khởi tạo
+        }
+    }
+}</code></pre>
+<p>Thêm <code>AppDestination.Module(val route:String)</code> vào sealed class + nhánh <code>when</code> trong <code>navigateTo</code> để host nested graph tương ứng (registry tìm module theo route → <code>registerGraph</code>).</p>
+
+<h2 id="vapi">7. Cầu nối dữ liệu: vapi gateway</h2>
+<div class="card note"><b>Mô hình:</b> app → <b>vapi trực tiếp</b>. vapi đóng vai API gateway, định danh client qua <b>API key</b>. Tạo 1 api_key mới trong vapi: tên "9chat-android", cấp scope cho các module (orders, attachments, debt, invoice…). App nhúng key qua <code>BuildConfig.VAPI_API_KEY</code> (không hardcode trong source).</p>
+<ul>
+  <li><b>Định danh app:</b> header <code>X-API-Key: &lt;9chat-android key&gt;</code> → vapi audit <code>created_by_api_key_id</code> = app này.</li>
+  <li><b>Định danh user:</b> truyền danh tính user 9chat trong payload nơi cần (vd <code>confirmed_by_user_id</code>, <code>confirmed_by_name</code> ở fulfill) — vapi lưu để truy vết NV.</li>
+  <li><b>Phân quyền:</b> ai được vào module = RBAC 9chat (UI gate). vapi tin app qua API key (giai đoạn này); siết per-user ở vapi là việc sau.</li>
+</ul>
+</div>
+<p>Lớp mạng vapi + DTO + repository: xem chi tiết file <a href="warehouse-ops-android-guide.html">warehouse-ops-android-guide.html</a> §7. Mọi module quản trị <b>dùng chung</b> 1 <code>VapiClient</code> (lazy singleton trong container hoặc Hilt).</p>
+
+<h2 id="layout">8. Cấu trúc package</h2>
+<pre><code>vn.chat9.app/
+├─ data/vapi/                 VapiClient, VapiApiService, dto/   (DÙNG CHUNG mọi module)
+├─ ui/explore/
+│  ├─ ExploreScreen.kt        hub tab Khám phá (lọc theo quyền)
+│  ├─ ModuleCard.kt
+│  └─ module/
+│     ├─ AdminModule.kt       data class descriptor
+│     └─ ModuleRegistry.kt
+└─ ui/modules/
+   ├─ warehouse/   WarehouseModule.kt(descriptor) + warehouseGraph + screens + vm
+   ├─ accounting/  AccountingModule.kt + …
+   └─ admin/       AdminModule_.kt + …</code></pre>
+
+<h2 id="steps">9. Lộ trình triển khai (phased)</h2>
+<div class="step"><b>Bước 0 — chốt backend:</b> tạo api_key "9chat-android" trong vapi (+scope); quyết định dùng <code>order.*</code> hay thêm <code>warehouse.*</code> trong RBAC 9chat (§10).</div>
+<div class="step"><b>Bước 1 — khung module (không phụ thuộc vapi):</b> <code>AdminModule</code> + <code>ModuleRegistry</code> + <code>ExploreScreen</code> hub + <code>AppDestination.Module</code>. Tạo 2-3 descriptor với màn rỗng. → Kiểm chứng <b>gate theo quyền</b> chạy đúng (đổi role → đổi module hiển thị).</div>
+<div class="step"><b>Bước 2 — lớp vapi dùng chung:</b> <code>VapiClient</code> + interceptor API key + DTO + repository (lazy).</div>
+<div class="step"><b>Bước 3 — Module Kho:</b> port theo guide HTML (login bỏ qua nếu dùng API key; orders 4 tab; detail + swipe + fulfill). Áp checklist tài nguyên §5.4.</div>
+<div class="step"><b>Bước 4 — Module Kế toán / Admin tổng:</b> lặp lại pattern.</div>
+<div class="step"><b>Bước 5 — siết:</b> per-user enforcement ở vapi; (tuỳ chọn) nâng lên dynamic-feature nếu cần giảm size tải.</div>
+
+<h2 id="open">10. Việc cần backend / cần chốt thêm</h2>
+<ul>
+  <li><b>vapi:</b> tạo api_key "9chat-android" + cấp scope (orders, attachments, debt, invoice, report…). Đây là điều kiện để Bước 2+ chạy.</li>
+  <li><b>RBAC 9chat:</b> dùng tạm <code>order.*</code> cho Kho, hay thêm nhóm <code>warehouse.*</code>? (Khuyến nghị: thêm <code>warehouse.fulfill</code> + gán role kho để tách bạch CSKH vs kho.)</li>
+  <li><b>Định danh user qua vapi:</b> hiện truyền <code>by_user_id/by_name</code> trong payload. Nếu cần map cứng user 9chat ↔ user vapi (cho công nợ/đối soát theo NV) → cần bảng map ở vapi (việc sau).</li>
+  <li><b>Icon module:</b> cần 3 drawable <code>ic_module_warehouse/accounting/admin</code>.</li>
+</ul>
+
+<hr/>
+<p class="muted">Đây là phương án CHỐT TRƯỚC KHI CODE. Sau khi anh duyệt §10, em bắt đầu Bước 1 (khung module + gate) — phần thuần Android, chưa cần backend, để anh thấy cơ chế phân quyền chạy thật.</p>
+
+</div>
+</body>
+</html>

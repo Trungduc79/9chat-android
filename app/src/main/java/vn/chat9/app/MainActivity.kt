@@ -14,9 +14,16 @@ import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import org.json.JSONObject
@@ -292,6 +299,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Ẩn thanh điều hướng hệ thống, cho hiện tạm khi vuốt mép. */
+    private fun hideSystemNavBar() {
+        val c = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        c.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        c.systemBarsBehavior =
+            androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemNavBar() // bàn phím / app khác trả focus → ẩn lại
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hideSystemNavBar() // trở về app (background/activity khác) → ẩn lại nav bar
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -304,6 +329,18 @@ class MainActivity : ComponentActivity() {
         // decor-fits on/off would leave the window in an inconsistent state when
         // control returns (e.g. bottom tab bar hidden under the nav bar).
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Status bar dark/gray TOÀN app: vẽ scrim #141414 ở setContent (targetSdk 36 đã
+        // bỏ qua window.statusBarColor). Icon status bar để trắng cho hợp nền tối.
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightStatusBars = false
+
+        // Auto-hide thanh điều hướng hệ thống (gesture / 3 nút) để tăng không gian.
+        // Vuốt mép màn hình sẽ hiện lại tạm thời (overlay, KHÔNG đẩy layout). Khi ẩn,
+        // navigationBars inset = 0 → navigationBarsPadding() = 0 → không để lại khoảng
+        // trống; transient = overlay nên cũng không che lấp vĩnh viễn.
+        hideSystemNavBar()
 
         // When launched from call notification, show the CallScreen DIRECTLY
         // OVER the lockscreen without forcing the user to unlock.
@@ -359,6 +396,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             _9chatTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.White) {
+                  Box(Modifier.fillMaxSize()) {
                     val scope = rememberCoroutineScope()
                     var screen by remember {
                         mutableStateOf(if (container.tokenManager.isLoggedIn) "home" else "login")
@@ -383,6 +421,9 @@ class MainActivity : ComponentActivity() {
                     // Remembers the screen that opened Wall so back returns there
                     // (e.g. AddFriend → Wall → back → AddFriend, not home).
                     var wallReturnTo by remember { mutableStateOf<String?>(null) }
+                    // Token cho AcceptInvite screen — set khi navigateTo nhận
+                    // AppDestination.AcceptInvite, screen render tương ứng đọc.
+                    var inviteToken by remember { mutableStateOf<String?>(null) }
                     // pendingRoomIdState is still exposed for onNewIntent handling
                     // (notifications arriving while activity is already alive).
                     val pendingRoomIdState = remember { mutableStateOf<Int?>(null) }
@@ -458,6 +499,19 @@ class MainActivity : ComponentActivity() {
                                 sharePayloads = dest.payloads
                                 screen = "share"
                             }
+                            vn.chat9.app.navigation.AppDestination.Admin -> {
+                                screen = "admin"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.AcceptInvite -> {
+                                inviteToken = dest.token
+                                screen = "accept_invite"
+                            }
+                            vn.chat9.app.navigation.AppDestination.CreateGroup -> {
+                                screen = "create_group"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.GroupMembers -> {
+                                screen = "group_members"
+                            }
                         }
                     }
 
@@ -465,22 +519,44 @@ class MainActivity : ComponentActivity() {
                     // FCM message taps, missed-call "Gọi lại", 9chat:// URIs,
                     // and https://9chat.vn web fallbacks in a single codepath.
                     LaunchedEffect(Unit) {
-                        if (!container.tokenManager.isLoggedIn) return@LaunchedEffect
                         val dest = vn.chat9.app.navigation.DeepLinkRouter.fromIntent(intent)
-                        if (dest != null) navigateTo(dest)
+                        if (dest != null) {
+                            // AcceptInvite là public endpoint — cho qua kể cả khi
+                            // chưa đăng nhập (màn hình tự xử lý "Đăng nhập để
+                            // tham gia"). Các deep link khác chỉ chạy khi đã login.
+                            if (dest is vn.chat9.app.navigation.AppDestination.AcceptInvite ||
+                                container.tokenManager.isLoggedIn) {
+                                navigateTo(dest)
+                            }
+                        }
+                    }
+
+                    // Phase 2 RBAC — prime permission cache khi app khởi động với
+                    // session còn hiệu lực. Login flow đã refresh ngay sau saveAuth,
+                    // bước này phục vụ trường hợp user mở app sẵn token cũ.
+                    LaunchedEffect(Unit) {
+                        if (container.tokenManager.isLoggedIn) {
+                            container.permissions.refresh()
+                            container.friendAliases.refresh()
+                        }
                     }
 
                     // Deep-link arriving via onNewIntent (activity already alive).
                     LaunchedEffect(pendingDestinationState.value) {
                         val dest = pendingDestinationState.value ?: return@LaunchedEffect
                         pendingDestinationState.value = null
-                        if (container.tokenManager.isLoggedIn) navigateTo(dest)
+                        if (dest is vn.chat9.app.navigation.AppDestination.AcceptInvite ||
+                            container.tokenManager.isLoggedIn) {
+                            navigateTo(dest)
+                        }
                     }
 
                     // Handle session expired (401 from API)
                     LaunchedEffect(Unit) {
                         container.sessionExpired.collect {
                             container.tokenManager.clear()
+                            container.permissions.clear()
+                            container.friendAliases.clear()
                             try { container.socket.disconnect() } catch (_: Exception) {}
                             selectedRoom = null
                             wallUserId = null
@@ -501,6 +577,34 @@ class MainActivity : ComponentActivity() {
                         val rid = pendingRoomId ?: return@LaunchedEffect
                         pendingRoomId = null
                         navigateTo(vn.chat9.app.navigation.AppDestination.Chat(rid))
+                    }
+
+                    // Realtime: nhóm bị giải tán bởi trưởng nhóm. Server publish
+                    // qua Redis → Node.js emit `room_destroyed` cho từng member.
+                    // Nếu user đang ở trong room đó → bounce về home + toast,
+                    // ngược lại chỉ trigger reload room list.
+                    LaunchedEffect(Unit) {
+                        val handler: (Array<Any>) -> Unit = { args ->
+                            try {
+                                val data = args.getOrNull(0) as? org.json.JSONObject
+                                val destroyedRoomId = data?.optInt("room_id", 0) ?: 0
+                                if (destroyedRoomId > 0) {
+                                    runOnUiThread {
+                                        if (selectedRoom?.id == destroyedRoomId) {
+                                            selectedRoom = null
+                                            screen = "home"
+                                            android.widget.Toast.makeText(
+                                                this@MainActivity,
+                                                "Nhóm đã bị giải tán",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                        roomRefreshKey++
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        container.socket.on("room_destroyed", handler)
                     }
 
                     // Friend alias map for resolving incoming caller display name
@@ -844,8 +948,10 @@ class MainActivity : ComponentActivity() {
                                 if (!container.socket.isConnected) {
                                     container.socket.connect()
                                 }
-                                // Register FCM token
+                                // Register FCM token + lưu lại endpoint để
+                                // logout có thể unsubscribe trên server.
                                 FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                                    container.tokenManager.fcmEndpoint = token
                                     kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
                                         try {
                                             container.api.subscribePush(
@@ -877,9 +983,24 @@ class MainActivity : ComponentActivity() {
                             }
                             HomeScreen(
                                 onLogout = {
-                                    container.tokenManager.clear()
-                                    container.socket.disconnect()
-                                    screen = "login"
+                                    // Unsubscribe push TRƯỚC khi clear token —
+                                    // interceptor cần access_token còn valid để
+                                    // gửi Authorization. Sau khi server xoá row
+                                    // push_subscriptions, mới clear local data.
+                                    scope.launch {
+                                        try {
+                                            val ep = container.tokenManager.fcmEndpoint
+                                            if (!ep.isNullOrBlank()) {
+                                                container.api.unsubscribePush(
+                                                    mapOf("endpoint" to ep)
+                                                )
+                                            }
+                                        } catch (_: Exception) {}
+                                        container.tokenManager.clear()
+                                        container.permissions.clear()
+                                        container.socket.disconnect()
+                                        screen = "login"
+                                    }
                                 },
                                 onRoomClick = { room ->
                                     // Route through navigateTo so the room is
@@ -900,8 +1021,14 @@ class MainActivity : ComponentActivity() {
                                 onAddFriend = {
                                     navigateTo(vn.chat9.app.navigation.AppDestination.AddFriend)
                                 },
+                                onCreateGroup = {
+                                    navigateTo(vn.chat9.app.navigation.AppDestination.CreateGroup)
+                                },
                                 onEditProfile = {
                                     navigateTo(vn.chat9.app.navigation.AppDestination.ProfileEdit)
+                                },
+                                onOpenAdmin = {
+                                    navigateTo(vn.chat9.app.navigation.AppDestination.Admin)
                                 },
                                 onSearchClick = {
                                     navigateTo(vn.chat9.app.navigation.AppDestination.Search())
@@ -958,7 +1085,20 @@ class MainActivity : ComponentActivity() {
                                     onUserWall = { uid ->
                                         navigateTo(vn.chat9.app.navigation.AppDestination.Wall(uid))
                                     },
-                                    onChatOptions = { screen = "chat_options" }
+                                    onChatOptions = { screen = "chat_options" },
+                                    onRoomChanged = {
+                                        // Re-fetch room detail sau khi admin đổi
+                                        // tên / avatar / thành viên trong onboarding
+                                        // card → header + onboarding state cập nhật.
+                                        scope.launch {
+                                            try {
+                                                val res = container.api.getRoomDetail(room.id)
+                                                if (res.success && res.data != null) {
+                                                    selectedRoom = res.data
+                                                }
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -970,7 +1110,15 @@ class MainActivity : ComponentActivity() {
                                     onSearchMessages = { openChatSearch = true; screen = "chat" },
                                     onUserWall = { uid ->
                                         navigateTo(vn.chat9.app.navigation.AppDestination.Wall(uid))
-                                    }
+                                    },
+                                    onLeftGroup = {
+                                        // Đã rời / giải tán nhóm — clear selectedRoom
+                                        // + về home, trigger reload room list.
+                                        selectedRoom = null
+                                        roomRefreshKey++
+                                        screen = "home"
+                                    },
+                                    onViewMembers = { screen = "group_members" },
                                 )
                             }
                         }
@@ -1005,7 +1153,43 @@ class MainActivity : ComponentActivity() {
                                                     }
                                                 } catch (_: Exception) {}
                                             }
-                                        }
+                                        },
+                                        onCall = { targetUserId, isVideo ->
+                                            // Find/create private room rồi navigate
+                                            // sang Chat với autoCall — pattern y hệt
+                                            // contacts long-press, đảm bảo room sẵn
+                                            // sàng trước khi initiateCall.
+                                            scope.launch {
+                                                try {
+                                                    val res = container.api.createRoom(
+                                                        mapOf("type" to "private", "friend_id" to targetUserId)
+                                                    )
+                                                    if (res.success && res.data != null) {
+                                                        navigateTo(vn.chat9.app.navigation.AppDestination.Chat(
+                                                            roomId = res.data.id,
+                                                            autoCall = if (isVideo) vn.chat9.app.navigation.CallAction.VIDEO
+                                                                       else vn.chat9.app.navigation.CallAction.VOICE
+                                                        ))
+                                                    }
+                                                } catch (_: Exception) {}
+                                            }
+                                        },
+                                        onUserDataChanged = {
+                                            // Alias đổi từ Wall — re-fetch selectedRoom
+                                            // (nếu user đang trong chat với người này)
+                                            // để chat header + room list reflect tên mới.
+                                            // Cũng trigger reload room list cache.
+                                            val rid = selectedRoom?.id
+                                            if (rid != null) {
+                                                scope.launch {
+                                                    try {
+                                                        val r = container.api.getRoomDetail(rid)
+                                                        if (r.success && r.data != null) selectedRoom = r.data
+                                                    } catch (_: Exception) {}
+                                                }
+                                            }
+                                            roomRefreshKey++
+                                        },
                                     )
                                 }
                             }
@@ -1034,6 +1218,53 @@ class MainActivity : ComponentActivity() {
                                 },
                             )
                         }
+                        "admin" -> SwipeBack(onBack = { screen = "home" }) {
+                            vn.chat9.app.ui.admin.AdminScreen(
+                                onBack = { screen = "home" }
+                            )
+                        }
+                        "create_group" -> SwipeBack(onBack = { screen = "home" }) {
+                            vn.chat9.app.ui.rooms.CreateGroupScreen(
+                                onBack = { screen = "home" },
+                                onCreated = { roomId ->
+                                    navigateTo(vn.chat9.app.navigation.AppDestination.Chat(roomId))
+                                }
+                            )
+                        }
+                        "group_members" -> SwipeBack(onBack = { screen = "chat_options" }) {
+                            selectedRoom?.let { room ->
+                                vn.chat9.app.ui.chat.GroupMembersScreen(
+                                    roomId = room.id,
+                                    onBack = { screen = "chat_options" },
+                                    onUserWall = { uid ->
+                                        navigateTo(vn.chat9.app.navigation.AppDestination.Wall(uid))
+                                    },
+                                )
+                            }
+                        }
+                        "accept_invite" -> SwipeBack(onBack = {
+                            // Back: nếu đã login → về home, chưa login → về login
+                            screen = if (container.tokenManager.isLoggedIn) "home" else "login"
+                            inviteToken = null
+                        }) {
+                            vn.chat9.app.ui.admin.AcceptInviteScreen(
+                                token = inviteToken ?: "",
+                                onBack = {
+                                    screen = if (container.tokenManager.isLoggedIn) "home" else "login"
+                                    inviteToken = null
+                                },
+                                onAccepted = {
+                                    inviteToken = null
+                                    screen = "home"
+                                },
+                                onNeedLogin = {
+                                    // Đẩy sang login, sau khi login xong user phải nhấn lại link
+                                    // (UX đơn giản; nếu cần "tự động accept sau login" — phase sau).
+                                    inviteToken = null
+                                    screen = "login"
+                                }
+                            )
+                        }
                     }
 
                     // Call overlay — V2. CallScreenHost reads state from the
@@ -1043,6 +1274,16 @@ class MainActivity : ComponentActivity() {
                     if (callActive) {
                         CallScreenHost()
                     }
+
+                    // Scrim nền dark/gray cho status bar — TOÀN app, ghim TRÊN ĐẦU.
+                    Box(
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .windowInsetsTopHeight(WindowInsets.statusBars)
+                            .background(Color(0xFF141414)),
+                    )
+                  }
                 }
             }
         }

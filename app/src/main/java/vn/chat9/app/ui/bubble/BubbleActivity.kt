@@ -1862,8 +1862,10 @@ private fun ContactPickerDialog(
                     }
                 } else {
                     val filtered = friends.filter {
-                        search.isBlank() || it.username.contains(search, ignoreCase = true)
-                    }.sortedBy { it.username.lowercase() }
+                        search.isBlank()
+                            || it.username.contains(search, ignoreCase = true)
+                            || (it.alias?.contains(search, ignoreCase = true) == true)
+                    }.sortedBy { it.displayName.lowercase() }
                     LazyColumn(modifier = Modifier.weight(1f)) {
                         items(filtered, key = { it.id }) { friend ->
                             val isSelected = selectedFriendId == friend.id
@@ -1886,7 +1888,7 @@ private fun ContactPickerDialog(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            friend.username.first().uppercase(),
+                                            friend.displayName.first().uppercase(),
                                             color = Color.White, fontSize = 16.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -1894,7 +1896,7 @@ private fun ContactPickerDialog(
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(friend.username, fontSize = 16.sp, color = Color(0xFF2C3E50))
+                                    Text(friend.displayName, fontSize = 16.sp, color = Color(0xFF2C3E50))
                                 }
                                 // Radio
                                 Box(

@@ -139,7 +139,10 @@ fun CallScreen(
                 if (prevLightStatus != null) controller.isAppearanceLightStatusBars = prevLightStatus
                 if (prevLightNav != null) controller.isAppearanceLightNavigationBars = prevLightNav
                 if (prevBehavior != null) controller.systemBarsBehavior = prevBehavior
-                controller.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+                // App policy: nav bar LUÔN ẩn → rời cuộc gọi vẫn giữ ẩn (không show lại).
+                controller.systemBarsBehavior =
+                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
             }
         }
     }

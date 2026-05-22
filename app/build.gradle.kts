@@ -1,9 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.google.services)
 }
+
+// Đọc VAPI_API_KEY từ local.properties (gitignored) → BuildConfig. KHÔNG commit key.
+val vapiApiKey: String = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}.getProperty("VAPI_API_KEY", "")
 
 android {
     namespace = "vn.chat9.app"
@@ -20,6 +28,9 @@ android {
 
         buildConfigField("String", "API_BASE_URL", "\"https://9chat.vn/api/v1/\"")
         buildConfigField("String", "SOCKET_URL", "\"https://9chat.vn\"")
+        // vapi gateway (backend nghiệp vụ — khác 9chat). Key embed từ local.properties.
+        buildConfigField("String", "VAPI_BASE_URL", "\"https://vapi.vn/api/\"")
+        buildConfigField("String", "VAPI_API_KEY", "\"$vapiApiKey\"")
     }
 
     buildTypes {

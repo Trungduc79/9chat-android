@@ -15,14 +15,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import vn.chat9.app.R
 import vn.chat9.app.App
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import vn.chat9.app.ui.contacts.ContactsScreen
+import vn.chat9.app.ui.explore.ExploreScreen
+import vn.chat9.app.ui.explore.ModuleHostScreen
 import vn.chat9.app.ui.profile.AccountScreen
 import vn.chat9.app.ui.rooms.RoomListScreen
 import vn.chat9.app.ui.timeline.TimelineScreen
@@ -36,7 +44,9 @@ fun HomeScreen(
     onRoomCall: (room: vn.chat9.app.data.model.Room, isVideo: Boolean) -> Unit = { _, _ -> },
     onOpenWall: (userId: Int) -> Unit = {},
     onAddFriend: () -> Unit = {},
+    onCreateGroup: () -> Unit = {},
     onEditProfile: () -> Unit = {},
+    onOpenAdmin: () -> Unit = {},
     onSearchClick: () -> Unit = {},
     selectedTab: Int = 0,
     onTabChange: (Int) -> Unit = {},
@@ -48,6 +58,25 @@ fun HomeScreen(
 
     // Total unread count
     var totalUnread by remember { mutableIntStateOf(0) }
+
+    // Module quản trị đang mở trong tab Khám phá (null = đang ở hub).
+    // Host NGAY TRONG tab → bottom nav 9chat luôn hiển thị (quản trị = 1 phần của 9chat).
+    // rememberSaveable + SaveableStateHolder: giữ nguyên màn đang xem khi chuyển tab khác rồi quay lại.
+    var openModuleId by rememberSaveable { mutableStateOf<String?>(null) }
+    val tabStateHolder = rememberSaveableStateHolder()
+
+    // Vào tab Khám phá: sau 5s tự thu gọn bottom nav xuống 50% để tăng view khi làm việc.
+    var navShrunk by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedTab) {
+        navShrunk = false
+        if (selectedTab == 2) { delay(5000); navShrunk = true }
+    }
+    val navCompact = navShrunk && selectedTab == 2
+    val navHeight by animateDpAsState(if (navCompact) 32.dp else 64.dp, label = "navHeight")
+    // Back hệ thống khi đang trong module → về hub (không thoát app).
+    androidx.activity.compose.BackHandler(enabled = selectedTab == 2 && openModuleId != null) {
+        openModuleId = null
+    }
 
     // Reload from API on roomRefreshKey (after returning from chat) and selectedTab changes
     LaunchedEffect(roomRefreshKey, selectedTab) {
@@ -88,14 +117,15 @@ fun HomeScreen(
                 modifier = Modifier.navigationBarsPadding()
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    modifier = Modifier.fillMaxWidth().height(navHeight),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     tabs.forEachIndexed { index, item ->
                         val isSelected = selectedTab == index
                         val baseSize = if (index == 2) 32f else 28f
-                        val iconSize = if (isSelected) (baseSize * 1.05f).dp else baseSize.dp
+                        val shrinkF = if (navCompact) 0.6f else 1f
+                        val iconSize = ((if (isSelected) baseSize * 1.05f else baseSize) * shrinkF).dp
                         val iconColor = if (isSelected) Color(0xFF3E1F91) else Color(0xFF7F8C8D)
 
                         Column(
@@ -138,7 +168,7 @@ fun HomeScreen(
                                     tint = iconColor
                                 )
                             }
-                            if (isSelected) {
+                            if (isSelected && !navCompact) {
                                 Text(item.label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3E1F91), maxLines = 1)
                             }
                         }
@@ -147,9 +177,21 @@ fun HomeScreen(
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when (selectedTab) {
-                0 -> RoomListScreen(onRoomClick = onRoomClick, refreshKey = roomRefreshKey, onSearchClick = onSearchClick)
+        // Bottom inset cho mọi tab; TOP inset chỉ cho tab sáng. Tab admin (2) vẽ sát
+        // dưới status bar (nền tối kéo lên sau status bar), tự statusBarsPadding bên trong.
+        Box(modifier = Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
+            // Crossfade: chuyển tab sáng↔dark mượt (tránh flash). + giữ state mỗi tab.
+            Crossfade(targetState = selectedTab, animationSpec = tween(280), label = "tabCrossfade") { tabIndex ->
+            tabStateHolder.SaveableStateProvider(tabIndex) {
+            Box(Modifier.fillMaxSize().padding(top = if (tabIndex == 2) 0.dp else padding.calculateTopPadding())) {
+            when (tabIndex) {
+                0 -> RoomListScreen(
+                    onRoomClick = onRoomClick,
+                    refreshKey = roomRefreshKey,
+                    onSearchClick = onSearchClick,
+                    onAddFriend = onAddFriend,
+                    onCreateGroup = onCreateGroup,
+                )
                 1 -> {
                     val context = LocalContext.current
                     val container = (context.applicationContext as App).container
@@ -186,9 +228,18 @@ fun HomeScreen(
                         onAddFriend = onAddFriend
                     )
                 }
-                2 -> PlaceholderTab("Khám phá")
+                2 -> {
+                    if (openModuleId == null) {
+                        ExploreScreen(onOpenModule = { openModuleId = it })
+                    } else {
+                        ModuleHostScreen(openModuleId, onBack = { openModuleId = null })
+                    }
+                }
                 3 -> TimelineScreen()
-                4 -> AccountScreen(onLogout = onLogout, onEditProfile = onEditProfile)
+                4 -> AccountScreen(onLogout = onLogout, onEditProfile = onEditProfile, onOpenAdmin = onOpenAdmin)
+            }
+            }
+            }
             }
         }
     }
@@ -204,6 +255,7 @@ fun AccountTab(onLogout: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val user = container.tokenManager.user
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier.fillMaxSize().padding(androidx.compose.ui.unit.Dp(24f)),
@@ -219,9 +271,18 @@ fun AccountTab(onLogout: () -> Unit) {
         Spacer(modifier = Modifier.height(androidx.compose.ui.unit.Dp(32f)))
         Button(
             onClick = {
-                container.tokenManager.clear()
-                container.socket.disconnect()
-                onLogout()
+                scope.launch {
+                    try {
+                        val ep = container.tokenManager.fcmEndpoint
+                        if (!ep.isNullOrBlank()) {
+                            container.api.unsubscribePush(mapOf("endpoint" to ep))
+                        }
+                    } catch (_: Exception) {}
+                    container.tokenManager.clear()
+                    container.permissions.clear()
+                    container.socket.disconnect()
+                    onLogout()
+                }
             },
             colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
         ) {

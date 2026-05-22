@@ -293,9 +293,18 @@ fun ContactsScreen(
                             mapOf("friend_id" to friend.id, "alias" to newAlias)
                         val res = container.api.setFriendAlias(body)
                         if (res.success) {
-                            friends = friends.map {
-                                if (it.id == friend.id) it.copy(alias = newAlias.takeIf { it.isNotBlank() }) else it
-                            }
+                            val cleaned = newAlias.takeIf { it.isNotBlank() }
+                            // 1. Update friends list (cho FriendsList tab refresh)
+                            val updated = friend.copy(alias = cleaned)
+                            friends = friends.map { if (it.id == friend.id) updated else it }
+                            // 2. Update detailFor → dialog re-render với Friend mới
+                            //    (KEY FIX: trước đây detailFor giữ snapshot cũ
+                            //    nên dialog vẫn hiện tên cũ sau khi lưu).
+                            detailFor = updated
+                            // 3. Update FriendAliasStore global → mọi screen
+                            //    khác (chat sender, group member, room list)
+                            //    reflect alias mới ngay không cần API call.
+                            container.friendAliases.setLocal(friend.id, cleaned)
                         }
                     } catch (_: Exception) {}
                 }
@@ -485,7 +494,7 @@ private fun FriendItem(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    friend.username.firstOrNull()?.uppercase() ?: "?",
+                    friend.displayName.firstOrNull()?.uppercase() ?: "?",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp
@@ -495,10 +504,10 @@ private fun FriendItem(
 
         Spacer(Modifier.width(12.dp))
 
-        // Name + subtitle
+        // Name + subtitle — alias > username (Friend.displayName)
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                friend.username,
+                friend.displayName,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFF2C3E50),
@@ -601,7 +610,7 @@ private fun FriendDetailDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                friend.username.firstOrNull()?.uppercase() ?: "?",
+                                friend.displayName.firstOrNull()?.uppercase() ?: "?",
                                 color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold
                             )
                         }
@@ -690,7 +699,7 @@ private fun FriendDetailDialog(
                 // Subtitle — show the real username if an alias is being used
                 if (!friend.alias.isNullOrBlank() && friend.alias != friend.username) {
                     Text(
-                        "Tên 9chat: ${friend.username}",
+                        "User's name: ${friend.username}",
                         fontSize = 14.sp,
                         color = Color(0xFF7F8C8D),
                         modifier = Modifier.padding(top = 4.dp)

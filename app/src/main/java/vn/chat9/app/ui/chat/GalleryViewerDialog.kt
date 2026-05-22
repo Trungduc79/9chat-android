@@ -77,6 +77,9 @@ data class GalleryImage(
     val senderName: String,
     val senderAvatar: String? = null,
     val createdAt: String,
+    /** Vị trí ảnh trong tin nhắn cha (multi-image album). Single image = 0.
+     *  Cần để map từ click → đúng entry trong gallery flatMap. */
+    val indexInMessage: Int = 0,
 )
 
 /**

@@ -73,6 +73,8 @@ object DeepLinkRouter {
      *  - `9chat://timeline`                → Timeline
      *  - `9chat://qr`                      → QrScanner
      *  - `9chat://tab/{name}`              → Home(tab)
+     *  - `9chat://invite/{token}`          → AcceptInvite(token)
+     *  - `https://9chat.vn/invite/{token}` → AcceptInvite(token)
      *  - `https://9chat.vn/chat/{id}`      → Chat(id)
      *  - `https://9chat.vn/user/{id}`      → Wall(id)
      *  - `https://9chat.vn/search?q={term}`→ Search(term)
@@ -115,6 +117,10 @@ object DeepLinkRouter {
                 val name = params.firstOrNull()?.uppercase() ?: return null
                 runCatching { HomeTab.valueOf(name) }.getOrNull()
                     ?.let { AppDestination.Home(it) }
+            }
+            "invite" -> {
+                val token = params.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
+                AppDestination.AcceptInvite(token)
             }
             else -> null
         }

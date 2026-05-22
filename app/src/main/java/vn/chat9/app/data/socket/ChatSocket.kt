@@ -71,7 +71,8 @@ class ChatSocket(private val tokenProvider: () -> String) {
     fun sendMessage(
         roomId: Int, type: String, content: String?,
         fileUrl: String? = null, fileName: String? = null,
-        fileSize: Long? = null, replyTo: Int? = null
+        fileSize: Long? = null, replyTo: Int? = null,
+        images: org.json.JSONArray? = null,
     ) {
         emit("message", JSONObject().apply {
             put("room_id", roomId)
@@ -81,6 +82,8 @@ class ChatSocket(private val tokenProvider: () -> String) {
             fileName?.let { put("file_name", it) }
             fileSize?.let { put("file_size", it) }
             replyTo?.let { put("reply_to", it) }
+            // Multi-image album: server validate ≤50, lưu vào messages.images
+            images?.let { put("images", it) }
         })
     }
 

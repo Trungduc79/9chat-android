@@ -45,6 +45,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,6 +74,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -94,7 +97,7 @@ import vn.chat9.app.util.UrlUtils
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Boolean = false, onBack: () -> Unit, onVoiceCall: () -> Unit = {}, onVideoCall: () -> Unit = {}, onUserWall: (Int) -> Unit = {}, onChatOptions: () -> Unit = {}) {
+fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Boolean = false, onBack: () -> Unit, onVoiceCall: () -> Unit = {}, onVideoCall: () -> Unit = {}, onUserWall: (Int) -> Unit = {}, onChatOptions: () -> Unit = {}, onRoomChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val container = (context.applicationContext as App).container
@@ -107,7 +110,9 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
     // message in the chat, centred on this message id. Tap any image bubble
     // to set it; GalleryViewerDialog builds the swipeable list from
     // `messages.filter { it.type == "image" }`.
-    var galleryForMessageId by remember { mutableStateOf<Int?>(null) }
+    // (messageId, indexInMessage) — indexInMessage cần thiết khi multi-image
+    // album để mở viewer đúng ảnh user nhấn (không chỉ ảnh đầu của message).
+    var galleryClick by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var inputText by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(true) }
     var isLoadingMore by remember { mutableStateOf(false) }
@@ -185,14 +190,18 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
     var reactionToast by remember { mutableStateOf<ReactionToast?>(null) }
     var overlayRootOffset by remember { mutableStateOf(Offset.Zero) }
     var friendIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var friendIdsLoaded by remember { mutableStateOf(false) }
     var sentRequestIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
 
-    // Load friend IDs + sent requests once
+    // Load friend IDs + sent requests once. Đặt friendIdsLoaded=true cuối
+    // try-finally để banner "Người lạ" KHÔNG flash trong vài trăm ms đầu —
+    // trước khi friendIds load, mọi user đều bị tính là người lạ.
     LaunchedEffect(Unit) {
         try {
             val res = container.api.getFriends("friends")
             if (res.success && res.data != null) friendIds = res.data.map { it.id }.toSet()
         } catch (_: Exception) {}
+        friendIdsLoaded = true
         try {
             val res = container.api.getFriends("sent")
             if (res.success && res.data != null) sentRequestIds = res.data.map { it.id }.toSet()
@@ -255,55 +264,125 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
     }
     var showAllPinned by remember { mutableStateOf(false) }
 
-    // Image picker
+    // Multi-image picker (max 50). PickMultipleVisualMedia có sẵn từ
+    // activity-1.7+, dùng Photo Picker mới của Android (không cần
+    // READ_MEDIA_IMAGES permission).
     val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         scope.launch {
             isUploading = true
             try {
-                // Check file size before reading into memory (max 50MB)
-                val fileSize = context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
-                if (fileSize > 50 * 1024 * 1024) {
-                    android.widget.Toast.makeText(context, "File quá lớn (tối đa 50MB)", android.widget.Toast.LENGTH_SHORT).show()
+                val resolver = context.contentResolver
+                // Filter ảnh quá lớn (>50MB) trước khi upload
+                val valid = uris.filter { uri ->
+                    val sz = try {
+                        resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+                    } catch (_: Exception) { 0L }
+                    sz <= 50 * 1024 * 1024
+                }
+                val rejected = uris.size - valid.size
+                if (rejected > 0) {
+                    android.widget.Toast.makeText(context,
+                        "$rejected ảnh > 50MB bị bỏ qua", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                if (valid.isEmpty()) { isUploading = false; return@launch }
+
+                // Upload SONG SONG cho nhanh (Photo Picker đã filter image
+                // type sẵn nên không cần check MIME). Sử dụng async để
+                // chờ tất cả results, giữ thứ tự bằng index.
+                val roomIdBody = room.id.toString().toRequestBody("text/plain".toMediaTypeOrNull())
+                val results = valid.mapIndexed { idx, uri ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val mime = resolver.getType(uri) ?: "image/jpeg"
+                            val ext = when {
+                                mime.contains("png") -> "png"
+                                mime.contains("gif") -> "gif"
+                                mime.contains("webp") -> "webp"
+                                else -> "jpg"
+                            }
+                            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                                ?: return@async null
+
+                            // Decode w/h từ header bytes (inJustDecodeBounds=true
+                            // → không alloc bitmap). Dùng để render thumb fit
+                            // aspect-ratio gốc thay vì 1:1 cứng.
+                            val opts = android.graphics.BitmapFactory.Options().apply {
+                                inJustDecodeBounds = true
+                            }
+                            android.graphics.BitmapFactory.decodeByteArray(
+                                bytes, 0, bytes.size, opts
+                            )
+                            val w = opts.outWidth.coerceAtLeast(0)
+                            val h = opts.outHeight.coerceAtLeast(0)
+
+                            val body = bytes.toRequestBody(mime.toMediaTypeOrNull())
+                            val name = "image_${System.currentTimeMillis()}_$idx.$ext"
+                            val part = MultipartBody.Part.createFormData("file", name, body)
+                            val res = container.api.uploadFile(part, roomIdBody)
+                            if (res.success && res.data != null)
+                                Triple(idx, res.data, w to h)
+                            else null
+                        } catch (e: Exception) {
+                            android.util.Log.e("Chat", "Upload $idx failed", e); null
+                        }
+                    }
+                }.awaitAll()
+
+                val uploaded = results
+                    .filterNotNull()
+                    .sortedBy { it.first }   // giữ thứ tự ảnh user chọn
+                    .map { it.second to it.third }   // (FileData, (w,h))
+
+                if (uploaded.isEmpty()) {
+                    android.widget.Toast.makeText(context,
+                        "Upload tất cả ảnh thất bại", android.widget.Toast.LENGTH_SHORT).show()
                     isUploading = false; return@launch
                 }
 
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val bytes = inputStream?.readBytes() ?: return@launch
-                inputStream.close()
-
-                val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
-                val ext = when {
-                    mimeType.contains("png") -> "png"
-                    mimeType.contains("gif") -> "gif"
-                    mimeType.contains("webp") -> "webp"
-                    else -> "jpg"
-                }
-                val fileName = "image_${System.currentTimeMillis()}.$ext"
-
-                val requestBody = bytes.toRequestBody(mimeType.toMediaTypeOrNull())
-                val filePart = MultipartBody.Part.createFormData("file", fileName, requestBody)
-                val roomIdBody = room.id.toString().toRequestBody("text/plain".toMediaTypeOrNull())
-
-                val res = withContext(Dispatchers.IO) {
-                    container.api.uploadFile(filePart, roomIdBody)
-                }
-
-                if (res.success && res.data != null) {
+                val (firstFile, _) = uploaded.first()
+                if (uploaded.size == 1) {
+                    // Single ảnh — schema cũ (file_url only)
                     container.socket.sendMessage(
-                        roomId = room.id,
-                        type = "image",
-                        content = "",
-                        fileUrl = res.data.file_url,
-                        fileName = res.data.file_name,
-                        fileSize = res.data.file_size
+                        roomId = room.id, type = "image", content = "",
+                        fileUrl = firstFile.file_url,
+                        fileName = firstFile.file_name,
+                        fileSize = firstFile.file_size,
+                    )
+                } else {
+                    // Multi: file_url = ảnh đầu (cho room list preview),
+                    // images = JSON array đầy đủ kèm w/h để render thumb fit
+                    // aspect-ratio (chỉ put khi >0 để tránh field rác).
+                    val arr = org.json.JSONArray()
+                    uploaded.forEach { (f, dim) ->
+                        arr.put(org.json.JSONObject().apply {
+                            put("url", f.file_url)
+                            put("name", f.file_name)
+                            put("size", f.file_size)
+                            if (dim.first > 0) put("w", dim.first)
+                            if (dim.second > 0) put("h", dim.second)
+                        })
+                    }
+                    container.socket.sendMessage(
+                        roomId = room.id, type = "image", content = "",
+                        fileUrl = firstFile.file_url,
+                        fileName = firstFile.file_name,
+                        fileSize = firstFile.file_size,
+                        images = arr,
                     )
                 }
+
+                val failed = results.count { it == null }
+                if (failed > 0) {
+                    android.widget.Toast.makeText(context,
+                        "$failed ảnh upload thất bại", android.widget.Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
-                android.util.Log.e("Chat", "Upload failed", e)
-                android.widget.Toast.makeText(context, "Lỗi tải ảnh lên", android.widget.Toast.LENGTH_SHORT).show()
+                android.util.Log.e("Chat", "Multi-image upload failed", e)
+                android.widget.Toast.makeText(context,
+                    "Lỗi tải ảnh lên", android.widget.Toast.LENGTH_SHORT).show()
             }
             isUploading = false
         }
@@ -439,12 +518,22 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
         otherUser.displayName
     } else room.name ?: "Chat"
 
-    // Map user_id -> display name: "Bạn" for self, alias for friend, username fallback
-    val getDisplayName: (Int?, String?) -> String = { userId, username ->
+    // Quan sát FriendAliasStore — recompose khi alias map đổi (vd user
+    // save alias trong UserWall) → group chat senders cập nhật ngay.
+    val aliasMap by container.friendAliases.state.collectAsState()
+
+    // Map user_id -> display name: "Bạn" cho self; private chat lấy
+    // otherUser.displayName; private fallback / group → check FriendAliasStore
+    // bằng user_id, dùng alias nếu có (bạn bè trong nhóm), nếu không
+    // fallback msg.username.
+    val getDisplayName: (Int?, String?) -> String = { uid, username ->
         when {
-            userId == currentUserId -> "Bạn"
-            room.type == "private" && otherUser != null && userId == otherUser.id -> otherUser.displayName
-            else -> username ?: ""
+            uid == currentUserId -> "Bạn"
+            room.type == "private" && otherUser != null && uid == otherUser.id -> otherUser.displayName
+            else -> {
+                val alias = uid?.let { aliasMap[it] }
+                alias?.takeIf { it.isNotBlank() } ?: (username ?: "")
+            }
         }
     }
 
@@ -592,7 +681,12 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                     val msg = Message(
                         id = json.getInt("id"), room_id = msgRoomId, user_id = json.getInt("user_id"),
                         type = json.optString("type", "text"), content = if (json.isNull("content")) null else json.optString("content"),
-                        file_url = json.optString("file_url", null), file_name = json.optString("file_name", null),
+                        file_url = json.optString("file_url", null),
+                        // Multi-image album JSON string. Server gửi qua TEXT
+                        // column → JSON String trên wire. Android parse
+                        // sang List<MessageImage> qua Message.parsedImages.
+                        images = if (json.has("images") && !json.isNull("images")) json.optString("images", null) else null,
+                        file_name = json.optString("file_name", null),
                         file_size = json.optLong("file_size", 0),
                         reply_to = if (json.has("reply_to") && !json.isNull("reply_to")) json.getInt("reply_to") else null,
                         created_at = json.optString("created_at", "").ifEmpty {
@@ -620,7 +714,9 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                     val pinned = Message(
                         id = m.getInt("id"), room_id = room.id, user_id = m.optInt("user_id"),
                         type = m.optString("type", "text"), content = if (m.isNull("content")) null else m.optString("content"),
-                        file_url = m.optString("file_url", null), file_name = m.optString("file_name", null),
+                        file_url = m.optString("file_url", null),
+                        images = if (m.has("images") && !m.isNull("images")) m.optString("images", null) else null,
+                        file_name = m.optString("file_name", null),
                         file_size = m.optLong("file_size", 0), created_at = m.optString("created_at", ""),
                         username = m.optString("username", null), avatar = m.optString("avatar", null)
                     )
@@ -851,7 +947,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             Spacer(Modifier.width(10.dp))
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val headerIsStranger = room.type == "private" && otherUser != null && otherUser.id != currentUserId && !friendIds.contains(otherUser.id)
+                                    val headerIsStranger = friendIdsLoaded && room.type == "private" && otherUser != null && otherUser.id != currentUserId && !friendIds.contains(otherUser.id)
                                     if (headerIsStranger) {
                                         Text(
                                             "Người lạ",
@@ -1138,10 +1234,16 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             IconButton(
                                 onClick = {
                                     if (inputText.isNotBlank()) {
+                                        // URL detect: nếu content chỉ là 1 URL ngoài (không
+                                        // phải 9chat deep link) → type='url' để render preview
+                                        // card. Ngược lại text thường.
+                                        val trimmed = inputText.trim()
+                                        val msgType = if (vn.chat9.app.util.UrlDetect.isExternalUrlOnly(trimmed))
+                                            "url" else "text"
                                         container.socket.sendMessage(
                                             roomId = room.id,
-                                            type = "text",
-                                            content = inputText.trim(),
+                                            type = msgType,
+                                            content = trimmed,
                                             replyTo = replyToMessage?.id
                                         )
                                         inputText = ""
@@ -1186,7 +1288,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             Icon(painterResource(R.drawable.ic_mic_phone), "Mic", tint = if (showAudioPanel) Color(0xFF3E1F91) else Color.Gray, modifier = Modifier.size(24.dp))
                         }
                         IconButton(
-                            onClick = { imagePicker.launch("image/*") },
+                            onClick = { imagePicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             modifier = Modifier.size(40.dp),
                             enabled = !isUploading
                         ) {
@@ -1217,7 +1319,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             ActionPanelItem(Icons.Default.LocationOn, "Vị trí", Color(0xFF4CAF50)) { showActionPanel = false; sendLocation() }
                             ActionPanelItem(Icons.Default.Description, "Tài liệu", Color(0xFF2196F3)) { filePicker.launch("*/*"); showActionPanel = false }
                             ActionPanelItem(Icons.Default.Person, "Danh thiếp", Color(0xFF9C27B0)) { showActionPanel = false; showContactPicker = true }
-                            ActionPanelItem(Icons.Default.PhotoLibrary, "Ảnh", Color(0xFFFF9800)) { imagePicker.launch("image/*"); showActionPanel = false }
+                            ActionPanelItem(Icons.Default.PhotoLibrary, "Ảnh", Color(0xFFFF9800)) { imagePicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)); showActionPanel = false }
                         }
                     }
                 }
@@ -1337,7 +1439,9 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                                 sttPartialText = ""
                                 // Auto-send on hold-to-talk release
                                 if (sttAutoSend && inputText.isNotBlank()) {
-                                    container.socket.sendMessage(roomId = room.id, type = "text", content = inputText.trim(), replyTo = replyToMessage?.id)
+                                    val sttTrimmed = inputText.trim()
+                                    val sttType = if (vn.chat9.app.util.UrlDetect.isExternalUrlOnly(sttTrimmed)) "url" else "text"
+                                    container.socket.sendMessage(roomId = room.id, type = sttType, content = sttTrimmed, replyTo = replyToMessage?.id)
                                     inputText = ""; replyToMessage = null; sttAutoSend = false
                                 }
                             }
@@ -2067,7 +2171,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
 
             // Stranger banner
             val otherUserId = room.other_user?.id
-            val isStrangerChat = room.type == "private" && otherUserId != null && otherUserId != currentUserId && !friendIds.contains(otherUserId)
+            val isStrangerChat = friendIdsLoaded && room.type == "private" && otherUserId != null && otherUserId != currentUserId && !friendIds.contains(otherUserId)
             if (isStrangerChat && !isLoading) {
                 Row(
                     modifier = Modifier
@@ -2171,6 +2275,11 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                         info
                     }
 
+                    // Phase 2 — onboarding card cho admin nhóm khi tên còn default
+                    var groupOnboardingDismissed by rememberSaveable(room.id) {
+                        mutableStateOf(false)
+                    }
+
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -2179,6 +2288,29 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                     ) {
                         val reversedMessages = messages.reversed()
                         val lastMsgId = messages.lastOrNull()?.id
+
+                        // Onboarding card — render đầu list để (do reverseLayout) hiện
+                        // dưới cùng của khu chat, ngay trên ô nhập. Tự ẩn khi admin
+                        // đặt tên thủ công (server clear name_is_default → recompose)
+                        // hoặc khi tap nút x để dismiss session này.
+                        if (room.isGroup && room.isAdmin && room.nameIsDefault
+                            && !groupOnboardingDismissed) {
+                            item(key = "group_onboarding_card") {
+                                GroupOnboardingCard(
+                                    room = room,
+                                    currentUserId = currentUserId,
+                                    onSendMessage = { text ->
+                                        container.socket.sendMessage(
+                                            roomId = room.id,
+                                            type = "text",
+                                            content = text,
+                                        )
+                                    },
+                                    onChanged = onRoomChanged,
+                                    onDismiss = { groupOnboardingDismissed = true },
+                                )
+                            }
+                        }
 
                         items(reversedMessages, key = { it.id }) { msg ->
                             val isMine = msg.user_id == currentUserId
@@ -2254,7 +2386,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                                         onReplyClick = if (multiSelectMode) null else { replyId -> scrollToAndHighlight(replyId) },
                                         onSwipeReply = if (multiSelectMode) null else {{ if (msg.type != "recalled") replyToMessage = msg }},
                                         onClick = if (multiSelectMode) {{ selectedMessageIds = if (isSelected) selectedMessageIds - msg.id else selectedMessageIds + msg.id }} else null,
-                                        onImageClick = if (multiSelectMode) null else {{ galleryForMessageId = msg.id }},
+                                        onImageClick = if (multiSelectMode) null else { idxInMsg -> galleryClick = msg.id to idxInMsg },
                                         showQuickReact = !multiSelectMode && msg.type != "call" && msg.type != "recalled" && (
                                             msg.type in listOf("image", "file", "video", "audio", "contact", "location") ||
                                             (!isMine && msg.id == (messages.lastOrNull { it.user_id != currentUserId }?.id)) ||
@@ -2570,6 +2702,12 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             msg.type in listOf("file", "video") -> msg.content ?: msg.file_name ?: ""
                             else -> msg.content ?: ""
                         }
+                        // Album multi-image: parse JSON string `images` từ
+                        // message gốc → forward giữ nguyên cả N ảnh, không
+                        // chỉ ảnh đầu (file_url chỉ là 1 ảnh preview).
+                        val fwdImages = msg.images?.takeIf { it.isNotBlank() }?.let {
+                            try { org.json.JSONArray(it) } catch (_: Exception) { null }
+                        }
                         // Send forwarded message first
                         container.socket.sendMessage(
                             roomId = targetRoom.id,
@@ -2577,7 +2715,8 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             content = fwdContent,
                             fileUrl = msg.file_url,
                             fileName = msg.file_name,
-                            fileSize = msg.file_size
+                            fileSize = msg.file_size,
+                            images = fwdImages,
                         )
                         // Then send note as a separate normal message
                         if (note.isNotBlank()) {
@@ -2686,9 +2825,13 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                             CircularProgressIndicator(color = Color(0xFF3E1F91), modifier = Modifier.size(24.dp))
                         }
                     } else {
-                        val filtered = friends.filter { cpSearch.isBlank() || it.username.contains(cpSearch, ignoreCase = true) }
-                        val grouped = filtered.sortedBy { it.username.lowercase() }
-                            .groupBy { it.username.first().uppercaseChar() }
+                        val filtered = friends.filter {
+                            cpSearch.isBlank()
+                                || it.username.contains(cpSearch, ignoreCase = true)
+                                || (it.alias?.contains(cpSearch, ignoreCase = true) == true)
+                        }
+                        val grouped = filtered.sortedBy { it.displayName.lowercase() }
+                            .groupBy { it.displayName.first().uppercaseChar() }
                             .toSortedMap()
 
                         LazyColumn(modifier = Modifier.weight(1f)) {
@@ -2718,13 +2861,13 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                                                 modifier = Modifier.size(44.dp).clip(CircleShape), contentScale = ContentScale.Crop)
                                         } else {
                                             Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0xFF3E1F91)), contentAlignment = Alignment.Center) {
-                                                Text(friend.username.first().uppercase(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                                Text(friend.displayName.first().uppercase(), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                         Spacer(Modifier.width(12.dp))
-                                        // Name + phone
+                                        // Name — alias > username
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(friend.username, fontSize = 16.sp, color = Color(0xFF2C3E50))
+                                            Text(friend.displayName, fontSize = 16.sp, color = Color(0xFF2C3E50))
                                         }
                                         // Radio on right
                                         Box(modifier = Modifier.size(22.dp).clip(CircleShape)
@@ -2772,34 +2915,61 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
     // Collects every image message from the current conversation, centres
     // the pager on the clicked one, swipe-to-navigate + pinch-to-zoom.
     // Matches the web's viewImage() behaviour (see chat.js L4776).
-    galleryForMessageId?.let { clickedId ->
+    galleryClick?.let { (clickedId, clickedIdxInMsg) ->
         val imageMessages = remember(messages) { messages.filter { it.type == "image" } }
         if (imageMessages.isEmpty()) {
-            LaunchedEffect(clickedId) { galleryForMessageId = null }
+            LaunchedEffect(clickedId) { galleryClick = null }
         } else {
-            val clickedIndex = imageMessages.indexOfFirst { it.id == clickedId }
-                .let { if (it >= 0) it else 0 }
             val galleryImages = remember(imageMessages) {
-                imageMessages.mapNotNull { m ->
-                    val url = UrlUtils.toFullUrl(m.file_url) ?: return@mapNotNull null
-                    GalleryImage(
-                        messageId = m.id,
-                        url = url,
-                        caption = m.content?.takeIf { c -> c.isNotBlank() && c != "null" },
-                        fileName = m.file_name,
-                        senderName = getDisplayName(m.user_id, m.username),
-                        senderAvatar = m.avatar,
-                        createdAt = m.created_at,
-                    )
+                imageMessages.flatMap { m ->
+                    val parsed = m.parsedImages
+                    if (parsed.isNotEmpty()) {
+                        // Multi-image album: expand TẤT CẢ ảnh thành entries
+                        // riêng để viewer next/prev qua từng cái trong album.
+                        parsed.mapIndexedNotNull { idx, img ->
+                            val url = UrlUtils.toFullUrl(img.url) ?: return@mapIndexedNotNull null
+                            GalleryImage(
+                                messageId = m.id,
+                                url = url,
+                                caption = m.content?.takeIf { c -> c.isNotBlank() && c != "null" },
+                                fileName = img.name ?: m.file_name,
+                                senderName = getDisplayName(m.user_id, m.username),
+                                senderAvatar = m.avatar,
+                                createdAt = m.created_at,
+                                indexInMessage = idx,
+                            )
+                        }
+                    } else {
+                        // Single-image legacy: dùng file_url
+                        val url = UrlUtils.toFullUrl(m.file_url) ?: return@flatMap emptyList()
+                        listOf(GalleryImage(
+                            messageId = m.id,
+                            url = url,
+                            caption = m.content?.takeIf { c -> c.isNotBlank() && c != "null" },
+                            fileName = m.file_name,
+                            senderName = getDisplayName(m.user_id, m.username),
+                            senderAvatar = m.avatar,
+                            createdAt = m.created_at,
+                            indexInMessage = 0,
+                        ))
+                    }
                 }
             }
             if (galleryImages.isEmpty()) {
-                LaunchedEffect(clickedId) { galleryForMessageId = null }
+                LaunchedEffect(clickedId) { galleryClick = null }
             } else {
+                // Khớp đúng entry theo (messageId, indexInMessage). Fallback
+                // về entry đầu tiên của message nếu indexInMessage out-of-range.
+                val clickedIndex = galleryImages.indexOfFirst {
+                    it.messageId == clickedId && it.indexInMessage == clickedIdxInMsg
+                }.let { if (it >= 0) it
+                    else galleryImages.indexOfFirst { it.messageId == clickedId }
+                        .coerceAtLeast(0)
+                }
                 GalleryViewerDialog(
                     images = galleryImages,
                     initialIndex = clickedIndex,
-                    onDismiss = { galleryForMessageId = null },
+                    onDismiss = { galleryClick = null },
                     onReact = { msgId, reactionType ->
                         scope.launch {
                             try {
@@ -2815,7 +2985,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, displayName: String = message.username ?: "", replyDisplayName: String = message.reply_message?.username ?: "", isHighlighted: Boolean = false, searchHighlight: String = "", deliveryStatus: String? = null, timeConfig: TimeDisplayConfig = TimeDisplayConfig(true, TimePosition.INSIDE_BUBBLE, TimeStyle.NORMAL), friendIds: Set<Int> = emptySet(), sentRequestIds: Set<Int> = emptySet(), onSendFriendRequest: ((Int) -> Unit)? = null, onNavigateToUser: ((Int) -> Unit)? = null, onLongPress: () -> Unit = {}, onReplyClick: ((Int) -> Unit)? = null, onSwipeReply: (() -> Unit)? = null, onClick: (() -> Unit)? = null, showQuickReact: Boolean = false, onQuickReact: ((String, Offset) -> Unit)? = null, onReactionPillClick: ((Int) -> Unit)? = null, onCallback: ((Boolean) -> Unit)? = null, onImageClick: (() -> Unit)? = null) {
+fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, displayName: String = message.username ?: "", replyDisplayName: String = message.reply_message?.username ?: "", isHighlighted: Boolean = false, searchHighlight: String = "", deliveryStatus: String? = null, timeConfig: TimeDisplayConfig = TimeDisplayConfig(true, TimePosition.INSIDE_BUBBLE, TimeStyle.NORMAL), friendIds: Set<Int> = emptySet(), sentRequestIds: Set<Int> = emptySet(), onSendFriendRequest: ((Int) -> Unit)? = null, onNavigateToUser: ((Int) -> Unit)? = null, onLongPress: () -> Unit = {}, onReplyClick: ((Int) -> Unit)? = null, onSwipeReply: (() -> Unit)? = null, onClick: (() -> Unit)? = null, showQuickReact: Boolean = false, onQuickReact: ((String, Offset) -> Unit)? = null, onReactionPillClick: ((Int) -> Unit)? = null, onCallback: ((Boolean) -> Unit)? = null, onImageClick: ((Int) -> Unit)? = null) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Track reaction button center for effect spawn
     var reactBtnCenter by remember { mutableStateOf(Offset.Zero) }
@@ -2919,9 +3089,16 @@ fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, dis
             }
         ) {
         val bubbleShape = RoundedCornerShape(16.dp)
+        // Multi-image album cần bubble rộng để thumbnail dễ xem (max 80%
+        // screen). Single text/file/image bubble giữ max 280dp như cũ.
+        val isMultiImage = message.type == "image" && remember(message.id, message.images) {
+            message.parsedImages.size >= 2
+        }
+        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+        val multiImageMaxWidth = (configuration.screenWidthDp * 0.80f).toInt().dp
         Column(
             modifier = Modifier
-                .widthIn(max = 280.dp)
+                .widthIn(max = if (isMultiImage) multiImageMaxWidth else 280.dp)
                 .then(
                     if (highlightAlpha > 0f) Modifier.shadow(
                         elevation = (12 * highlightAlpha).dp,
@@ -2990,6 +3167,18 @@ fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, dis
 
             when (message.type) {
                 "image" -> {
+                    // Multi-image album: delegate render sang ImageGridBubble
+                    // (extracted để giảm kích thước MessageBubble — đã warn
+                    // method instruction limit). Single image giữ render cũ.
+                    // remember() chỉ parse JSON 1 lần / Message; recompose
+                    // không parse lại trừ khi images string thay đổi.
+                    val parsed = remember(message.id, message.images) { message.parsedImages }
+                    if (parsed.size >= 2) {
+                        ImageGridBubble(
+                            images = parsed,
+                            onImageClick = { idxInMsg -> onImageClick?.invoke(idxInMsg) },
+                        )
+                    } else {
                     val imageUrl = UrlUtils.toFullUrl(message.file_url)
                     if (imageUrl != null) {
                         Box {
@@ -3005,7 +3194,7 @@ fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, dis
                                             Modifier.clickable(
                                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                                                 indication = null,
-                                                onClick = { onImageClick() },
+                                                onClick = { onImageClick(0) },
                                             )
                                         else Modifier
                                     ),
@@ -3025,6 +3214,7 @@ fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, dis
                             }
                         }
                     }
+                    }  // close else (single-image branch)
                     if (!message.content.isNullOrBlank() && message.content != "null") {
                         Spacer(Modifier.height(4.dp))
                         Text(text = emojiStyledText(message.content, 17.sp), fontSize = 17.sp)
@@ -3473,6 +3663,9 @@ fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, dis
                             color = Color.Gray
                         )
                     }
+                }
+                "url" -> {
+                    UrlPreviewCard(url = message.content.orEmpty())
                 }
                 else -> {
                     if (searchHighlight.isNotBlank() && message.content?.contains(searchHighlight, ignoreCase = true) == true) {

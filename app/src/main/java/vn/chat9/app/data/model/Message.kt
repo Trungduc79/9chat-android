@@ -8,6 +8,9 @@ data class Message(
     val content: String? = null,
     val transcript: String? = null,
     val file_url: String? = null,
+    /** Multi-image album: server gửi JSON string. Parse bằng helper
+     *  `parsedImages` ở dưới để tránh parse trong Composable hot path. */
+    val images: String? = null,
     val file_name: String? = null,
     val file_size: Long? = null,
     val reply_to: Int? = null,
@@ -17,6 +20,38 @@ data class Message(
     val reply_message: Message? = null,
     val contact_user: User? = null,
     val reactions: ReactionData? = null
+) {
+    /** Parse images JSON string → list of {url, name?, size?, w?, h?}.
+     *  Computed property (KHÔNG dùng `by lazy` — Gson tạo instance qua
+     *  Unsafe, bỏ qua constructor → delegate field null → NPE).
+     *  Caller cache local nếu hot path (vd `remember(message) { ... }`). */
+    val parsedImages: List<MessageImage>
+        get() {
+            if (images.isNullOrBlank()) return emptyList()
+            return try {
+                val arr = org.json.JSONArray(images)
+                (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val url = o.optString("url").takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    MessageImage(
+                        url = url,
+                        name = o.optString("name").takeIf { it.isNotBlank() },
+                        size = if (o.has("size")) o.optLong("size") else null,
+                        w = if (o.has("w") && !o.isNull("w")) o.optInt("w") else null,
+                        h = if (o.has("h") && !o.isNull("h")) o.optInt("h") else null,
+                    )
+                }
+            } catch (_: Exception) { emptyList() }
+        }
+}
+
+data class MessageImage(
+    val url: String,
+    val name: String? = null,
+    val size: Long? = null,
+    val w: Int? = null,
+    val h: Int? = null,
 )
 
 data class ReactionRequest(val message_id: Int, val type: String)

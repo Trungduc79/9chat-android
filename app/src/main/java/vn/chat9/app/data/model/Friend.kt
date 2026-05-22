@@ -12,4 +12,9 @@ data class Friend(
     val request_id: Int? = null,
     val message: String? = null,
     val requested_at: String? = null
-)
+) {
+    /** Tên hiển thị: alias nếu đã đặt, fallback username. Dùng cho mọi
+     *  vị trí hiển thị bạn bè (room list, danh bạ, contact picker, wall...).
+     *  Quy tắc: bạn bè ưu tiên alias, chỉ rơi về username khi alias trống. */
+    val displayName: String get() = alias?.takeIf { it.isNotBlank() } ?: username
+}

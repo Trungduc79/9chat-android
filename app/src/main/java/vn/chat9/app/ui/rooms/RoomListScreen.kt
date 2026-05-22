@@ -15,10 +15,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PersonAddAlt1
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -49,7 +54,13 @@ import vn.chat9.app.util.DateUtils
 import vn.chat9.app.util.UrlUtils
 
 @Composable
-fun RoomListScreen(onRoomClick: (Room) -> Unit, refreshKey: Int = 0, onSearchClick: () -> Unit = {}) {
+fun RoomListScreen(
+    onRoomClick: (Room) -> Unit,
+    refreshKey: Int = 0,
+    onSearchClick: () -> Unit = {},
+    onAddFriend: () -> Unit = {},
+    onCreateGroup: () -> Unit = {},
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -208,12 +219,70 @@ fun RoomListScreen(onRoomClick: (Room) -> Unit, refreshKey: Int = 0, onSearchCli
             }
             HorizontalDivider(color = Color(0x14000000), thickness = 1.dp)
         } else {
-            // Search bar
-            vn.chat9.app.ui.common.AppSearchBar(
-                onSearchClick = onSearchClick,
-                rightIconRes = vn.chat9.app.R.drawable.ic_add,
-                onRightIconClick = { /* TODO */ }
-            )
+            // Search bar + popup menu khi tap "+" (Zalo-style)
+            var menuOpen by remember { mutableStateOf(false) }
+            val canCreateGroup = vn.chat9.app.ui.common.hasPermission("room.create_group")
+
+            Box {
+                vn.chat9.app.ui.common.AppSearchBar(
+                    onSearchClick = onSearchClick,
+                    rightIconRes = vn.chat9.app.R.drawable.ic_add,
+                    onRightIconClick = { menuOpen = true }
+                )
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    offset = androidx.compose.ui.unit.DpOffset(x = (-8).dp, y = 0.dp),
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Thêm bạn") },
+                        leadingIcon = { Icon(Icons.Default.PersonAddAlt1, null) },
+                        onClick = {
+                            menuOpen = false
+                            onAddFriend()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Tạo nhóm",
+                                color = if (canCreateGroup) Color.Unspecified else Color.Gray,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.GroupAdd, null,
+                                tint = if (canCreateGroup) Color.Unspecified else Color.Gray,
+                            )
+                        },
+                        enabled = canCreateGroup,
+                        onClick = {
+                            menuOpen = false
+                            onCreateGroup()
+                        }
+                    )
+                    HorizontalDivider()
+                    // Các item TODO — disable + làm mờ, giữ trong UI để nhớ
+                    DropdownMenuItem(
+                        text = { Text("Tin lưu trữ", color = Color.Gray) },
+                        leadingIcon = { Icon(Icons.Default.Folder, null, tint = Color.Gray) },
+                        enabled = false,
+                        onClick = {}
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Cuộc gọi nhóm", color = Color.Gray) },
+                        leadingIcon = { Icon(Icons.Default.VideoCall, null, tint = Color.Gray) },
+                        enabled = false,
+                        onClick = {}
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Thiết bị đăng nhập", color = Color.Gray) },
+                        leadingIcon = { Icon(Icons.Default.Devices, null, tint = Color.Gray) },
+                        enabled = false,
+                        onClick = {}
+                    )
+                }
+            }
         }
 
         if (isLoading) {
@@ -824,33 +893,48 @@ fun RoomItem(
             }
             Spacer(Modifier.width(12.dp))
         }
-        // Avatar
+        // Avatar — group dùng GroupAvatar mosaic, private dùng avatar
+        // người kia (hoặc letter fallback nếu null).
         Box {
-            var showFallback by remember { mutableStateOf(avatarUrl == null) }
-            if (avatarUrl != null && !showFallback) {
-                AsyncImage(
-                    model = avatarUrl,
-                    contentDescription = name,
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape),
-                    contentScale = ContentScale.Crop,
-                    onError = { showFallback = true }
+            if (room.type == "group") {
+                vn.chat9.app.ui.common.GroupAvatar(
+                    avatarUrl = room.avatar,
+                    members = (room.member_previews ?: emptyList()).map {
+                        vn.chat9.app.ui.common.GroupAvatarMember(
+                            avatarUrl = it.avatar,
+                            initial = it.username.firstOrNull()?.toString() ?: "?",
+                        )
+                    },
+                    memberCount = room.member_count ?: (room.member_previews?.size ?: 0),
+                    size = 50.dp,
                 )
             } else {
-                Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF3E1F91)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = name.firstOrNull()?.uppercase() ?: "?",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
+                var showFallback by remember { mutableStateOf(avatarUrl == null) }
+                if (avatarUrl != null && !showFallback) {
+                    AsyncImage(
+                        model = avatarUrl,
+                        contentDescription = name,
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop,
+                        onError = { showFallback = true }
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF3E1F91)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = name.firstOrNull()?.uppercase() ?: "?",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        )
+                    }
                 }
             }
             // Online dot

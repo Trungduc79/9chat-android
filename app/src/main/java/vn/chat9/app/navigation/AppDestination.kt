@@ -55,6 +55,22 @@ sealed class AppDestination {
     /** Timeline / stories feed (same as Home(TIMELINE) but standalone route). */
     data object Timeline : AppDestination()
 
+    /** Phase 2 — Admin screen: gán role + mời nhân viên. Chỉ user có
+     *  `staff.assign_role` / `staff.invite` / `system.permission_manage`
+     *  mới thấy entry vào (gate ở AccountScreen). */
+    data object Admin : AppDestination()
+
+    /** Tạo nhóm chat — chọn nhiều bạn + đặt tên. Gate `room.create_group`
+     *  thực hiện ở popup menu trong RoomListScreen, screen chỉ render khi
+     *  caller đã có quyền. */
+    data object CreateGroup : AppDestination()
+
+    /** Xem danh sách thành viên của 1 group. */
+    data class GroupMembers(val roomId: Int) : AppDestination()
+
+    /** Accept invite link `9chat://invite/{token}`. Public preview rồi accept. */
+    data class AcceptInvite(val token: String) : AppDestination()
+
     /**
      * External share TO the app — fired when another app picks 9chat from its
      * share sheet. Holds one or more payloads to forward into a chat of the

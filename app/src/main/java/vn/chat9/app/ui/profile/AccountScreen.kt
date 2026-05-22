@@ -35,7 +35,11 @@ import vn.chat9.app.App
 import vn.chat9.app.util.UrlUtils
 
 @Composable
-fun AccountScreen(onLogout: () -> Unit, onEditProfile: () -> Unit) {
+fun AccountScreen(
+    onLogout: () -> Unit,
+    onEditProfile: () -> Unit,
+    onOpenAdmin: () -> Unit = {},
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -130,6 +134,22 @@ fun AccountScreen(onLogout: () -> Unit, onEditProfile: () -> Unit) {
         Column(modifier = Modifier.background(Color.White)) {
             AccountMenuItem(Icons.Default.Shield, Color(0xFF3E1F91), "Tài khoản và bảo mật") { }
             AccountMenuItem(Icons.Default.Lock, Color(0xFF3E1F91), "Quyền riêng tư") { }
+        }
+
+        // Phase 2 — entry vào Admin chỉ hiện cho user có quyền quản lý
+        // staff (owner / manager / system.permission_manage). Default-DENY
+        // nên user thường KHÔNG thấy gì cả, không bị tray icon đùn.
+        if (vn.chat9.app.ui.common.canManageStaff()) {
+            Spacer(Modifier.height(8.dp))
+            Column(modifier = Modifier.background(Color.White)) {
+                AccountMenuItem(
+                    icon = Icons.Default.AdminPanelSettings,
+                    iconBg = Color(0xFFB71C1C),
+                    title = "Quản trị nhân sự",
+                    subtitle = "Gán role, mời nhân viên",
+                    onClick = onOpenAdmin,
+                )
+            }
         }
 
         Spacer(Modifier.height(60.dp))

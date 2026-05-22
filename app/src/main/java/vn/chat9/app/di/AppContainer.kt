@@ -12,6 +12,7 @@ import vn.chat9.app.BuildConfig
 import vn.chat9.app.data.api.ApiService
 import vn.chat9.app.data.api.AuthInterceptor
 import vn.chat9.app.data.local.TokenManager
+import vn.chat9.app.data.repository.PermissionStore
 import vn.chat9.app.data.socket.ChatSocket
 import java.util.concurrent.TimeUnit
 
@@ -46,4 +47,29 @@ class AppContainer(context: Context) {
     val api: ApiService = retrofit.create(ApiService::class.java)
 
     val socket: ChatSocket = ChatSocket { tokenManager.accessToken ?: "" }
+
+    /** Phase 2 RBAC store. Refresh sau login + force-refresh sau accept invite. */
+    val permissions: PermissionStore = PermissionStore(api)
+
+    /** Global cache map(user_id → alias). Single source of truth cho alias
+     *  resolution trên toàn app. Refresh sau login + force-refresh sau khi
+     *  user save alias / accept friend request. */
+    val friendAliases: vn.chat9.app.data.repository.FriendAliasStore =
+        vn.chat9.app.data.repository.FriendAliasStore(api)
+
+    /** In-process cache cho URL preview metadata. Đọc/ghi từ main thread
+     *  (Composable rendering) — không cần Mutex. Server cache Redis 24h
+     *  rồi nên client cache trong session đủ tránh fetch lại. */
+    val urlPreviewCache: MutableMap<String, vn.chat9.app.data.model.UrlPreview> =
+        mutableMapOf()
+
+    // ===== vapi (backend nghiệp vụ cho module quản trị) =====
+    // LAZY: chỉ khởi tạo khi 1 module quản trị thực sự gọi → tài khoản thường
+    // (không vào module nào) KHÔNG tốn tài nguyên dựng Retrofit/OkHttp cho vapi.
+    val vapi: vn.chat9.app.data.vapi.VapiApiService by lazy {
+        vn.chat9.app.data.vapi.VapiClient.create()
+    }
+    val warehouseRepo: vn.chat9.app.data.repository.WarehouseRepository by lazy {
+        vn.chat9.app.data.repository.WarehouseRepository(vapi)
+    }
 }

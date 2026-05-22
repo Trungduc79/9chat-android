@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vận hành kho — Hướng dẫn triển khai 9chat Android</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --card2:#1e222b; --bd:#2c313c; --bd2:#3a4150;
+    --tx:#e6e8ec; --mut:#9aa3b2; --pri:#5e6ad2; --grn:#4cb782; --org:#f2994a; --red:#eb5757; --vio:#9b87f5;
+    --mono:'SF Mono',ui-monospace,Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.65 system-ui,Segoe UI,Roboto,sans-serif;}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 22px 120px;}
+  h1{font-size:30px;font-weight:600;margin:.2em 0 .1em;letter-spacing:-.3px}
+  h2{font-size:23px;font-weight:600;margin:2.2em 0 .5em;padding-top:.6em;border-top:1px solid var(--bd);color:#fff}
+  h3{font-size:18px;font-weight:600;margin:1.6em 0 .4em;color:#fff}
+  h4{font-size:15px;font-weight:600;margin:1.2em 0 .3em;color:var(--vio)}
+  p{margin:.5em 0}
+  a{color:var(--pri);text-decoration:none}
+  code{font-family:var(--mono);font-size:.86em;background:var(--card2);padding:1px 6px;border-radius:5px;border:1px solid var(--bd)}
+  pre{background:#0b0d11;border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.55}
+  pre code{background:none;border:none;padding:0}
+  .lead{color:var(--mut);font-size:16px}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;vertical-align:middle}
+  .t-be{background:rgba(94,106,210,.18);color:#aab2f0}
+  .t-fe{background:rgba(76,183,130,.18);color:#7fd3a8}
+  .t-and{background:rgba(155,135,245,.18);color:#c3b6fb}
+  .t-warn{background:rgba(235,87,87,.16);color:#f1908f}
+  table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:13.5px}
+  th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--card2);font-weight:600}
+  td code{font-size:.92em}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px 18px;margin:1em 0}
+  .note{border-left:3px solid var(--pri);background:rgba(94,106,210,.07)}
+  .warn{border-left:3px solid var(--red);background:rgba(235,87,87,.07)}
+  .ok{border-left:3px solid var(--grn);background:rgba(76,183,130,.07)}
+  .muted{color:var(--mut)}
+  ul,ol{margin:.4em 0 .6em;padding-left:22px}
+  li{margin:.22em 0}
+  .toc{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 22px;margin:1.4em 0}
+  .toc ol{columns:2;column-gap:32px}
+  .pill{font-family:var(--mono);font-size:12px;color:var(--org)}
+  .ascii{white-space:pre;font-family:var(--mono);font-size:12px;line-height:1.35;background:#0b0d11;border:1px solid var(--bd);border-radius:10px;padding:14px;overflow:auto;color:var(--mut)}
+  hr{border:none;border-top:1px solid var(--bd);margin:2em 0}
+  .kbd{font-family:var(--mono);background:var(--card2);border:1px solid var(--bd2);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.85em}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:720px){.toc ol{columns:1}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Vận hành kho (Warehouse Ops)</h1>
+<p class="lead">Tài liệu logic backend + frontend + cấu trúc UI của module <b>vận hành kho</b> (đang chạy trên <code>admin.ai.vn</code> + <code>vapi.vn</code>), và hướng dẫn chi tiết <b>port sang app 9chat Android</b> (Kotlin + Jetpack Compose).</p>
+<p class="muted">Phiên bản tài liệu: 2026-05-21 · Nguồn: vapi (Laravel 10) + admin.ai.vn (Vue 3) → đích: 9chat-android (<code>vn.chat9.app</code>).</p>
+
+<div class="toc">
+<b>Mục lục</b>
+<ol>
+  <li><a href="#cleancode">Tóm tắt clean code</a></li>
+  <li><a href="#concepts">Khái niệm &amp; luồng nghiệp vụ</a></li>
+  <li><a href="#backend">Backend (vapi) — API &amp; logic</a></li>
+  <li><a href="#models">Mô hình dữ liệu</a></li>
+  <li><a href="#fulfill">Logic xác nhận giao + tách đơn</a></li>
+  <li><a href="#frontend">Frontend (Vue) — cấu trúc UI</a></li>
+  <li><a href="#android">Triển khai Android (chính)</a> · <a href="#nav">Navigation Compose</a></li>
+  <li><a href="#screens">Chi tiết từng màn Compose</a></li>
+  <li><a href="#gotchas">Cạm bẫy &amp; lưu ý</a></li>
+  <li><a href="#checklist">Checklist clean code</a></li>
+</ol>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="cleancode">1. Tóm tắt clean code</h2>
+<p>Module kho được xây theo các nguyên tắc sau — giữ nguyên khi port:</p>
+<ul>
+  <li><b>Surgical / single-responsibility:</b> mỗi endpoint làm 1 việc rõ ràng (<code>confirm</code> duyệt, <code>fulfill</code> giao, <code>show</code> đọc). Không gộp business logic vào controller list.</li>
+  <li><b>Snapshot pattern:</b> mỗi <code>order_item</code> lưu <code>snapshot</code> (tên SP, phân loại, đơn vị, conversion_factor, giá) → UI không phụ thuộc catalog hiện tại; tên/đơn vị luôn đúng tại thời điểm tạo đơn.</li>
+  <li><b>Tồn kho nhất quán giao dịch:</b> khi đổi SL giao, BE <code>revertOneItem()</code> (hoàn tồn cũ) rồi <code>applyOneItem()</code> (trừ theo SL mới) trong 1 transaction → tổng consume luôn = SL gốc.</li>
+  <li><b>Validation song song FE+BE:</b> mọi guard (≥1 ảnh, tổng giao &gt; 0, không vượt tồn) đều có ở cả 2 phía; FE để UX, BE để an toàn.</li>
+  <li><b>Số học đơn vị:</b> tồn kho lưu ở <b>base unit</b>; quy đổi sang đơn vị hiển thị qua <code>conversion_factor</code>. Không hardcode đơn vị.</li>
+  <li><b>Trạng thái rõ ràng:</b> <code>draft → confirmed → delivered/received</code>. Mỗi bước có người/endpoint riêng; không nhảy cóc.</li>
+  <li><b>Đọc qua eager-load, không tra cứu rời:</b> tên đối tác / tồn kho được BE nhồi sẵn vào response (<code>with()</code> + accessor append), tránh FE tra cứu từ list paginated (fail im lặng).</li>
+</ul>
+
+<!-- ============================================================= -->
+<h2 id="concepts">2. Khái niệm &amp; luồng nghiệp vụ</h2>
+
+<h3>Loại đơn &amp; hướng kho</h3>
+<table>
+<tr><th>type</th><th>Nhãn UI kho</th><th>Hướng tồn</th><th>Tab</th><th>Status sau fulfill</th></tr>
+<tr><td><code>sale</code></td><td>Xuất kho</td><td>Giảm tồn</td><td>Đơn bán</td><td><code>delivered</code></td></tr>
+<tr><td><code>customer_return</code></td><td>Xuất kho*</td><td>Tăng tồn</td><td>Đơn bán</td><td><code>delivered</code></td></tr>
+<tr><td><code>purchase</code></td><td>Nhập kho</td><td>Tăng tồn</td><td>Đơn nhập</td><td><code>received</code></td></tr>
+<tr><td><code>supplier_return</code></td><td>Nhập kho*</td><td>Giảm tồn</td><td>Đơn nhập</td><td><code>received</code></td></tr>
+</table>
+<p class="muted">* Nhãn UI hiện theo công thức <code>isPurchase = type ∈ {purchase, supplier_return}</code> → "Nhập kho"; còn lại "Xuất kho". Lưu ý nhãn UI <b>không</b> trùng tuyệt đối với hướng tồn (đây là quy ước workflow kho hiện tại).</p>
+
+<h3>Luồng tổng thể</h3>
+<div class="ascii">Admin soạn đơn (draft)
+   │  POST /orders/{id}/confirm
+   ▼
+confirmed  ──────────────►  NV kho thấy ở tab Đơn bán / Đơn nhập (cũ trước)
+   │
+   │  NV mở đơn → chỉnh SL giao thực tế từng món → chụp/chọn ảnh (≥1)
+   │  → tích kiểm tất cả món → "Xác nhận giao"
+   │  POST /orders/{id}/fulfill { items:[{id,qty_delivered}], ... }
+   ▼
+delivered / received   +   (nếu giao thiếu) → tạo ĐƠN NHÁP "phần còn lại"
+   │
+   ▼
+Tab Hoàn thành (chỉ đơn của chính NV, trong ngày; admin/manager xem hết)</div>
+
+<!-- ============================================================= -->
+<h2 id="backend">3. Backend (vapi) — API &amp; logic <span class="tag t-be">vapi.vn/api</span></h2>
+
+<div class="card note">
+<b>Base &amp; headers</b> — mọi request kho gọi tới <code>https://vapi.vn/api</code> (KHÁC backend 9chat). Header bắt buộc:
+<pre><code>X-API-Key: &lt;api_key&gt;          // key dùng chung cho app (scope rộng)
+Authorization: Bearer &lt;token&gt;  // Sanctum token của user kho (sau login)
+Accept: application/json</code></pre>
+Response chuẩn: <code>{ "success":true, "data":..., "meta":{...}, "message":"" }</code>.
+</div>
+
+<h3>Danh sách endpoint</h3>
+<table>
+<tr><th>Method · Path</th><th>Mục đích</th><th>Body / Query</th><th>Trả về</th></tr>
+<tr><td><code>POST /v1/auth/login</code></td><td>Đăng nhập NV kho</td><td><code>{email,password}</code></td><td><code>{token,user{id,name,role},permissions}</code></td></tr>
+<tr><td><code>GET /v1/orders</code></td><td>List đơn theo status</td><td><code>?status=confirmed&amp;per_page=100</code></td><td><code>data: Order[]</code> (kèm items + party)</td></tr>
+<tr><td><code>GET /v1/orders/{id}</code></td><td>Chi tiết đơn</td><td>—</td><td><code>Order</code> (items.variant, party, parent, <b>items[].stock_unit</b>)</td></tr>
+<tr><td><code>POST /v1/orders/{id}/confirm</code></td><td>Duyệt (draft→confirmed)</td><td>—</td><td><code>Order</code></td></tr>
+<tr><td><code>POST /v1/orders/{id}/fulfill</code></td><td>Xác nhận giao/nhận</td><td>xem §5</td><td><code>{order, remainder_order}</code></td></tr>
+<tr><td><code>GET /v1/attachments</code></td><td>Ảnh của đơn / toàn bộ</td><td><code>?attachable_type=order&amp;attachable_id={id}&amp;kind=photo</code> (bỏ <code>attachable_id</code> = lấy hết)</td><td><code>Attachment[]</code> (có <code>url</code>)</td></tr>
+<tr><td><code>POST /v1/attachments</code></td><td>Upload ảnh xác nhận</td><td>multipart: <code>attachable_type, attachable_id, file, kind=photo</code></td><td><code>Attachment</code> (có <code>url</code>)</td></tr>
+<tr><td><code>DELETE /v1/attachments/{id}</code></td><td>Xoá ảnh (soft delete)</td><td>—</td><td>—</td></tr>
+</table>
+
+<div class="card warn">
+<span class="tag t-warn">QUAN TRỌNG</span> <b>Ảnh phải ở disk public:</b> backend lưu <code>kind=photo</code> vào disk <code>public</code>; cần <code>php artisan storage:link</code> + nginx phục vụ <code>/storage/</code> (đã thêm <code>location ^~ /storage/</code> vào vhost vapi.vn). Trên Android chỉ cần load thẳng <code>attachment.url</code> bằng Coil — không xử lý gì thêm.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="models">4. Mô hình dữ liệu</h2>
+
+<h4>Order</h4>
+<pre><code>{
+  "id": 49,
+  "type": "sale",                     // sale|customer_return|purchase|supplier_return
+  "status": "confirmed",              // draft|confirmed|delivered|received|...
+  "code": "ORD-000123",
+  "party_id": 12,
+  "party": { "id":12, "name":"Khách hàng A" },   // KH (sale) hoặc NCC (purchase)
+  "parent_order_id": null,            // != null nếu là đơn "phần còn lại"
+  "ordered_at": "2026-05-20T08:00:00+07:00",
+  "confirmed_at": "2026-05-20T09:00:00+07:00",
+  "completed_at": null,               // set khi fulfill
+  "notes": "Giao buổi sáng",
+  "total_amount": 1500000,
+  "meta": {
+    "fulfillment": {                  // chỉ có sau khi fulfill
+      "by_user_id": 2, "by_name":"Trần Văn B", "note":null,
+      "photo_count": 2, "at":"...",
+      "remainder_order_id": 77, "remainder_order_code":"ORD-000124"
+    }
+  },
+  "items": [ OrderItem, ... ]
+}</code></pre>
+
+<h4>OrderItem</h4>
+<pre><code>{
+  "id": 501,
+  "variant_id": 88, "unit_id": 9,
+  "qty_unit": 5,                      // SL theo đơn vị (đang là SL "giao" sau fulfill)
+  "unit_price": 300000,
+  "stock_unit": 12.0,                 // ⭐ tồn kho hiện tại quy về ĐƠN VỊ item (BE append @show)
+  "snapshot": {
+    "product_name": "Nước ngọt Coca",
+    "variant_attributes": { "Dung tích":"330ml", "Loại":"Lon" },  // {tên: giá trị}
+    "unit_name": "thùng", "unit_code":"unit-2",
+    "conversion_factor": 24           // 1 thùng = 24 base unit
+  }
+}</code></pre>
+<p class="muted"><code>stock_unit</code> = <code>variant.stock</code> (base) ÷ <code>snapshot.conversion_factor</code>, làm tròn 3 số. Backend accessor <code>OrderItem::getStockUnitAttribute()</code>, append trong <code>show()</code> sau khi eager-load <code>items.variant</code>.</p>
+
+<h4>Attachment</h4>
+<pre><code>{ "id":7, "attachable_type":"order", "attachable_id":49,
+  "kind":"photo", "url":"https://vapi.vn/storage/attachments/order/49/xxx.jpg",
+  "original_name":"IMG.jpg", "created_at":"..." }</code></pre>
+
+<!-- ============================================================= -->
+<h2 id="fulfill">5. Logic xác nhận giao + tách đơn <span class="tag t-be">cốt lõi</span></h2>
+
+<h4>Request</h4>
+<pre><code>POST /v1/orders/{id}/fulfill
+{
+  "confirmed_by_user_id": 2,         // = user kho đang đăng nhập (cho meta.fulfillment)
+  "confirmed_by_name": "Trần Văn B",
+  "note": null,
+  "items": [                         // SL giao THỰC TẾ từng món
+    { "id": 501, "qty_delivered": 5 },
+    { "id": 502, "qty_delivered": 0 }   // 0 = bỏ giao món này
+  ]
+}</code></pre>
+
+<h4>Quy tắc (BE enforce — FE cũng mirror)</h4>
+<ul>
+  <li>Đơn phải <code>status = confirmed</code>; nếu không → 422 <code>NOT_CONFIRMED</code>.</li>
+  <li>Phải có <b>≥ 1 ảnh</b> (<code>kind=photo</code>) đã upload trước → nếu không 422 <code>PHOTO_REQUIRED</code>.</li>
+  <li>Mỗi <code>qty_delivered ≥ 0</code> (được phép = 0). <b>Tổng giao &gt; 0</b> → nếu tổng = 0: 422 <code>TOTAL_DELIVERED_ZERO</code>.</li>
+  <li><b>Cho phép giao DƯ</b> (qty_delivered &gt; qty_unit) — không chặn ở BE.</li>
+  <li>Với mỗi món có <code>qty_delivered ≠ qty_unit</code>:
+    <ul>
+      <li>Nếu <code>delivered &lt; ordered</code> → gom phần thiếu <code>(ordered − delivered)</code> vào danh sách "còn lại".</li>
+      <li><code>revertOneItem()</code> (hoàn tồn cũ) → nếu <code>delivered &gt; 0</code> thì <code>applyOneItem(delivered)</code> (trừ tồn mới); nếu <code>= 0</code> thì <b>bỏ món khỏi đơn đã giao</b>.</li>
+      <li>Nếu type=purchase → ghi lại inventory batch cho món mới.</li>
+    </ul>
+  </li>
+  <li>Nếu có "phần còn lại" → tạo <b>1 đơn DRAFT mới</b>: cùng <code>type/party</code>, <code>parent_order_id</code> = đơn gốc, <code>notes = "Phần còn lại của đơn hàng {code}"</code>.</li>
+  <li>Set đơn gốc: <code>status = delivered|received</code>, <code>completed_at = now</code>, <code>meta.fulfillment = {...}</code>.</li>
+  <li>Tất cả trong <b>1 DB transaction</b>; lỗi runtime → rollback + 422 <code>FULFILL_FAILED</code>.</li>
+</ul>
+
+<h4>Chặn vượt tồn (chỉ FE, chỉ đơn XUẤT kho)</h4>
+<p><code>consumesStock = !isPurchase</code> (tức "Xuất kho"). Nếu <code>qty_delivered &gt; stock_unit</code> ở 1 món của đơn xuất → checkbox món đó <b>bị khoá</b> → không tích được → không xác nhận được. Giảm SL ≤ tồn thì mở lại. Đơn <b>nhập</b> chỉ hiển thị tồn, không chặn.</p>
+
+<h4>Response</h4>
+<pre><code>{ "data": {
+    "order": Order,              // đơn đã giao (status mới, items đã cập nhật SL)
+    "remainder_order": Order|null  // đơn nháp phần còn lại (nếu có)
+} }</code></pre>
+
+<!-- ============================================================= -->
+<h2 id="frontend">6. Frontend (Vue) — cấu trúc UI <span class="tag t-fe">tham chiếu</span></h2>
+<p>3 màn chính (file trong <code>admin.ai.vn/src/views/warehouse/</code> + <code>components/layout/WarehouseLayout.vue</code>):</p>
+
+<h3>6.1 Danh sách (WarehouseOrdersView) — 4 tab</h3>
+<div class="ascii">┌──────────────────────────────────────────────┐
+│ Đơn bán(3) | Đơn nhập | Hoàn thành | Ảnh chụp ⋮│  ← tab bar (3 chấm ở suffix)
+├──────────────────────────────────────────────┤
+│ ┌──────────────────────────────────────────┐ │
+│ │ Khách hàng A          20/05    ORD-000123 │ │  ← card đơn (viền sáng #3a3a3a)
+│ │ [Xuất kho]  Tổng: 5 thùng + 2 lốc         │ │
+│ │ Ghi chú: giao gấp                          │ │
+│ └──────────────────────────────────────────┘ │</div>
+<ul>
+  <li><b>Đơn bán</b> = <code>confirmed</code> &amp; <code>!isPurchase</code>; <b>Đơn nhập</b> = <code>confirmed</code> &amp; <code>isPurchase</code>. Sắp <b>cũ trước</b> (FIFO: <code>confirmed_at → ordered_at → created_at</code>).</li>
+  <li><b>Hoàn thành</b> = <code>delivered + received</code>, lọc <b>trong ngày + đúng NV xác nhận</b> (<code>meta.fulfillment.by_user_id == user.id</code>); role <code>r_admin/r_manager</code> xem hết. Sắp mới nhất trước.</li>
+  <li><b>Ảnh chụp</b> = gallery toàn bộ ảnh <code>kind=photo</code> của order (mới nhất trước), tap mở đơn.</li>
+  <li>Menu <b>3 chấm</b> (suffix tab): tên NV (label) · Đăng xuất · Tải lại trang (xoá cache).</li>
+</ul>
+
+<h3>6.2 Chi tiết đơn (WarehouseOrderDetailView)</h3>
+<div class="ascii">← Danh sách
+┌──────────────────────────────────────────────┐
+│ Khách hàng A            20/05      ORD-000123  │  card thông tin
+│ [Xuất kho]  tổng  3/5 thùng,  20/25 bịch       │  ← bộ đếm giao/đặt (live, mỗi đv 1 màu)
+└──────────────────────────────────────────────┘
+┌── viền đỏ ───────────────────────────────────┐
+│ ⚠ Ghi chú:  giao trước 10h                     │  (chỉ hiện nếu có note)
+└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Mặt hàng (2)                      Tất cả [✔]   │
+│ ─────────────────────────────────────────────│
+│ Nước ngọt Coca                                 │  ← dòng 1: tên SP (full width)
+│ Dung tích: 330ml, Loại: Lon  [−] 5 [+] Tồn 12: thùng [✔] │  dòng 2
+│ ─────────────────────────────────────────────│
+│ ...                                            │
+└──────────────────────────────────────────────┘
+┌── Ảnh xác nhận (bắt buộc ≥1) ── [Chọn/chụp] ──┐
+│ [img] [img] [img]                              │
+└──────────────────────────────────────────────┘
+[ Tích kiểm tất cả mặt hàng để xác nhận ]
+[============  XÁC NHẬN GIAO HÀNG  ============]  ← sticky đáy</div>
+
+<h4>Logic chi tiết cần port</h4>
+<ul>
+  <li><b>SL giao sửa được:</b> stepper <code>[−] [input] [+]</code>, khởi tạo = <code>qty_unit</code>; cho phép vượt SL đặt; không âm.</li>
+  <li><b>Bộ đếm "giao/đặt"</b> trên card thông tin cập nhật <b>ngay</b> khi chỉnh; gộp theo đơn vị, mỗi đơn vị 1 màu.</li>
+  <li><b>"Tồn {N}:"</b> trước tên đơn vị mỗi món (từ <code>stock_unit</code>); đỏ khi vượt tồn (đơn xuất).</li>
+  <li><b>Gate xác nhận</b> = (≥1 ảnh) ∧ (mọi món được tích ∧ không vượt tồn) ∧ (tổng giao &gt; 0).</li>
+  <li><b>Tích kiểm:</b> mỗi món 1 checkbox; "Tất cả" tích/bỏ hết; checkbox bị khoá nếu món vượt tồn.</li>
+  <li><b>Ảnh:</b> chọn từ thư viện (ưu tiên) hoặc chụp; upload từng ảnh; lưới 3 cột; xoá được.</li>
+  <li><b>Vuốt điều hướng:</b> phải→trái = đơn kế (hết → toast); trái→phải = đơn trước (đầu DS → về list). Hiệu ứng trượt. Thứ tự theo danh sách của tab. (Áp dụng 3 tab bán/nhập/hoàn thành, không áp Ảnh chụp.)</li>
+  <li><b>Xác nhận</b> → gọi fulfill → toast (kèm mã đơn còn lại nếu có) → quay về list.</li>
+</ul>
+
+<!-- ============================================================= -->
+<h2 id="android">7. Triển khai Android (9chat) <span class="tag t-and">Kotlin + Compose</span></h2>
+
+<div class="card note">
+<b>Nguyên tắc tích hợp vào 9chat:</b> warehouse gọi <b>backend vapi</b> (khác 9chat). Tạo 1 lớp mạng <b>riêng</b> (Retrofit + base url + interceptor token vapi) đặt cạnh module 9chat hiện có, KHÔNG trộn vào <code>ApiService</code> của 9chat. Theo gợi ý hệ sinh thái: vận hành kho là 1 "screen nghiệp vụ" mở từ message-type hoặc từ menu — tách thành feature module <code>ui/warehouse</code>.
+</div>
+
+<h3>7.1 Cấu trúc package đề xuất</h3>
+<pre><code>vn.chat9.app/
+├─ data/
+│  ├─ vapi/                         ← lớp mạng riêng cho vapi
+│  │  ├─ VapiApiService.kt          (Retrofit interface)
+│  │  ├─ VapiClient.kt              (Retrofit + OkHttp + interceptor)
+│  │  ├─ VapiTokenStore.kt          (lưu token kho riêng, DataStore)
+│  │  └─ dto/  Order, OrderItem, Attachment, FulfillRequest...
+│  └─ repository/WarehouseRepository.kt
+├─ di/VapiModule.kt                 ← Hilt: cung cấp VapiApiService, repo
+└─ ui/warehouse/
+   ├─ WarehouseLoginScreen.kt + LoginViewModel
+   ├─ WarehouseOrdersScreen.kt + OrdersViewModel   (4 tab + pager)
+   ├─ WarehouseOrderDetailScreen.kt + DetailViewModel (swipe pager)
+   └─ components/  OrderCard, ItemRow, QtyStepper, PhotoGrid, ConfirmBar</code></pre>
+
+<h3>7.2 Networking — Retrofit riêng cho vapi</h3>
+<pre><code>// VapiApiService.kt
+interface VapiApiService {
+    @POST("v1/auth/login")
+    suspend fun login(@Body body: LoginRequest): VapiResponse&lt;LoginData&gt;
+
+    @GET("v1/orders")
+    suspend fun listOrders(
+        @Query("status") status: String,
+        @Query("per_page") perPage: Int = 100,
+    ): VapiResponse&lt;List&lt;OrderDto&gt;&gt;
+
+    @GET("v1/orders/{id}")
+    suspend fun getOrder(@Path("id") id: Long): VapiResponse&lt;OrderDto&gt;
+
+    @POST("v1/orders/{id}/fulfill")
+    suspend fun fulfill(
+        @Path("id") id: Long,
+        @Body body: FulfillRequest,
+    ): VapiResponse&lt;FulfillResult&gt;
+
+    @GET("v1/attachments")
+    suspend fun listAttachments(
+        @Query("attachable_type") type: String = "order",
+        @Query("attachable_id") id: Long? = null,
+        @Query("kind") kind: String = "photo",
+        @Query("per_page") perPage: Int = 200,
+    ): VapiResponse&lt;List&lt;AttachmentDto&gt;&gt;
+
+    @Multipart
+    @POST("v1/attachments")
+    suspend fun uploadPhoto(
+        @Part("attachable_type") type: RequestBody,
+        @Part("attachable_id") id: RequestBody,
+        @Part("kind") kind: RequestBody,
+        @Part file: MultipartBody.Part,
+    ): VapiResponse&lt;AttachmentDto&gt;
+
+    @DELETE("v1/attachments/{id}")
+    suspend fun deleteAttachment(@Path("id") id: Long): VapiResponse&lt;Unit&gt;
+}
+
+// VapiResponse.kt — wrapper giống ApiResponse của 9chat
+data class VapiResponse&lt;T&gt;(val success: Boolean, val data: T?, val message: String? = null, val code: String? = null)</code></pre>
+
+<pre><code>// VapiClient.kt — interceptor gắn X-API-Key + Bearer
+class VapiAuthInterceptor(private val tokenStore: VapiTokenStore) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request().newBuilder()
+            .header("Accept", "application/json")
+            .header("X-API-Key", BuildConfig.VAPI_API_KEY)
+        tokenStore.token?.let { req.header("Authorization", "Bearer $it") }
+        return chain.proceed(req.build())
+    }
+}
+// Retrofit: baseUrl("https://vapi.vn/api/") + GsonConverterFactory
+// Lỗi 4xx: Retrofit ném HttpException → bắt riêng, parse body JSON lấy `code`/`message`
+//          (xem memory: Android Retrofit 4xx).</code></pre>
+
+<div class="card warn"><span class="tag t-warn">Gotcha Android</span> Retrofit tự ném <code>HttpException</code> cho 4xx/5xx. Để hiện message lỗi từ BE (vd <code>TOTAL_DELIVERED_ZERO</code>, <code>PHOTO_REQUIRED</code>), phải <code>try/catch HttpException</code> rồi parse <code>e.response()?.errorBody()</code> thành JSON.</div>
+
+<h3>7.3 DTO (Gson)</h3>
+<pre><code>data class OrderDto(
+    val id: Long, val type: String, val status: String, val code: String,
+    @SerializedName("party") val party: PartyDto?,
+    @SerializedName("ordered_at") val orderedAt: String?,
+    @SerializedName("confirmed_at") val confirmedAt: String?,
+    @SerializedName("completed_at") val completedAt: String?,
+    val notes: String?,
+    val meta: MetaDto?,
+    val items: List&lt;OrderItemDto&gt; = emptyList(),
+)
+data class OrderItemDto(
+    val id: Long,
+    @SerializedName("variant_id") val variantId: Long,
+    @SerializedName("qty_unit") val qtyUnit: Double,
+    @SerializedName("stock_unit") val stockUnit: Double?,   // tồn quy đổi
+    val snapshot: SnapshotDto,
+)
+data class SnapshotDto(
+    @SerializedName("product_name") val productName: String?,
+    @SerializedName("variant_attributes") val variantAttributes: Map&lt;String,String&gt;? = null,
+    @SerializedName("unit_name") val unitName: String?,
+)
+data class MetaDto(val fulfillment: FulfillmentDto?)
+data class FulfillmentDto(@SerializedName("by_user_id") val byUserId: Long?)
+
+data class FulfillRequest(
+    @SerializedName("confirmed_by_user_id") val confirmedByUserId: Long?,
+    @SerializedName("confirmed_by_name") val confirmedByName: String?,
+    val items: List&lt;DeliveredItem&gt;,
+)
+data class DeliveredItem(val id: Long, @SerializedName("qty_delivered") val qtyDelivered: Double)
+data class FulfillResult(val order: OrderDto, @SerializedName("remainder_order") val remainderOrder: OrderDto?)
+data class AttachmentDto(val id: Long, val url: String?, @SerializedName("attachable_id") val attachableId: Long)</code></pre>
+
+<h3 id="nav">7.4 Navigation Compose <span class="tag t-and">nav graph + swipe context</span></h3>
+
+<p>Module kho là 1 <b>nested nav graph</b> (<code>route = "warehouse"</code>) cắm vào <code>NavHost</code> sẵn có của 9chat. Mở từ message-type <code>warehouse</code> hoặc menu → <code>navController.navigate("warehouse")</code>.</p>
+
+<h4>Sơ đồ điều hướng</h4>
+<div class="ascii">9chat NavHost (main)
+  │  tap message-type "warehouse"  /  menu  → navigate("warehouse")
+  ▼
+╔═══════════════ nested graph: route="warehouse" ═══════════════╗
+║ startDestination = orders (hoặc login nếu CHƯA có token kho)   ║
+║                                                               ║
+║  warehouse/login ──login OK──► navigate(orders){             ║
+║       (VapiTokenStore trống)       popUpTo(login){inclusive}} ║
+║                                                               ║
+║  warehouse/orders  ◄───────────────── popBackStack() ────────╮║
+║   │  TabRow: Đơn bán | Đơn nhập | Hoàn thành | Ảnh chụp       │║
+║   │  tap card →  whNavVm.setContext(tab, ids, index)          │║
+║   │             navigate("warehouse/order")                   │║
+║   ▼                                                           │║
+║  warehouse/order   (1 route duy nhất)                         │║
+║   │  HorizontalPager(pageCount = ids.size, initial = index)   │║
+║   │   ├ page → WarehouseOrderPage(orderId = ids[page])        │║
+║   │   │        (mỗi page = DetailViewModel key theo orderId)  │║
+║   │   ├ vuốt = ĐỔI PAGE (không đổi route, không chồng stack)  │║
+║   │   └ nút "Danh sách" / back ─────────────────────────────╯║
+║   │  (mở từ tab Ảnh chụp → ids = [chỉ 1 id] → không vuốt)     ║
+║   ▼ sau khi "Xác nhận giao" thành công                        ║
+║      popBackStack()  +  OrdersVM.refresh()  +  Snackbar       ║
+╚═══════════════════════════════════════════════════════════════╝</div>
+
+<div class="card note"><b>Vì sao 1 route + Pager?</b> Vuốt qua lại giữa các đơn = đổi <i>page</i> trong cùng route → không chồng back-stack (vuốt 10 đơn, bấm back vẫn về thẳng list). Tương đương bên Vue dùng <code>router.replace</code> + <code>useSwipe</code>; ở Compose <code>HorizontalPager</code> lo luôn cử chỉ + animation trượt.</div>
+
+<h4>Khai báo nav graph</h4>
+<pre><code>object WhRoutes {
+    const val GRAPH  = "warehouse"
+    const val LOGIN  = "warehouse/login"
+    const val ORDERS = "warehouse/orders"
+    const val DETAIL = "warehouse/order"      // không cần {id}: id nằm trong shared VM
+}
+
+fun NavGraphBuilder.warehouseGraph(nav: NavHostController) {
+    navigation(
+        route = WhRoutes.GRAPH,
+        startDestination = WhRoutes.ORDERS,    // guard token ở ngoài; chưa có → LOGIN
+    ) {
+        composable(WhRoutes.LOGIN) {
+            WarehouseLoginScreen(onSuccess = {
+                nav.navigate(WhRoutes.ORDERS) { popUpTo(WhRoutes.LOGIN){ inclusive = true } }
+            })
+        }
+        composable(WhRoutes.ORDERS) { entry -&gt;
+            val navVm = entry.sharedWhNavViewModel(nav)
+            WarehouseOrdersScreen(
+                onOpenOrder = { tab, ids, index -&gt;
+                    navVm.setContext(tab, ids, index)   // lưu thứ tự id của tab
+                    nav.navigate(WhRoutes.DETAIL)
+                },
+            )
+        }
+        composable(WhRoutes.DETAIL) { entry -&gt;
+            val navVm = entry.sharedWhNavViewModel(nav)
+            WarehouseOrderDetailScreen(
+                ids = navVm.ids, startIndex = navVm.index,
+                onBack = { nav.popBackStack() },
+                onConfirmed = { remainderCode -&gt;
+                    nav.popBackStack()
+                    // OrdersVM.refresh() + show snackbar(remainderCode)
+                },
+            )
+        }
+    }
+}
+
+// Cắm vào NavHost chính của 9chat:
+NavHost(nav, startDestination = "main") {
+    /* ... các graph 9chat ... */
+    warehouseGraph(nav)
+}</code></pre>
+
+<h4>Shared VM theo nav graph = "warehouseNav store" của Vue</h4>
+<pre><code>// ViewModel scoped vào BackStackEntry của graph "warehouse" → sống suốt
+// thời gian ở trong module kho, mọi màn con dùng chung (giống Pinia store).
+@HiltViewModel
+class WhNavViewModel @Inject constructor() : ViewModel() {
+    var tab: String = "";              private set
+    var ids: List&lt;Long&gt; = emptyList(); private set
+    var index: Int = 0;                private set
+    fun setContext(tab: String, ids: List&lt;Long&gt;, index: Int) {
+        this.tab = tab; this.ids = ids; this.index = index
+    }
+    fun clear() { ids = emptyList(); index = 0 }   // mở từ tab Ảnh chụp
+}
+
+@Composable
+fun NavBackStackEntry.sharedWhNavViewModel(nav: NavHostController): WhNavViewModel {
+    val parent = remember(this) { nav.getBackStackEntry(WhRoutes.GRAPH) }
+    return hiltViewModel(parent)   // cùng 1 instance cho mọi màn trong graph
+}</code></pre>
+
+<h4>Màn chi tiết = Pager</h4>
+<pre><code>@Composable
+fun WarehouseOrderDetailScreen(ids: List&lt;Long&gt;, startIndex: Int, onBack:()-&gt;Unit, ...) {
+    if (ids.isEmpty()) { onBack(); return }
+    val pager = rememberPagerState(initialPage = startIndex) { ids.size }
+    HorizontalPager(state = pager, key = { ids[it] }) { page -&gt;
+        // mỗi đơn 1 ViewModel riêng theo orderId
+        val vm: WarehouseOrderDetailViewModel = hiltViewModel(key = "wh-order-${ids[page]}")
+        LaunchedEffect(ids[page]) { vm.load(ids[page]) }
+        WarehouseOrderContent(vm, onBack = onBack)
+    }
+}</code></pre>
+<p class="muted"><b>Biên:</b> <code>HorizontalPager</code> tự chặn vuốt quá đầu/cuối. Nếu muốn đúng hành vi Vue (vuốt phải ở đơn đầu → về list, vuốt trái ở đơn cuối → toast "Đã hết đơn hàng"): bọc thêm <code>nestedScroll</code>/<code>detectHorizontalDragGestures</code> ở mép, hoặc theo dõi <code>pager.currentPage</code> + over-scroll. Đa số trường hợp để Pager bound tự nhiên là đủ.</p>
+
+<!-- ============================================================= -->
+<h2 id="screens">8. Chi tiết từng màn Compose</h2>
+
+<h3>8.1 OrdersViewModel — tabs + sort + filter</h3>
+<pre><code>enum class WhTab { SALE, PURCHASE, DONE, PHOTOS }
+
+@HiltViewModel
+class WarehouseOrdersViewModel @Inject constructor(
+    private val repo: WarehouseRepository,
+    private val session: VapiSession,        // chứa user.id, role
+) : ViewModel() {
+    private val confirmed = MutableStateFlow&lt;List&lt;OrderDto&gt;&gt;(emptyList())
+    private val done = MutableStateFlow&lt;List&lt;OrderDto&gt;&gt;(emptyList())
+
+    fun isPurchase(o: OrderDto) = o.type == "purchase" || o.type == "supplier_return"
+
+    // FIFO: cũ trước
+    private fun sentTime(o: OrderDto) = o.confirmedAt ?: o.orderedAt ?: ""
+    val saleList  = confirmed.map { it.filter{o-&gt;!isPurchase(o)}.sortedBy(::sentTime) }
+    val purchaseList = confirmed.map { it.filter(::isPurchase).sortedBy(::sentTime) }
+
+    // Hoàn thành: trong ngày + đúng NV (admin/manager xem hết)
+    val doneList = done.map { list -&gt;
+        val seeAll = session.role == "r_admin" || session.role == "r_manager"
+        list.filter { o -&gt;
+            isToday(o.completedAt) &amp;&amp;
+            (seeAll || o.meta?.fulfillment?.byUserId == session.userId)
+        }.sortedByDescending { it.completedAt }
+    }
+
+    fun loadConfirmed() = viewModelScope.launch { confirmed.value = repo.list("confirmed") }
+    fun loadDone() = viewModelScope.launch {
+        done.value = repo.list("delivered") + repo.list("received")
+    }
+}</code></pre>
+
+<p>UI: <code>TabRow</code> + <code>HorizontalPager</code> (Accompanist/Compose foundation). Card đơn = <code>OrderCard</code> Composable; tap → điều hướng <code>warehouse/order/{id}</code> kèm danh sách id của tab (cho swipe — xem 8.3).</p>
+
+<h3>8.2 DetailViewModel — SL giao, tồn, gate</h3>
+<pre><code>@HiltViewModel
+class WarehouseOrderDetailViewModel @Inject constructor(
+    private val repo: WarehouseRepository, private val session: VapiSession,
+) : ViewModel() {
+    var order by mutableStateOf&lt;OrderDto?&gt;(null); private set
+    val delivered = mutableStateMapOf&lt;Long, Double&gt;()   // qty giao theo item
+    val checked   = mutableStateMapOf&lt;Long, Boolean&gt;()
+    var photos by mutableStateOf&lt;List&lt;AttachmentDto&gt;&gt;(emptyList()); private set
+
+    val isPurchase get() = order?.let { it.type=="purchase"||it.type=="supplier_return" } ?: false
+    val consumesStock get() = !isPurchase
+
+    fun isBlocked(it: OrderItemDto): Boolean {
+        val s = it.stockUnit ?: return false
+        return consumesStock &amp;&amp; (delivered[it.id] ?: 0.0) &gt; s + 1e-9
+    }
+    val hasOverStock get() = order?.items?.any(::isBlocked) ?: false
+    val totalDelivered get() = order?.items?.sumOf { (delivered[it.id] ?: 0.0).coerceAtLeast(0.0) } ?: 0.0
+    val allChecked get() = order?.items?.takeIf{it.isNotEmpty()}
+        ?.all { (checked[it.id]==true) &amp;&amp; !isBlocked(it) } ?: false
+    val canConfirm get() = photos.isNotEmpty() &amp;&amp; allChecked &amp;&amp; totalDelivered &gt; 0 &amp;&amp; !hasOverStock
+
+    fun load(id: Long) = viewModelScope.launch {
+        order = null
+        val o = repo.getOrder(id); order = o
+        delivered.clear(); checked.clear()
+        o.items.forEach { delivered[it.id] = it.qtyUnit; checked[it.id] = false }
+        photos = repo.photos(id)
+    }
+    fun step(it: OrderItemDto, d: Double) {
+        delivered[it.id] = ((delivered[it.id] ?: it.qtyUnit) + d).coerceAtLeast(0.0)
+    }
+    fun confirm(onDone: (remainderCode: String?) -&gt; Unit) = viewModelScope.launch {
+        val items = order!!.items.map { DeliveredItem(it.id, (delivered[it.id]?:0.0).coerceAtLeast(0.0)) }
+        val res = repo.fulfill(order!!.id, FulfillRequest(session.userId, session.userName, items))
+        onDone(res.remainderOrder?.code)
+    }
+}</code></pre>
+
+<h3>8.3 Swipe giữa các đơn</h3>
+<p>2 cách:</p>
+<ul>
+  <li><b>Khuyến nghị — HorizontalPager:</b> màn chi tiết là 1 <code>HorizontalPager</code> với <code>pageCount = ids.size</code>; mỗi page render 1 đơn (load theo <code>ids[page]</code>). Vuốt = đổi page tự nhiên + có sẵn animation. Truyền <code>ids</code> (thứ tự id của tab) + index khởi đầu khi điều hướng vào.</li>
+  <li><b>Thủ công:</b> <code>Modifier.pointerInput { detectHorizontalDragGestures }</code>; vuốt trái→next, phải→prev; tự làm <code>AnimatedContent</code> trượt. (Tương đương <code>useSwipe</code> + <code>&lt;Transition&gt;</code> bên Vue.)</li>
+</ul>
+<p>Biên: hết danh sách (next) → <code>Snackbar "Đã hết đơn hàng"</code>; đầu danh sách (prev) → <code>popBackStack()</code> về list. Tab Ảnh chụp mở đơn thì <b>không</b> truyền ids (không swipe).</p>
+
+<h3>8.4 QtyStepper + ItemRow (Compose)</h3>
+<pre><code>@Composable fun QtyStepper(value: Double, onChange:(Double)-&gt;Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedIconButton(onClick = { onChange((value-1).coerceAtLeast(0.0)) }) { Text("−") }
+        BasicTextField(
+            value = trimZeros(value),
+            onValueChange = { it.toDoubleOrNull()?.let(onChange) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.width(56.dp), textStyle = ... // trắng, to, canh giữa
+        )
+        OutlinedIconButton(onClick = { onChange(value+1) }) { Text("+") }
+    }
+}</code></pre>
+<p>ItemRow = 2 dòng: dòng 1 <code>productName</code> (full width); dòng 2 = <code>variantAttributes</code> dạng "tên: giá trị" (tên mờ, giá trị trắng) + <code>QtyStepper</code> + <code>"Tồn {stockUnit}:"</code> (đỏ nếu <code>isBlocked</code>) + <code>unitName</code> + <code>Checkbox(enabled = !isBlocked)</code>.</p>
+
+<h3>8.5 Ảnh: chọn/chụp + upload</h3>
+<pre><code>// Chọn nhiều ảnh (ưu tiên thư viện)
+val picker = rememberLauncherForActivityResult(
+    ActivityResultContracts.GetMultipleContents()
+) { uris -&gt; uris.forEach { vm.uploadPhoto(it) } }   // picker.launch("image/*")
+// Chụp mới: ActivityResultContracts.TakePicture() (cần FileProvider Uri)
+
+// Upload (repo): Uri -&gt; bytes -&gt; MultipartBody.Part
+fun part(uri: Uri): MultipartBody.Part {
+    val bytes = context.contentResolver.openInputStream(uri)!!.readBytes()
+    val body = bytes.toRequestBody("image/*".toMediaType())
+    return MultipartBody.Part.createFormData("file", "photo.jpg", body)
+}</code></pre>
+<p>Hiển thị lưới ảnh bằng <b>Coil</b> (<code>AsyncImage(model = attachment.url)</code>). Nén ảnh trước khi upload (đỡ tốn data) — dùng <code>BitmapFactory</code> + <code>compress(JPEG, 80)</code>.</p>
+
+<!-- ============================================================= -->
+<h2 id="gotchas">9. Cạm bẫy &amp; lưu ý</h2>
+<table>
+<tr><th>Vấn đề</th><th>Xử lý</th></tr>
+<tr><td>Backend kho ≠ backend 9chat</td><td>Retrofit + token + base url <b>riêng</b> cho vapi; đừng trộn <code>ApiService</code>.</td></tr>
+<tr><td>Tồn kho <code>variant.stock</code> KHÔNG tự trừ theo đơn (Phase 1)</td><td>"Tồn" là số chính thức user quản (import/điều chỉnh). Chặn vượt tồn chỉ là guard, không phản ánh tự động đơn đã đặt. (Phase 2 mới dời timing trừ kho.)</td></tr>
+<tr><td>Phân quyền xem đơn của nhau</td><td>Hiện lọc ở <b>FE</b> (API vẫn trả hết vì dùng chung API key). Enforcement cấp API thuộc RBAC pending — Android cũng nên lọc tương tự + để dành chỗ siết sau.</td></tr>
+<tr><td>Retrofit 4xx ném HttpException</td><td>try/catch + parse errorBody JSON lấy <code>code/message</code> (TOTAL_DELIVERED_ZERO, PHOTO_REQUIRED, NOT_CONFIRMED, FULFILL_FAILED...).</td></tr>
+<tr><td>Gson + <code>by lazy</code></td><td>Gson dùng Unsafe bỏ qua constructor → field <code>by lazy</code> = null → NPE. Dùng <code>val ... get()</code> computed thay lazy. (memory: Android Gson + lazy)</td></tr>
+<tr><td>Edge-to-edge insets</td><td>Mỗi screen mới phải pad status + navigation bars (giống nút xác nhận sticky đáy đã chừa <code>safe-area</code> bên web). (memory: Android window insets)</td></tr>
+<tr><td>Đơn vị fractional</td><td><code>stock_unit</code> = base/cf có thể lẻ; so sánh vượt tồn dùng epsilon <code>1e-9</code>; hiển thị trimZeros.</td></tr>
+<tr><td>completed_at timezone</td><td>Lọc "trong ngày" so theo ngày local; chú ý server có thể trả UTC.</td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2 id="checklist">10. Checklist clean code (khi triển khai Android)</h2>
+<div class="card ok">
+<ul>
+  <li>☐ Lớp mạng vapi tách riêng, có interceptor token + X-API-Key.</li>
+  <li>☐ DTO map đúng <code>@SerializedName</code>; không dùng <code>by lazy</code> trong data class Gson.</li>
+  <li>☐ ViewModel giữ toàn bộ business state (delivered/checked/gate); Composable chỉ render.</li>
+  <li>☐ Gate xác nhận = ảnh ∧ tích đủ ∧ tổng&gt;0 ∧ không vượt tồn — mirror đúng BE.</li>
+  <li>☐ Fulfill gửi <code>items[]</code> đầy đủ (kể cả qty=0); xử lý <code>remainder_order</code> trong toast.</li>
+  <li>☐ Mọi lỗi API → đọc <code>code/message</code> thật, không nuốt thành "thất bại" chung chung.</li>
+  <li>☐ Insets/safe-area cho mọi màn; nút sticky đáy chừa navigation bar.</li>
+  <li>☐ Ảnh: nén trước upload, load bằng Coil, xử lý quyền CAMERA/đọc media.</li>
+  <li>☐ Swipe: HorizontalPager với ids của tab; biên đầu/cuối xử lý đúng.</li>
+  <li>☐ Chặn double-tap zoom không cần (native), nhưng giữ trải nghiệm 1 tay: nút +/− đủ lớn (≥40dp).</li>
+  <li>☐ Lọc Hoàn thành theo user + ngày; chừa chỗ siết RBAC ở API sau.</li>
+</ul>
+</div>
+
+<hr/>
+<p class="muted">Tài liệu sinh từ trạng thái module kho tại 2026-05-21 (vapi commit chuỗi <code>...cae0373</code>, admin <code>...eeb8424</code>). Khi backend kho đổi (vd Phase 2 timing tồn kho, RBAC API), cập nhật lại §5, §9.</p>
+
+</div>
+</body>
+</html>

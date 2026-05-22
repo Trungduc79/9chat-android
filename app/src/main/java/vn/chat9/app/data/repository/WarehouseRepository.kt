@@ -1,0 +1,41 @@
+package vn.chat9.app.data.repository
+
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import vn.chat9.app.data.vapi.VapiApiService
+import vn.chat9.app.data.vapi.dto.AttachmentDto
+import vn.chat9.app.data.vapi.dto.FulfillRequest
+import vn.chat9.app.data.vapi.dto.FulfillResult
+import vn.chat9.app.data.vapi.dto.OrderDto
+
+/**
+ * Repository module Vận hành kho — gọi vapi. Không giữ state (stateless) →
+ * ViewModel của module tự quản state + scope, rời module là sạch.
+ */
+class WarehouseRepository(private val api: VapiApiService) {
+
+    suspend fun listOrders(status: String): List<OrderDto> =
+        api.listOrders(status).data ?: emptyList()
+
+    suspend fun getOrder(id: Long): OrderDto? = api.getOrder(id).data
+
+    suspend fun fulfill(id: Long, req: FulfillRequest): FulfillResult? = api.fulfill(id, req).data
+
+    suspend fun photos(orderId: Long): List<AttachmentDto> =
+        api.listAttachments(id = orderId).data ?: emptyList()
+
+    suspend fun allPhotos(): List<AttachmentDto> = api.listAttachments().data ?: emptyList()
+
+    suspend fun uploadPhoto(orderId: Long, bytes: ByteArray): AttachmentDto? {
+        fun text(s: String) = s.toRequestBody("text/plain".toMediaType())
+        val part = MultipartBody.Part.createFormData(
+            "file", "photo.jpg", bytes.toRequestBody("image/*".toMediaType()),
+        )
+        return api.uploadAttachment(text("order"), text(orderId.toString()), text("photo"), part).data
+    }
+
+    suspend fun deletePhoto(id: Long) {
+        api.deleteAttachment(id)
+    }
+}

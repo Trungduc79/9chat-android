@@ -111,6 +111,8 @@ fun LoginScreen(
                                         res.data.refresh_token,
                                         res.data.user
                                     )
+                                    container.permissions.refresh(force = true)
+                                    container.friendAliases.refresh(force = true)
                                     onLoginSuccess()
                                 } else {
                                     error = res.message ?: "Đăng nhập thất bại"
@@ -147,6 +149,8 @@ fun LoginScreen(
                                 res.data.refresh_token,
                                 res.data.user
                             )
+                            container.permissions.refresh(force = true)
+                            container.friendAliases.refresh(force = true)
                             onLoginSuccess()
                         } else {
                             error = res.message ?: "Đăng nhập thất bại"

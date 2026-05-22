@@ -29,6 +29,15 @@ class TokenManager(context: Context) {
         }
         set(value) = prefs.edit().putString("user", value?.let { gson.toJson(it) }).apply()
 
+    /**
+     * FCM endpoint của thiết bị này — lưu khi subscribe push trong
+     * MainActivity, dùng khi logout để gọi /push/unsubscribe.php trên
+     * server. clear() sẽ wipe luôn endpoint này (theo prefs.edit().clear()).
+     */
+    var fcmEndpoint: String?
+        get() = prefs.getString("fcm_endpoint", null)
+        set(value) = prefs.edit().putString("fcm_endpoint", value).apply()
+
     val isLoggedIn: Boolean get() = accessToken != null
 
     fun saveAuth(accessToken: String, refreshToken: String, user: User) {
