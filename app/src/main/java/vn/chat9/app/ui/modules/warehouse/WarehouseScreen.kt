@@ -21,19 +21,25 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.OrderDto
@@ -50,6 +56,8 @@ import vn.chat9.app.ui.explore.AdminColors
 fun WarehouseScreen(onBack: () -> Unit) {
     val container = (LocalContext.current.applicationContext as App).container
     val repo = container.warehouseRepo
+    val scope = rememberCoroutineScope()
+    val pullState = rememberPullToRefreshState()
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var openOrderId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -62,6 +70,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
     var doneLoaded by remember { mutableStateOf(false) }
     var photosLoaded by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }   // TEST tạm: pull-to-refresh
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
@@ -98,6 +107,21 @@ fun WarehouseScreen(onBack: () -> Unit) {
 
     fun goTab(t: Int) { if (t in 0..3) { forward = t > tab; tab = t; openOrderId = null } }
 
+    // TEST tạm: vuốt xuống reload data tab hiện tại (gỡ sau khi test xong).
+    fun refresh() {
+        scope.launch {
+            refreshing = true; error = null
+            try {
+                when (tab) {
+                    0, 1 -> confirmed = repo.listOrders("confirmed")
+                    2 -> { done = repo.listOrders("delivered") + repo.listOrders("received"); doneLoaded = true }
+                    3 -> { photos = repo.allPhotos(); photosLoaded = true }
+                }
+            } catch (e: Exception) { error = "Không tải được dữ liệu" }
+            refreshing = false
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
         TabRow(
             selectedTabIndex = tab,
@@ -122,16 +146,33 @@ fun WarehouseScreen(onBack: () -> Unit) {
                 label = "warehouseContent",
             ) { (oid, t) ->
                 if (oid == null) {
-                    WarehouseOrdersList(
-                        tab = t,
-                        list = listFor(t),
-                        photos = photos,
-                        loading = loading,
-                        error = error,
-                        onOpenOrder = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
-                        onTabDelta = { d -> goTab(tab + d) },
-                        onExitModule = onBack,
-                    )
+                    // TEST tạm: vuốt xuống để reload (gỡ sau khi test xong).
+                    PullToRefreshBox(
+                        isRefreshing = refreshing,
+                        onRefresh = { refresh() },
+                        state = pullState,
+                        modifier = Modifier.fillMaxSize(),
+                        indicator = {
+                            PullToRefreshDefaults.Indicator(
+                                state = pullState,
+                                isRefreshing = refreshing,
+                                modifier = Modifier.align(Alignment.TopCenter),
+                                containerColor = AdminColors.Card,
+                                color = AdminColors.Primary,
+                            )
+                        },
+                    ) {
+                        WarehouseOrdersList(
+                            tab = t,
+                            list = listFor(t),
+                            photos = photos,
+                            loading = loading,
+                            error = error,
+                            onOpenOrder = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
+                            onTabDelta = { d -> goTab(tab + d) },
+                            onExitModule = onBack,
+                        )
+                    }
                 } else {
                     WarehouseOrderDetail(
                         orderId = oid,

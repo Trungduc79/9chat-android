@@ -60,9 +60,9 @@ fun WarehouseOrdersList(
     ) {
         when {
             loading && empty ->
-                CircularProgressIndicator(Modifier.align(Alignment.Center), color = AdminColors.Primary)
+                ScrollableCenter { CircularProgressIndicator(color = AdminColors.Primary) }
             tab == 3 -> {
-                if (photos.isEmpty()) Text(error ?: "Chưa có ảnh", color = AdminColors.TextMuted, modifier = Modifier.align(Alignment.Center))
+                if (photos.isEmpty()) ScrollableCenter { Text(error ?: "Chưa có ảnh", color = AdminColors.TextMuted) }
                 else LazyVerticalGrid(columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp)) {
                     gridItems(photos, key = { it.id }) { p ->
                         AsyncImage(
@@ -73,11 +73,20 @@ fun WarehouseOrdersList(
                     }
                 }
             }
-            list.isEmpty() -> Text(error ?: "Không có đơn", color = AdminColors.TextMuted, modifier = Modifier.align(Alignment.Center))
+            list.isEmpty() -> ScrollableCenter { Text(error ?: "Không có đơn", color = AdminColors.TextMuted) }
             else -> LazyColumn(contentPadding = PaddingValues(12.dp)) {
                 items(list, key = { it.id }) { o -> OrderCard(o, tab) { onOpenOrder(o.id, list.map { it.id }) } }
             }
         }
+    }
+}
+
+/** LazyColumn (1 item phủ toàn màn) LUÔN dispatch nested-scroll → pull-to-refresh bắt
+ *  được cú vuốt CẢ KHI tab trống/đang tải. (Box/verticalScroll range-0 không dispatch ổn định.) */
+@Composable
+private fun ScrollableCenter(content: @Composable () -> Unit) {
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) { content() } }
     }
 }
 
@@ -112,6 +121,11 @@ private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
             if (!o.notes.isNullOrBlank()) {
                 Spacer(Modifier.height(6.dp))
                 Text(o.notes!!, fontSize = 12.sp, color = AdminColors.TextMuted)
+            }
+            // Tab Hoàn thành: ai đã xác nhận (ngày hiện ở góc phải trên).
+            if (tab == 2) o.meta?.fulfillment?.byName?.let { name ->
+                Spacer(Modifier.height(6.dp))
+                Text("Xác nhận: $name", fontSize = 12.sp, color = AdminColors.TextSecondary)
             }
         }
     }

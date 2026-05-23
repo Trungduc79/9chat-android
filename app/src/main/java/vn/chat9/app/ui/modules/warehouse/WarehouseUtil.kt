@@ -17,6 +17,13 @@ fun fmtDate(s: String?): String {
     return if (p.size == 3) "${p[2]}/${p[1]}/${p[0]}" else "—"
 }
 
+/** ISO "2026-05-20T09:30:00+07:00" -> "20/05/2026 09:30". Fallback fmtDate nếu thiếu giờ. */
+fun fmtDateTime(s: String?): String {
+    val d = fmtDate(s)
+    if (s == null || s.length < 16 || !s.contains('T')) return d
+    return "$d ${s.substring(11, 16)}"
+}
+
 /** completed_at có phải hôm nay (so theo ngày chuỗi yyyy-MM-dd). */
 fun isToday(s: String?): Boolean {
     if (s == null || s.length < 10) return false

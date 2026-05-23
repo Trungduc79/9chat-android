@@ -68,6 +68,7 @@ data class MetaDto(val fulfillment: FulfillmentDto? = null)
 data class FulfillmentDto(
     @SerializedName("by_user_id") val byUserId: Long? = null,
     @SerializedName("by_name") val byName: String? = null,
+    val at: String? = null,                    // thời điểm xác nhận (ISO)
 )
 
 // ----- fulfill -----

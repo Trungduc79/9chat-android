@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
@@ -287,6 +288,18 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean) {
                 Text("Tổng:", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
                 Spacer(Modifier.width(4.dp))
                 Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
+            }
+            // Truy vết: ai xác nhận / lúc nào (chỉ hiện khi đơn đã fulfill).
+            o.meta?.fulfillment?.takeIf { it.byName != null || it.at != null }?.let { f ->
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, null, tint = C.Success, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Xác nhận bởi ${f.byName ?: "—"} · ${fmtDateTime(f.at ?: o.completedAt)}",
+                        fontSize = 12.sp, color = C.TextMuted,
+                    )
+                }
             }
         }
     }
