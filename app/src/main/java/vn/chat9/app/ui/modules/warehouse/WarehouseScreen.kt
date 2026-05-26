@@ -8,19 +8,30 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Warehouse
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -43,6 +54,7 @@ import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.data.vapi.dto.WarehouseDto
 import vn.chat9.app.ui.explore.AdminColors
 
 /**
@@ -73,16 +85,32 @@ fun WarehouseScreen(onBack: () -> Unit) {
     var refreshing by remember { mutableStateOf(false) }   // TEST tạm: pull-to-refresh
     var error by remember { mutableStateOf<String?>(null) }
 
+    // Kho làm việc — bắt buộc chọn trước khi xem đơn. Persist trong TokenManager.
+    var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
+    var selectedWarehouseId by remember { mutableStateOf(container.tokenManager.selectedWarehouseId) }
+    var pickerOpen by remember { mutableStateOf(false) }
+    val currentWarehouse = warehouses.firstOrNull { it.id == selectedWarehouseId }
+
     LaunchedEffect(Unit) {
-        loading = true; error = null
-        try { confirmed = repo.listOrders("confirmed") } catch (e: Exception) { error = "Không tải được đơn" }
+        try { warehouses = repo.listWarehouses() } catch (_: Exception) {}
+    }
+
+    // Reload đơn confirmed khi đổi kho làm việc (key=warehouseId).
+    LaunchedEffect(selectedWarehouseId) {
+        if (selectedWarehouseId == null) return@LaunchedEffect
+        loading = true; error = null; doneLoaded = false
+        try { confirmed = repo.listOrders("confirmed", selectedWarehouseId) }
+        catch (e: Exception) { error = "Không tải được đơn" }
         loading = false
     }
-    LaunchedEffect(tab) {
+    LaunchedEffect(tab, selectedWarehouseId) {
+        if (selectedWarehouseId == null) return@LaunchedEffect
         if (tab == 2 && !doneLoaded) {
             loading = true; error = null
-            try { done = repo.listOrders("delivered") + repo.listOrders("received"); doneLoaded = true }
-            catch (e: Exception) { error = "Không tải được đơn hoàn thành" }
+            try {
+                done = repo.listOrders("delivered", selectedWarehouseId) + repo.listOrders("received", selectedWarehouseId)
+                doneLoaded = true
+            } catch (e: Exception) { error = "Không tải được đơn hoàn thành" }
             loading = false
         }
         if (tab == 3 && !photosLoaded) {
@@ -91,6 +119,11 @@ fun WarehouseScreen(onBack: () -> Unit) {
             catch (e: Exception) { error = "Không tải được ảnh" }
             loading = false
         }
+    }
+
+    // Tự mở picker nếu chưa chọn kho (sau khi warehouses load xong).
+    LaunchedEffect(warehouses, selectedWarehouseId) {
+        if (selectedWarehouseId == null && warehouses.isNotEmpty()) pickerOpen = true
     }
 
     val saleList = remember(confirmed) { confirmed.filter { !isPurchaseOrder(it) }.sortedBy(::sentToWhTime) }
@@ -113,8 +146,12 @@ fun WarehouseScreen(onBack: () -> Unit) {
             refreshing = true; error = null
             try {
                 when (tab) {
-                    0, 1 -> confirmed = repo.listOrders("confirmed")
-                    2 -> { done = repo.listOrders("delivered") + repo.listOrders("received"); doneLoaded = true }
+                    0, 1 -> confirmed = repo.listOrders("confirmed", selectedWarehouseId)
+                    2 -> {
+                        done = repo.listOrders("delivered", selectedWarehouseId) +
+                            repo.listOrders("received", selectedWarehouseId)
+                        doneLoaded = true
+                    }
                     3 -> { photos = repo.allPhotos(); photosLoaded = true }
                 }
             } catch (e: Exception) { error = "Không tải được dữ liệu" }
@@ -123,6 +160,27 @@ fun WarehouseScreen(onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
+        // Status bar nhỏ: kho làm việc đang chọn + bấm "Đổi" để mở picker.
+        Row(
+            modifier = Modifier.fillMaxWidth().background(AdminColors.Card)
+                .clickable { pickerOpen = true }.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Warehouse, null, tint = AdminColors.Primary, modifier = Modifier.height(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Kho làm việc: ${currentWarehouse?.name ?: "Chưa chọn"}",
+                fontSize = 12.sp,
+                color = if (currentWarehouse == null) AdminColors.Danger else AdminColors.TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { pickerOpen = true }, modifier = Modifier.height(28.dp)) {
+                Icon(Icons.Default.Edit, null, tint = AdminColors.Primary, modifier = Modifier.height(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("Đổi", fontSize = 12.sp, color = AdminColors.Primary)
+            }
+        }
+
         TabRow(
             selectedTabIndex = tab,
             containerColor = AdminColors.Card,
@@ -186,6 +244,48 @@ fun WarehouseScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    // Dialog chọn kho làm việc — auto mở khi chưa chọn; KHÔNG cho dismiss nếu null.
+    if (pickerOpen) {
+        AlertDialog(
+            onDismissRequest = { if (selectedWarehouseId != null) pickerOpen = false },
+            title = { Text("Chọn kho làm việc", color = AdminColors.Text) },
+            text = {
+                Column {
+                    if (warehouses.isEmpty()) {
+                        Text("Chưa có kho nào active", color = AdminColors.TextMuted)
+                    } else warehouses.forEach { w ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                selectedWarehouseId = w.id
+                                container.tokenManager.selectedWarehouseId = w.id
+                                pickerOpen = false
+                            }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Warehouse, null,
+                                tint = if (w.id == selectedWarehouseId) AdminColors.Primary else AdminColors.TextMuted,
+                                modifier = Modifier.height(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                w.name + (if (w.isDefault) "  (mặc định)" else ""),
+                                color = if (w.id == selectedWarehouseId) AdminColors.Primary else AdminColors.Text,
+                                fontSize = 14.sp,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (selectedWarehouseId != null) {
+                    TextButton(onClick = { pickerOpen = false }) { Text("Xong", color = AdminColors.Primary) }
+                }
+            },
+            containerColor = AdminColors.Card,
+        )
     }
 }
 

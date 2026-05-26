@@ -38,6 +38,16 @@ class TokenManager(context: Context) {
         get() = prefs.getString("fcm_endpoint", null)
         set(value) = prefs.edit().putString("fcm_endpoint", value).apply()
 
+    /** Module vận hành kho — kho làm việc đã chọn (null = chưa chọn → hiện overlay). */
+    var selectedWarehouseId: Long?
+        get() = prefs.getLong("wh_work_warehouse_id", -1L).takeIf { it > 0L }
+        set(value) = prefs.edit().putLong("wh_work_warehouse_id", value ?: -1L).apply()
+
+    /** Quỹ thu COD đã chọn tay (override default theo kho); null = dùng default. */
+    var selectedCasherId: Long?
+        get() = prefs.getLong("wh_work_casher_id", -1L).takeIf { it > 0L }
+        set(value) = prefs.edit().putLong("wh_work_casher_id", value ?: -1L).apply()
+
     val isLoggedIn: Boolean get() = accessToken != null
 
     fun saveAuth(accessToken: String, refreshToken: String, user: User) {

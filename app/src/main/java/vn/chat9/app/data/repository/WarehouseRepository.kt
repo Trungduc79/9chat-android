@@ -9,6 +9,7 @@ import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.data.vapi.dto.WarehouseDto
 
 /**
  * Repository module Vận hành kho — gọi vapi. Không giữ state (stateless) →
@@ -16,8 +17,8 @@ import vn.chat9.app.data.vapi.dto.OrderDto
  */
 class WarehouseRepository(private val api: VapiApiService) {
 
-    suspend fun listOrders(status: String): List<OrderDto> =
-        api.listOrders(status).data ?: emptyList()
+    suspend fun listOrders(status: String, warehouseId: Long? = null): List<OrderDto> =
+        api.listOrders(status, warehouseId).data ?: emptyList()
 
     suspend fun getOrder(id: Long): OrderDto? = api.getOrder(id).data
 
@@ -42,4 +43,7 @@ class WarehouseRepository(private val api: VapiApiService) {
 
     /** Quỹ thu/chi active — dropdown chọn quỹ COD ở màn fulfill. */
     suspend fun listCashers(): List<CasherDto> = api.listCashers().data ?: emptyList()
+
+    /** Kho active — màn chọn kho làm việc lúc bắt đầu module. */
+    suspend fun listWarehouses(): List<WarehouseDto> = api.listWarehouses().data ?: emptyList()
 }

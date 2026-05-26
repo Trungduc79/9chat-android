@@ -112,7 +112,12 @@ fun WarehouseOrderDetail(
     // Quỹ tiền mặt active (loại bank_account) cho dropdown COD.
     val cashCashers = cashers.filter { it.isActive && it.type != "bank_account" }
     LaunchedEffect(cashCashers) {
-        if (codCasherId == null) codCasherId = cashCashers.firstOrNull { it.isDefault }?.id ?: cashCashers.firstOrNull()?.id
+        if (codCasherId == null) {
+            val workWh = container.tokenManager.selectedWarehouseId
+            codCasherId = cashCashers.firstOrNull { it.warehouseId == workWh && workWh != null }?.id
+                ?: cashCashers.firstOrNull { it.isDefault }?.id
+                ?: cashCashers.firstOrNull()?.id
+        }
     }
 
     val o = order

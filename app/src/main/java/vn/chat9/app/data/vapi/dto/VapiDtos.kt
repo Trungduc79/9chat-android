@@ -114,3 +114,12 @@ data class CasherDto(
     @SerializedName("is_default") val isDefault: Boolean = false,
     @SerializedName("warehouse_id") val warehouseId: Long? = null,
 )
+
+// ----- warehouses -----
+data class WarehouseDto(
+    val id: Long = 0,
+    val name: String = "",
+    val code: String? = null,
+    @SerializedName("is_active") val isActive: Boolean = true,
+    @SerializedName("is_default") val isDefault: Boolean = false,
+)

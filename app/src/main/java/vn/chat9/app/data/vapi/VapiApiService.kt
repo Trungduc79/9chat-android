@@ -15,6 +15,7 @@ import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.data.vapi.dto.WarehouseDto
 
 /**
  * Retrofit cho vapi (gateway nghiệp vụ — KHÁC backend 9chat). Auth = X-API-Key
@@ -26,6 +27,7 @@ interface VapiApiService {
     @GET("v1/orders")
     suspend fun listOrders(
         @Query("status") status: String,
+        @Query("warehouse_id") warehouseId: Long? = null,
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<OrderDto>>
 
@@ -61,4 +63,11 @@ interface VapiApiService {
         @Query("active") active: Int = 1,
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<CasherDto>>
+
+    // Kho — màn chọn kho làm việc + lọc đơn theo kho
+    @GET("v1/warehouses")
+    suspend fun listWarehouses(
+        @Query("active") active: Int = 1,
+        @Query("per_page") perPage: Int = 100,
+    ): VapiResponse<List<WarehouseDto>>
 }
