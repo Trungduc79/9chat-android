@@ -410,7 +410,17 @@ private fun ItemRow(
     blocked: Boolean, onStep: (Double) -> Unit, onCheck: (Boolean) -> Unit,
 ) {
     val faint = C.Border.copy(alpha = 0.5f) // nút ± mờ thêm 50%
-    Column {
+    // Row ngoài: thumb trái 48dp (rowspan=2 — fill height của Column), Column phải = 2 dòng.
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        val img = item.imageUrl
+        if (img != null) AsyncImage(
+            model = img, contentDescription = null, contentScale = ContentScale.Crop,
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)),
+        ) else Box(
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)).background(C.Border.copy(alpha = 0.3f)),
+        )
+        Spacer(Modifier.width(8.dp))
+    Column(modifier = Modifier.weight(1f)) {
         Text(item.productName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = C.Text)
         Spacer(Modifier.height(3.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -450,7 +460,8 @@ private fun ItemRow(
                 )
             }
         }
-    }
+    }  // close inner Column (weight 1f)
+    }  // close outer Row (thumb + Column)
 }
 
 /**

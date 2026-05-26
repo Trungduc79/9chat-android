@@ -48,6 +48,7 @@ data class OrderItemDto(
     @SerializedName("variant_id") val variantId: Long = 0,
     @SerializedName("qty_unit") val qtyUnit: Double = 0.0,
     @SerializedName("stock_unit") val stockUnit: Double? = null,   // tồn quy đổi (BE @show)
+    @SerializedName("image_url") val imageUrl: String? = null,     // thumb variant (BE resolve)
     val snapshot: SnapshotDto = SnapshotDto(),
 ) {
     val productName: String get() = snapshot.productName ?: "SP #$variantId"
