@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
@@ -200,8 +202,14 @@ fun WarehouseOrderDetail(
         }
     }
 
+    val focusManager = LocalFocusManager.current
     Box(
-        Modifier.fillMaxSize().background(C.Bg).pointerInput(orderId, siblingIds) {
+        Modifier.fillMaxSize().background(C.Bg)
+            // Tap vùng trống (không phải input field) → tắt bàn phím.
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { focusManager.clearFocus() })
+            }
+            .pointerInput(orderId, siblingIds) {
             var dragSum = 0f
             detectHorizontalDragGestures(
                 onDragEnd = {
@@ -425,10 +433,17 @@ private fun ItemRow(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 val variantText = buildAnnotatedString {
                     val pairs = item.variantPairs
+                    // Tên nhóm phân loại: nhỏ 10% + Light + italic + mờ thêm 35% (alpha 0.65).
+                    val nameStyle = SpanStyle(
+                        color = C.TextMuted.copy(alpha = 0.65f),
+                        fontSize = 11.7.sp,
+                        fontWeight = FontWeight.Light,
+                        fontStyle = FontStyle.Italic,
+                    )
                     if (pairs.isEmpty()) withStyle(SpanStyle(color = C.TextMuted)) { append("—") }
                     else pairs.forEachIndexed { i, (name, value) ->
                         if (i > 0) withStyle(SpanStyle(color = C.TextMuted)) { append(", ") }
-                        withStyle(SpanStyle(color = C.TextMuted)) { append("$name: ") }
+                        withStyle(nameStyle) { append("$name: ") }
                         withStyle(SpanStyle(color = C.Text)) { append(value) }
                     }
                 }
@@ -453,7 +468,7 @@ private fun ItemRow(
                         decorationBox = { inner ->
                             Column {
                                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) { inner() }
-                                HorizontalDivider(thickness = 1.dp, color = if (blocked) C.Danger else C.Primary)
+                                HorizontalDivider(thickness = 1.dp, color = (if (blocked) C.Danger else C.Primary).copy(alpha = 0.5f))
                             }
                         },
                         modifier = Modifier.width(56.dp),
@@ -464,7 +479,7 @@ private fun ItemRow(
                 Spacer(Modifier.width(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (canFulfill) item.stockUnit?.let {
-                        Text("Tồn ${trimZeros(it)}", fontSize = 13.sp, color = if (blocked) C.Danger else C.TextMuted, maxLines = 1, softWrap = false)
+                        Text("Kho ${trimZeros(it)}", fontSize = 13.sp, color = if (blocked) C.Danger else C.TextMuted, maxLines = 1, softWrap = false)
                         Spacer(Modifier.width(3.dp))
                     }
                     Text(item.unitName, fontSize = 13.sp, color = C.TextMuted, maxLines = 1, softWrap = false)
