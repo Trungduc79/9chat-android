@@ -39,6 +39,9 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -229,19 +232,42 @@ fun WarehouseOrderDetail(
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density).toFloat()
-    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val statusBarPx = WindowInsets.statusBars.getTop(density).toFloat()
+    val systemNavBarPx = WindowInsets.navigationBars.getBottom(density).toFloat()
+    val view = androidx.compose.ui.platform.LocalView.current
+    val screenHeightPx = view.rootView.height.toFloat()
+    // Const layout heights — match WarehouseScreen + HomeScreen.
+    val topTabBarPx = with(density) { 48.dp.toPx() }       // WarehouseScreen TabRow
+    val bottomNavPx = with(density) { 64.dp.toPx() }       // HomeScreen BottomNav (default, non-compact)
+    // Bottom padding cho Column reserve nút Xác nhận / blocker text — tính sớm để dùng cả ở
+    // FocusCenterCtx (công thức center của Đức).
+    val bottomPadDp = when {
+        !canFulfill -> 12.dp
+        canConfirm -> 96.dp                                // 12 (padding) + 48 (button) + 36 spacing
+        confirmBlockReason.isNotEmpty() -> 44.dp           // blocker text bar
+        else -> 12.dp
+    }
+    val bottomPadPx = with(density) { bottomPadDp.toPx() }
     val scrollState = rememberScrollState()
-    // Ctx cho ItemRow + ShipFieldRow: scroll explicit center input vào "view còn lại"
-    // (= screen - keyboard). imeBottomState dùng rememberUpdatedState để coroutine
-    // sau delay(280) đọc được giá trị IME ĐÃ MỞ XONG, không phải 0 lúc onFocus.
+    // Push layout = IME - bottomNav (Đức yêu cầu): bàn phím che luôn bottomNav, content
+    // dừng ngay trên keyboard top. coerceAtLeast(0) khi IME nhỏ hơn bottomNav.
+    val effectiveImePadDp = with(density) {
+        (imeBottomPx - bottomNavPx - systemNavBarPx).coerceAtLeast(0f).toDp()
+    }
+    // FocusCenterCtx — center input theo công thức Đức:
+    //   topOfView    = statusBar + topTabBar
+    //   bottomOfView = screen - IME - confirmBtn
+    //   centerY      = (topOfView + bottomOfView) / 2
     val imeBottomState = rememberUpdatedState(imeBottomPx)
-    val focusCenterCtx = FocusCenterCtx(scrollState, screenHeightPx, imeBottomState)
+    val confirmBtnState = rememberUpdatedState(bottomPadPx)
+    val focusCenterCtx = FocusCenterCtx(
+        scrollState, screenHeightPx, statusBarPx, topTabBarPx, imeBottomState, confirmBtnState,
+    )
     Box(
         Modifier.fillMaxSize().background(C.Bg)
-            // KHÔNG imePadding: anh Đức muốn bàn phím overlay (che luôn bg nút Xác nhận +
-            // BottomNav), không đẩy layout. Scroll explicit lo việc đưa input lên giữa
-            // "view còn lại" cho từng input riêng.
+            // Push layout = IME - bottomNav (Đức 26/5): keyboard che luôn AppShell BottomNav,
+            // content dừng ngay trên keyboard top. Tính ngoài (effectiveImePadDp).
+            .padding(bottom = effectiveImePadDp)
             // Tap vùng trống (không phải input field) → tắt bàn phím.
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
@@ -265,13 +291,7 @@ fun WarehouseOrderDetail(
     ) {
         // Bottom padding chừa chỗ cho bar đáy: nút Xác nhận (96dp) khi đủ ĐK,
         // hoặc bar blocker (~44dp) khi có lý do chặn.
-        val bottomPad = when {
-            !canFulfill -> 12.dp
-            canConfirm -> 96.dp                                    // reserve cho nút Xác nhận float (kể cả khi IME mở — bàn phím chỉ overlay)
-            confirmBlockReason.isNotEmpty() -> 44.dp
-            else -> 12.dp
-        }
-        Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(top = 8.dp, bottom = bottomPad)) {
+        Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(top = 8.dp, bottom = bottomPadDp)) {
             if (loading || o == null) {
                 Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     if (loading) CircularProgressIndicator(color = C.Primary)
@@ -570,10 +590,14 @@ private fun ItemRow(
                             .onFocusChanged { state ->
                                 if (state.isFocused) scope.launch {
                                     kotlinx.coroutines.delay(280) // chờ IME mở xong + layout resize
-                                    // Visible app area = screen - keyboard (top). Center field
-                                    // vào giữa vùng này: targetY = visibleH/2 - fieldH/2.
-                                    val visibleH = focusCtx.screenHeightPx - focusCtx.imeBottomState.value
-                                    val targetY = visibleH / 2f - fieldHeightPx / 2f
+                                    // Công thức Đức:
+                                    //   topOfView    = statusBar + topTabBar
+                                    //   bottomOfView = screen - IME - confirmBtn
+                                    //   centerY      = (topOfView + bottomOfView) / 2
+                                    val topOfView = focusCtx.statusBarPx + focusCtx.topTabBarPx
+                                    val bottomOfView = focusCtx.screenHeightPx - focusCtx.imeBottomState.value - focusCtx.confirmBtnState.value
+                                    val centerY = (topOfView + bottomOfView) / 2f
+                                    val targetY = centerY - fieldHeightPx / 2f
                                     val delta = fieldYInWindow - targetY
                                     if (delta > 0f) runCatching {
                                         focusCtx.scrollState.animateScrollBy(delta)
@@ -682,8 +706,14 @@ private fun ShipFieldRow(label: String, value: String, focusCtx: FocusCenterCtx,
                         .onFocusChanged { state ->
                             if (state.isFocused) scope.launch {
                                 kotlinx.coroutines.delay(280)   // chờ IME mở xong
-                                val visibleH = focusCtx.screenHeightPx - focusCtx.imeBottomState.value
-                                val targetY = visibleH / 2f - fieldHeightPx / 2f
+                                // Công thức Đức:
+                                //   topOfView    = statusBar + topTabBar
+                                //   bottomOfView = screen - IME - confirmBtn
+                                //   centerY      = (topOfView + bottomOfView) / 2
+                                val topOfView = focusCtx.statusBarPx + focusCtx.topTabBarPx
+                                val bottomOfView = focusCtx.screenHeightPx - focusCtx.imeBottomState.value - focusCtx.confirmBtnState.value
+                                val centerY = (topOfView + bottomOfView) / 2f
+                                val targetY = centerY - fieldHeightPx / 2f
                                 val delta = fieldYInWindow - targetY
                                 if (delta > 0f) runCatching { focusCtx.scrollState.animateScrollBy(delta) }
                             }
@@ -696,10 +726,18 @@ private fun ShipFieldRow(label: String, value: String, focusCtx: FocusCenterCtx,
     }
 }
 
-/** Ctx truyền xuống ItemRow/ShipFieldRow để input scroll explicit (center theo screen - keyboard). */
+/**
+ * Ctx truyền xuống ItemRow/ShipFieldRow để input scroll explicit center theo công thức Đức:
+ *   topOfView    = statusBar + topTabBar
+ *   bottomOfView = screen - IME - confirmBtn
+ *   centerY      = (topOfView + bottomOfView) / 2
+ */
 data class FocusCenterCtx(
     val scrollState: ScrollState,
     val screenHeightPx: Float,
+    val statusBarPx: Float,
+    val topTabBarPx: Float,
     val imeBottomState: androidx.compose.runtime.State<Float>,
+    val confirmBtnState: androidx.compose.runtime.State<Float>,
 )
 
