@@ -16,6 +16,10 @@ data class OrderDto(
     @SerializedName("confirmed_at") val confirmedAt: String? = null,
     @SerializedName("completed_at") val completedAt: String? = null,
     val notes: String? = null,
+    // Phí ship + COD (init form ở màn fulfill; NV kho có thể sửa rồi gửi qua FulfillRequest)
+    @SerializedName("shipping_fee") val shippingFee: Double? = null,           // Phí ship KH → công nợ
+    @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // Phí ship KHO → chi phí
+    @SerializedName("cod_collected") val codCollected: Double? = null,         // Thu hộ COD
     val meta: MetaDto? = null,
     val items: List<OrderItemDto> = emptyList(),
 ) {
@@ -76,6 +80,12 @@ data class FulfillRequest(
     @SerializedName("confirmed_by_user_id") val confirmedByUserId: Long?,
     @SerializedName("confirmed_by_name") val confirmedByName: String?,
     val items: List<DeliveredItem>,
+    // Phí ship + COD (NV kho chốt lúc giao). BE: ship_KH→công nợ, ship_KHO→chi phí
+    // draft, COD→cust_cash_in thật (cộng quỹ + giảm phải thu).
+    @SerializedName("shipping_fee") val shippingFee: Double? = null,
+    @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null,
+    @SerializedName("cod_amount") val codAmount: Double? = null,
+    @SerializedName("cod_casher_id") val codCasherId: Long? = null,
 )
 
 data class DeliveredItem(
@@ -93,4 +103,14 @@ data class AttachmentDto(
     val id: Long = 0,
     val url: String? = null,
     @SerializedName("attachable_id") val attachableId: Long = 0,
+)
+
+// ----- cashers (quỹ thu tiền) -----
+data class CasherDto(
+    val id: Long = 0,
+    val name: String = "",
+    val type: String = "",                     // petty_cash|bank_account|main_cash|...
+    @SerializedName("is_active") val isActive: Boolean = true,
+    @SerializedName("is_default") val isDefault: Boolean = false,
+    @SerializedName("warehouse_id") val warehouseId: Long? = null,
 )

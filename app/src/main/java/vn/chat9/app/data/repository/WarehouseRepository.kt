@@ -5,6 +5,7 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import vn.chat9.app.data.vapi.VapiApiService
 import vn.chat9.app.data.vapi.dto.AttachmentDto
+import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.OrderDto
@@ -38,4 +39,7 @@ class WarehouseRepository(private val api: VapiApiService) {
     suspend fun deletePhoto(id: Long) {
         api.deleteAttachment(id)
     }
+
+    /** Quỹ thu/chi active — dropdown chọn quỹ COD ở màn fulfill. */
+    suspend fun listCashers(): List<CasherDto> = api.listCashers().data ?: emptyList()
 }

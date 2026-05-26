@@ -11,6 +11,7 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 import vn.chat9.app.data.vapi.dto.AttachmentDto
+import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.OrderDto
@@ -53,4 +54,11 @@ interface VapiApiService {
 
     @DELETE("v1/attachments/{id}")
     suspend fun deleteAttachment(@Path("id") id: Long): VapiResponse<Unit>
+
+    // Quỹ thu/chi (cashers) — dropdown chọn quỹ cho COD
+    @GET("v1/cashers")
+    suspend fun listCashers(
+        @Query("active") active: Int = 1,
+        @Query("per_page") perPage: Int = 100,
+    ): VapiResponse<List<CasherDto>>
 }
