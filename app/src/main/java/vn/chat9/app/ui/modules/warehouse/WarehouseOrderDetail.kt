@@ -35,14 +35,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
@@ -230,6 +231,13 @@ fun WarehouseOrderDetail(
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val keyboardOpen = imeBottomPx > 0
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val scrollState = rememberScrollState()
+    // Ctx cho ItemRow: scroll explicit để center input vào giữa "view còn lại"
+    // (= screen - keyboard), không phải center theo viewport scroll (lệch vì có
+    // status bar / tab bar / cards InfoCard chiếm phần trên).
+    val focusCenterCtx = FocusCenterCtx(scrollState, screenHeightPx, imeBottomPx.toFloat())
     Box(
         Modifier.fillMaxSize().background(C.Bg)
             // imePadding() chuẩn — bottom padding = IME inset = chiều cao bàn phím từ system.
@@ -267,7 +275,7 @@ fun WarehouseOrderDetail(
             confirmBlockReason.isNotEmpty() -> 44.dp
             else -> 12.dp
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 8.dp, bottom = bottomPad)) {
+        Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(top = 8.dp, bottom = bottomPad)) {
             if (loading || o == null) {
                 Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     if (loading) CircularProgressIndicator(color = C.Primary)
@@ -313,6 +321,7 @@ fun WarehouseOrderDetail(
                             blocked = blocked(it2),
                             onSet = { v -> delivered[it2.id] = v.coerceAtLeast(0.0) },
                             onCheck = { v -> checked[it2.id] = v },
+                            focusCtx = focusCenterCtx,
                         )
                     }
                 }
@@ -497,6 +506,7 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, conf
 private fun ItemRow(
     item: OrderItemDto, canFulfill: Boolean, delivered: Double, checkedVal: Boolean,
     blocked: Boolean, onSet: (Double) -> Unit, onCheck: (Boolean) -> Unit,
+    focusCtx: FocusCenterCtx,
 ) {
     // Row ngoài: thumb trái 55dp (rowspan=2 — fill 2 dòng của Column phải).
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -531,13 +541,14 @@ private fun ItemRow(
                 Text(variantText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(6.dp))
                 if (canFulfill) {
-                    // Bỏ nút −/+. Qty là BasicTextField inline tap-to-edit.
-                    // BringIntoViewRequester + onFocusChanged → khi focus, delay 250ms cho IME
-                    // mở xong rồi yêu cầu scroll parent kéo field vào vùng visible.
+                    // Qty BasicTextField inline tap-to-edit. Khi focus → tính delta scroll explicit
+                    // để center field vào GIỮA "view còn lại" (= screen - keyboard), không center
+                    // theo viewport scroll Column (lệch vì có status bar + WarehouseScreen TabRow
+                    // + InfoCard chiếm phần trên ~200dp).
                     var qtyText by remember(item.id) { mutableStateOf(trimZeros(delivered)) }
-                    val viewRequester = remember(item.id) { BringIntoViewRequester() }
+                    var fieldYInWindow by remember(item.id) { mutableStateOf(0f) }
+                    var fieldHeightPx by remember(item.id) { mutableStateOf(0f) }
                     val scope = rememberCoroutineScope()
-                    val density = LocalDensity.current
                     BasicTextField(
                         value = qtyText,
                         onValueChange = { raw ->
@@ -556,14 +567,21 @@ private fun ItemRow(
                             }
                         },
                         modifier = Modifier.width(56.dp)
-                            .bringIntoViewRequester(viewRequester)
+                            .onGloballyPositioned { coords ->
+                                fieldYInWindow = coords.positionInWindow().y
+                                fieldHeightPx = coords.size.height.toFloat()
+                            }
                             .onFocusChanged { state ->
                                 if (state.isFocused) scope.launch {
-                                    kotlinx.coroutines.delay(250) // chờ IME mở xong + layout resize
-                                    // Rect mở rộng 220dp lên trên + 220dp xuống dưới so với element →
-                                    // scroll parent kéo element vào giữa viewport (không chỉ vừa cạnh trên).
-                                    val pad = with(density) { 220.dp.toPx() }
-                                    runCatching { viewRequester.bringIntoView(Rect(0f, -pad, 0f, pad)) }
+                                    kotlinx.coroutines.delay(280) // chờ IME mở xong + layout resize
+                                    // Visible app area = screen - keyboard (top). Center field
+                                    // vào giữa vùng này: targetY = visibleH/2 - fieldH/2.
+                                    val visibleH = focusCtx.screenHeightPx - focusCtx.imeBottomPx
+                                    val targetY = visibleH / 2f - fieldHeightPx / 2f
+                                    val delta = fieldYInWindow - targetY
+                                    if (delta > 0f) runCatching {
+                                        focusCtx.scrollState.animateScrollBy(delta)
+                                    }
                                 }
                             },
                     )
@@ -665,4 +683,11 @@ private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Uni
         }
     }
 }
+
+/** Ctx truyền xuống ItemRow để qty input scroll explicit (center theo screen - keyboard). */
+data class FocusCenterCtx(
+    val scrollState: ScrollState,
+    val screenHeightPx: Float,
+    val imeBottomPx: Float,
+)
 
