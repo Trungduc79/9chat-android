@@ -136,7 +136,19 @@ fun WarehouseOrderDetail(
     // COD>0 phải chọn quỹ (chỉ áp đơn bán); nếu không có quỹ tiền mặt active → chặn.
     val codNum = codAmount.toDoubleOrNull() ?: 0.0
     val codValid = isPurchase || codNum <= 0.0 || codCasherId != null
-    val canConfirm = photos.isNotEmpty() && allChecked && totalDelivered > 0 && !hasOverStock && codValid
+    val canConfirm = photos.isNotEmpty() && allChecked && totalDelivered > 0 && !hasOverStock && codValid && !uploading
+
+    // Lý do button ẩn — hiện ra chỗ bar đáy thay nút (mirror web confirmBlockReason).
+    val confirmBlockReason: String = when {
+        !canFulfill -> ""
+        hasOverStock -> "Có món vượt tồn — giảm SL xuống ≤ tồn"
+        totalDelivered <= 0.0 -> "Tổng số lượng giao phải > 0"
+        !allChecked -> "Tích kiểm tất cả món đã giao"
+        photos.isEmpty() -> "Cần ≥1 ảnh xác nhận"
+        uploading -> "Đang tải ảnh..."
+        !codValid -> "Thu hộ > 0 — chưa chọn quỹ"
+        else -> ""
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) scope.launch {
@@ -203,7 +215,15 @@ fun WarehouseOrderDetail(
             ) { _, dragAmount -> dragSum += dragAmount }
         },
     ) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 8.dp, bottom = if (canFulfill && canConfirm) 96.dp else 12.dp)) {
+        // Bottom padding chừa chỗ cho bar đáy: nút Xác nhận (96dp) khi đủ ĐK,
+        // hoặc bar blocker (~44dp) khi có lý do chặn.
+        val bottomPad = when {
+            !canFulfill -> 12.dp
+            canConfirm -> 96.dp
+            confirmBlockReason.isNotEmpty() -> 44.dp
+            else -> 12.dp
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 8.dp, bottom = bottomPad)) {
             if (loading || o == null) {
                 Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     if (loading) CircularProgressIndicator(color = C.Primary)
@@ -318,8 +338,22 @@ fun WarehouseOrderDetail(
             }
         }
 
-        // Nút xác nhận chỉ hiện (trượt lên từ đáy) khi ĐỦ điều kiện; chưa đủ → ẩn
-        // xuống dưới, không chiếm view. Lý do chưa đủ đã thể hiện ở checkbox / "Tồn" đỏ.
+        // Bar đáy KHI CHƯA ĐỦ ĐK: hiện text lý do thay vì nút (mirror web confirmBlockReason).
+        AnimatedVisibility(
+            visible = canFulfill && !canConfirm && confirmBlockReason.isNotEmpty(),
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Surface(shadowElevation = 4.dp, color = C.Card, modifier = Modifier.fillMaxWidth()) {
+                Box(Modifier.padding(12.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(confirmBlockReason, color = C.TextMuted, fontSize = 13.sp)
+                }
+            }
+        }
+
+        // Nút xác nhận chỉ hiện (trượt lên từ đáy) khi ĐỦ điều kiện; chưa đủ → bar
+        // blocker (ở trên) hiện text lý do.
         AnimatedVisibility(
             visible = canFulfill && canConfirm,
             enter = slideInVertically { it } + fadeIn(),
