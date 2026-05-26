@@ -4,8 +4,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.PointOfSale
 import vn.chat9.app.data.repository.PermissionStore
 import vn.chat9.app.ui.explore.ModulePlaceholder
+import vn.chat9.app.ui.modules.sale.SaleScreen
 import vn.chat9.app.ui.modules.warehouse.WarehouseScreen
 
 /**
@@ -28,6 +30,14 @@ object ModuleRegistry {
             icon = Icons.Default.Inventory2,
             requiredPermissions = listOf("warehouse.view", "warehouse.fulfill"),
             entry = { onBack -> WarehouseScreen(onBack) },
+        ),
+        AdminModule(
+            id = "sale",
+            title = "Bán hàng",
+            subtitle = "Tạo đơn + đơn của tôi",
+            icon = Icons.Default.PointOfSale,
+            requiredPermissions = listOf("sale.create_order", "sale.view_orders"),
+            entry = { onBack -> SaleScreen(onBack) },
         ),
         AdminModule(
             id = "accounting",

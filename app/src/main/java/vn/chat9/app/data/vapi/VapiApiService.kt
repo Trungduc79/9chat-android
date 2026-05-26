@@ -12,9 +12,13 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.CasherDto
+import vn.chat9.app.data.vapi.dto.CreateOrderRequest
+import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.FulfillResult
+import vn.chat9.app.data.vapi.dto.LastPriceDto
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.data.vapi.dto.ProductSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 
 /**
@@ -28,6 +32,8 @@ interface VapiApiService {
     suspend fun listOrders(
         @Query("status") status: String,
         @Query("warehouse_id") warehouseId: Long? = null,
+        @Query("created_by_user_id") createdByUserId: Long? = null,  // app sale: chỉ đơn của NV
+        @Query("type") type: String? = null,                          // sale|purchase|...
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<OrderDto>>
 
@@ -70,4 +76,38 @@ interface VapiApiService {
         @Query("active") active: Int = 1,
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<WarehouseDto>>
+
+    // ===== Module Sale (Tab Khám phá → Bán hàng) =====
+
+    /** KH gần nhất theo user-tạo-đơn (20 hàng đầu) — recent customers cho picker. */
+    @GET("v1/customers/recent-by-orders")
+    suspend fun recentCustomers(
+        @Query("created_by_user_id") createdByUserId: Long,
+        @Query("limit") limit: Int = 20,
+    ): VapiResponse<List<CustomerDto>>
+
+    /** Search KH theo tên / SĐT / mã (vnSearchMatch ascii). */
+    @GET("v1/customers")
+    suspend fun searchCustomers(
+        @Query("q") q: String,
+        @Query("per_page") perPage: Int = 20,
+    ): VapiResponse<List<CustomerDto>>
+
+    /** Search variant/SP (`vapi /products` paginated search). */
+    @GET("v1/products")
+    suspend fun searchProducts(
+        @Query("q") q: String,
+        @Query("per_page") perPage: Int = 20,
+    ): VapiResponse<List<ProductSearchDto>>
+
+    /** Last price KH đã mua variant này (cho auto-fill giá khi add item). */
+    @GET("v1/customers/{customerId}/last-price")
+    suspend fun lastPrice(
+        @Path("customerId") customerId: Long,
+        @Query("variant_id") variantId: Long,
+    ): VapiResponse<LastPriceDto>
+
+    /** Tạo đơn nháp / xác nhận (status quyết payload). */
+    @POST("v1/orders")
+    suspend fun createOrder(@Body body: CreateOrderRequest): VapiResponse<OrderDto>
 }

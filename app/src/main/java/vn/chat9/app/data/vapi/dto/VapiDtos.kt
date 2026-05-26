@@ -137,3 +137,61 @@ data class WarehouseDto(
     @SerializedName("is_active") val isActive: Boolean = true,
     @SerializedName("is_default") val isDefault: Boolean = false,
 )
+
+// ===== Module Sale =====
+
+/** KH cho picker + search. BE trả full Customer; chỉ dùng cột nhẹ ở UI. */
+data class CustomerDto(
+    val id: Long = 0,
+    val name: String = "",
+    val phone: String? = null,
+    val code: String? = null,
+    @SerializedName("debt_balance") val debtBalance: Double? = null,
+)
+
+/** Product + variant flat cho list search (BE eager-load variants nhẹ). */
+data class ProductSearchDto(
+    val id: Long = 0,
+    val name: String = "",
+    val sku: String? = null,
+    val variants: List<VariantSearchDto> = emptyList(),
+    @SerializedName("primary_image") val primaryImage: PrimaryImageDto? = null,
+)
+
+data class VariantSearchDto(
+    val id: Long = 0,
+    val sku: String? = null,
+    val name: String? = null,
+    val price: Double? = null,
+    val stock: Double? = null,
+    val image: String? = null,
+    val attributes: Map<String, String>? = null,
+    @SerializedName("default_unit_id") val defaultUnitId: Long? = null,    // BE: is_default_sale unit
+)
+
+data class PrimaryImageDto(val url: String? = null)
+
+/** Last price KH-variant từ đơn gần nhất. */
+data class LastPriceDto(
+    @SerializedName("unit_price") val unitPrice: Double? = null,
+    @SerializedName("unit_id") val unitId: Long? = null,
+    @SerializedName("ordered_at") val orderedAt: String? = null,
+)
+
+/** Payload tạo đơn từ app sale. Status quyết draft hay confirmed. */
+data class CreateOrderRequest(
+    val type: String = "sale",
+    @SerializedName("party_type") val partyType: String = "customer",
+    @SerializedName("party_id") val partyId: Long,
+    val status: String = "draft",                                          // draft | confirmed
+    val items: List<CreateOrderItem>,
+    val notes: String? = null,
+    @SerializedName("created_by_user_id") val createdByUserId: Long? = null, // 9chat user id
+)
+
+data class CreateOrderItem(
+    @SerializedName("variant_id") val variantId: Long,
+    @SerializedName("unit_id") val unitId: Long,
+    @SerializedName("qty_unit") val qtyUnit: Double,
+    @SerializedName("unit_price") val unitPrice: Double,
+)
