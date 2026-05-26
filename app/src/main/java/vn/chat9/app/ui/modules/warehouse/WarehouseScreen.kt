@@ -21,13 +21,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warehouse
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -159,38 +162,53 @@ fun WarehouseScreen(onBack: () -> Unit) {
         }
     }
 
+    var menuOpen by remember { mutableStateOf(false) }
+    val userName = container.tokenManager.user?.username ?: "—"
+
     Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
-        // Status bar nhỏ: kho làm việc đang chọn + bấm "Đổi" để mở picker.
+        // TabRow + 3-dot menu cuối (mirror NTabs #suffix của web). Bỏ status row trên cùng.
         Row(
-            modifier = Modifier.fillMaxWidth().background(AdminColors.Card)
-                .clickable { pickerOpen = true }.padding(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Warehouse, null, tint = AdminColors.Primary, modifier = Modifier.height(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                "Kho làm việc: ${currentWarehouse?.name ?: "Chưa chọn"}",
-                fontSize = 12.sp,
-                color = if (currentWarehouse == null) AdminColors.Danger else AdminColors.TextSecondary,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = { pickerOpen = true }, modifier = Modifier.height(28.dp)) {
-                Icon(Icons.Default.Edit, null, tint = AdminColors.Primary, modifier = Modifier.height(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Đổi", fontSize = 12.sp, color = AdminColors.Primary)
+            TabRow(
+                selectedTabIndex = tab,
+                containerColor = AdminColors.Card,
+                contentColor = AdminColors.Primary,
+                modifier = Modifier.weight(1f).height(48.dp),
+            ) {
+                WhTab(tab == 0, "Đơn bán", saleList.size, AdminColors.Warning) { goTab(0) }
+                WhTab(tab == 1, "Đơn nhập", purchaseList.size, AdminColors.Info) { goTab(1) }
+                WhTab(tab == 2, "Hoàn thành", doneList.size, AdminColors.Success) { goTab(2) }
+                WhTab(tab == 3, "Ảnh chụp", 0, null) { goTab(3) }
             }
-        }
-
-        TabRow(
-            selectedTabIndex = tab,
-            containerColor = AdminColors.Card,
-            contentColor = AdminColors.Primary,
-            modifier = Modifier.height(48.dp),
-        ) {
-            WhTab(tab == 0, "Đơn bán", saleList.size, AdminColors.Warning) { goTab(0) }
-            WhTab(tab == 1, "Đơn nhập", purchaseList.size, AdminColors.Info) { goTab(1) }
-            WhTab(tab == 2, "Hoàn thành", doneList.size, AdminColors.Success) { goTab(2) }
-            WhTab(tab == 3, "Ảnh chụp", 0, null) { goTab(3) }
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.width(40.dp)) {
+                    Icon(Icons.Default.MoreVert, "Tùy chọn", tint = AdminColors.TextMuted)
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Tài khoản: $userName", color = AdminColors.TextMuted, fontSize = 13.sp) },
+                        onClick = { menuOpen = false },
+                        enabled = false,
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Kho làm việc: ${currentWarehouse?.name ?: "Chưa chọn"}",
+                                color = if (currentWarehouse == null) AdminColors.Danger else AdminColors.Text,
+                                fontSize = 14.sp,
+                            )
+                        },
+                        onClick = { menuOpen = false; pickerOpen = true },
+                        leadingIcon = { Icon(Icons.Default.Warehouse, null, tint = AdminColors.Primary) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Tải lại", color = AdminColors.Text, fontSize = 14.sp) },
+                        onClick = { menuOpen = false; refresh() },
+                    )
+                }
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {

@@ -29,7 +29,11 @@ import androidx.compose.material3.*
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -476,8 +480,45 @@ private fun ItemRow(
 }
 
 /**
+ * VisualTransformation tách hàng nghìn kiểu kế toán VN: "1000000" → "1.000.000".
+ * Mỗi 3 chữ số từ PHẢI sang TRÁI chèn dấu "."; OffsetMapping cập nhật cursor.
+ * Giả định input ngoài đã filter digit-only (qua onValueChange).
+ */
+private object ThousandsVisualTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val digits = text.text
+        val len = digits.length
+        val sb = StringBuilder(len + len / 3)
+        for (i in 0 until len) {
+            sb.append(digits[i])
+            val remaining = len - i - 1
+            if (remaining > 0 && remaining % 3 == 0) sb.append('.')
+        }
+        val formatted = sb.toString()
+        val mapping = object : OffsetMapping {
+            override fun originalToTransformed(offset: Int): Int {
+                val o = offset.coerceIn(0, len)
+                if (o == 0) return 0
+                var digitCount = 0
+                for (idx in formatted.indices) {
+                    if (digitCount == o) return idx
+                    if (formatted[idx].isDigit()) digitCount++
+                }
+                return formatted.length
+            }
+            override fun transformedToOriginal(offset: Int): Int {
+                val o = offset.coerceIn(0, formatted.length)
+                return formatted.take(o).count { it.isDigit() }
+            }
+        }
+        return TransformedText(AnnotatedString(formatted), mapping)
+    }
+}
+
+/**
  * Hàng nhập tiền VND theo style web: label(weight 0.42) ":" input(weight 0.58)
  * — input bare có border-BOTTOM only, text căn phải, "đ" suffix; compact ~24dp.
+ * Hiển thị tự tách hàng nghìn (1.000.000); state vẫn chỉ digit.
  */
 @Composable
 private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Unit) {
@@ -493,6 +534,7 @@ private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Uni
                 BasicTextField(
                     value = value,
                     onValueChange = { onChange(it.filter { c -> c.isDigit() }) },
+                    visualTransformation = ThousandsVisualTransformation,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     textStyle = TextStyle(color = C.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
