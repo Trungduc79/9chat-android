@@ -28,11 +28,22 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
 import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
@@ -218,9 +229,9 @@ fun WarehouseOrderDetail(
     val focusManager = LocalFocusManager.current
     Box(
         Modifier.fillMaxSize().background(C.Bg)
-            // Khi bàn phím (IME) mở, đẩy nội dung lên đúng bằng chiều cao bàn phím — không che input.
-            // Edge-to-edge (setDecorFitsSystemWindows=false) bypass system resize → cần imePadding tay.
-            .imePadding()
+            // Padding = IME inset TRỪ nav bar (nav bar không pad sẵn ở edge-to-edge → imePadding()
+            // mặc định bao gồm vùng nav bar = đẩy lên cao hơn chiều cao bàn phím thật).
+            .windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars))
             // Tap vùng trống (không phải input field) → tắt bàn phím.
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
@@ -396,21 +407,34 @@ fun WarehouseOrderDetail(
     }
 
     // DatePickerDialog cho ngày xác nhận — NV tap vào ô ngày trên InfoCard mở picker.
+    // Wrap MaterialTheme(darkColorScheme) để dialog + picker nền tối (M3 mặc định light surface).
     if (datePickerOpen) {
         val datePickerState = rememberDatePickerState(initialSelectedDateMillis = confirmDateMs)
-        DatePickerDialog(
-            onDismissRequest = { datePickerOpen = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { confirmDateMs = it }
-                    datePickerOpen = false
-                }) { Text("OK") }
-            },
-            dismissButton = {
-                TextButton(onClick = { datePickerOpen = false }) { Text("Huỷ") }
-            },
+        MaterialTheme(
+            colorScheme = darkColorScheme(
+                surface = C.Card,
+                surfaceVariant = C.Card,
+                onSurface = C.Text,
+                onSurfaceVariant = C.TextMuted,
+                primary = C.Primary,
+                onPrimary = Color.White,
+            ),
         ) {
-            DatePicker(state = datePickerState)
+            DatePickerDialog(
+                onDismissRequest = { datePickerOpen = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        datePickerState.selectedDateMillis?.let { confirmDateMs = it }
+                        datePickerOpen = false
+                    }) { Text("OK", color = C.Primary) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { datePickerOpen = false }) { Text("Huỷ", color = C.TextMuted) }
+                },
+                colors = DatePickerDefaults.colors(containerColor = C.Card),
+            ) {
+                DatePicker(state = datePickerState)
+            }
         }
     }
 }
@@ -501,10 +525,12 @@ private fun ItemRow(
                 Text(variantText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(6.dp))
                 if (canFulfill) {
-                    // Bỏ nút −/+. Qty là BasicTextField inline tap-to-edit: border-bottom
-                    // Primary, text center, width 56dp. Sync local string ↔ delivered Double
-                    // qua key=item.id (chỉ reset khi item đổi, để không mất "1." giữa lúc gõ).
+                    // Bỏ nút −/+. Qty là BasicTextField inline tap-to-edit.
+                    // BringIntoViewRequester + onFocusChanged → khi focus, delay 250ms cho IME
+                    // mở xong rồi yêu cầu scroll parent kéo field vào vùng visible.
                     var qtyText by remember(item.id) { mutableStateOf(trimZeros(delivered)) }
+                    val viewRequester = remember(item.id) { BringIntoViewRequester() }
+                    val scope = rememberCoroutineScope()
                     BasicTextField(
                         value = qtyText,
                         onValueChange = { raw ->
@@ -522,7 +548,14 @@ private fun ItemRow(
                                 HorizontalDivider(thickness = 0.5.dp, color = (if (blocked) C.Danger else C.Primary).copy(alpha = 0.5f))
                             }
                         },
-                        modifier = Modifier.width(56.dp),
+                        modifier = Modifier.width(56.dp)
+                            .bringIntoViewRequester(viewRequester)
+                            .onFocusChanged { state ->
+                                if (state.isFocused) scope.launch {
+                                    kotlinx.coroutines.delay(250) // chờ IME mở xong + layout resize
+                                    runCatching { viewRequester.bringIntoView() }
+                                }
+                            },
                     )
                 } else {
                     Text(trimZeros(item.qtyUnit), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text)
