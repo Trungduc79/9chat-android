@@ -26,7 +26,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -247,26 +249,17 @@ fun WarehouseOrderDetail(
                 }
             }
 
-            // Phí ship + Thu hộ — NV kho chốt lúc giao (chỉ đơn còn xác nhận).
-            // Đơn bán: 3 hàng (Phí ship KH / Phí ship KHO / Thu hộ + chọn quỹ).
-            // Đơn nhập: chỉ 1 hàng Phí ship KHO.
+            // Phí ship + Thu hộ — KHÔNG header, mỗi hàng = label(5):(1)input(6), border-bottom only.
+            // Đơn bán: 3 hàng + quỹ COD khi >0. Đơn nhập: 1 hàng Phí ship KHO.
             if (canFulfill) {
                 Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(if (isPurchase) "Phí ship" else "Phí ship + Thu hộ", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium)
-                        HorizontalDivider(Modifier.padding(top = 6.dp, bottom = 8.dp), color = C.Border)
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        if (!isPurchase) ShipFieldRow("Phí ship KH", shipCustomer) { shipCustomer = it }
+                        ShipFieldRow("Phí ship KHO", shipCompany) { shipCompany = it }
                         if (!isPurchase) {
-                            ShipRow("Phí ship KH", shipCustomer) { shipCustomer = it }
-                            Spacer(Modifier.height(6.dp))
-                        }
-                        ShipRow("Phí ship KHO", shipCompany) { shipCompany = it }
-                        if (!isPurchase) {
-                            Spacer(Modifier.height(6.dp))
-                            ShipRow("Thu hộ", codAmount) { codAmount = it }
-                            // Quỹ thu COD — chỉ hiện khi nhập số > 0 hoặc đang yêu cầu chọn.
+                            ShipFieldRow("Thu hộ", codAmount) { codAmount = it }
                             if ((codAmount.toDoubleOrNull() ?: 0.0) > 0.0) {
-                                Spacer(Modifier.height(6.dp))
-                                CasherSelect(
+                                CasherSelectCompact(
                                     cashers = cashCashers,
                                     currentId = codCasherId,
                                     onSelect = { codCasherId = it },
@@ -425,56 +418,81 @@ private fun ItemRow(
     }
 }
 
-/** Hàng nhập tiền VND đơn giản: label trái + ô số bên phải (filter chỉ digit). */
+/**
+ * Hàng nhập tiền VND theo style web: label(weight 0.42) ":" input(weight 0.58)
+ * — input bare có border-BOTTOM only, text căn phải, "đ" suffix; compact ~24dp.
+ */
 @Composable
-private fun ShipRow(label: String, value: String, onChange: (String) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(label, fontSize = 13.sp, color = C.TextMuted, modifier = Modifier.weight(0.42f))
-        Text(":", fontSize = 13.sp, color = C.TextMuted, modifier = Modifier.padding(end = 6.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = { onChange(it.filter { c -> c.isDigit() }) },
-            placeholder = { Text("0", color = C.TextMuted, fontSize = 13.sp) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            textStyle = TextStyle(color = C.Text, fontSize = 14.sp, textAlign = TextAlign.End),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = C.Primary,
-                unfocusedBorderColor = C.Border,
-                focusedTextColor = C.Text,
-                unfocusedTextColor = C.Text,
-                cursorColor = C.Primary,
-            ),
-            modifier = Modifier.weight(0.58f).height(48.dp),
-        )
+private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+        Text(label, fontSize = 12.sp, color = C.TextMuted, modifier = Modifier.weight(0.42f))
+        Text(":", fontSize = 12.sp, color = C.TextMuted)
+        Spacer(Modifier.width(6.dp))
+        Column(modifier = Modifier.weight(0.58f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = { onChange(it.filter { c -> c.isDigit() }) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    textStyle = TextStyle(color = C.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
+                    cursorBrush = SolidColor(C.Primary),
+                    decorationBox = { inner ->
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            if (value.isEmpty()) Text("0", color = C.TextMuted, fontSize = 13.sp, textAlign = TextAlign.End, modifier = Modifier.fillMaxWidth())
+                            inner()
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Text("đ", fontSize = 11.sp, color = C.TextMuted, modifier = Modifier.padding(start = 4.dp))
+            }
+            HorizontalDivider(color = C.Border, thickness = 1.dp)
+        }
     }
 }
 
-/** Dropdown chọn quỹ thu (chỉ quỹ tiền mặt active). */
+/** Hàng chọn quỹ COD compact: chung style với ShipFieldRow (label + giá trị + border-bottom). */
 @Composable
-private fun CasherSelect(cashers: List<CasherDto>, currentId: Long?, onSelect: (Long?) -> Unit) {
+private fun CasherSelectCompact(cashers: List<CasherDto>, currentId: Long?, onSelect: (Long?) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val name = cashers.firstOrNull { it.id == currentId }?.name ?: "Chọn quỹ thu tiền"
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text("→ Quỹ thu", fontSize = 13.sp, color = C.TextMuted, modifier = Modifier.weight(0.42f))
-        Spacer(Modifier.width(8.dp))
-        Box(modifier = Modifier.weight(0.58f)) {
-            OutlinedButton(
-                onClick = { expanded = true },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                border = BorderStroke(1.dp, C.Border),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = C.Text),
-            ) {
-                Text(name, color = if (currentId == null) C.TextMuted else C.Text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
-                Icon(Icons.Default.ArrowDropDown, null, tint = C.TextMuted)
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                if (cashers.isEmpty()) {
-                    DropdownMenuItem(text = { Text("(Chưa có quỹ tiền mặt active)", color = C.TextMuted) }, onClick = { expanded = false })
-                } else cashers.forEach { c ->
-                    DropdownMenuItem(text = { Text(c.name) }, onClick = { onSelect(c.id); expanded = false })
+    val name = cashers.firstOrNull { it.id == currentId }?.name ?: "Chọn quỹ"
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+        Text("→ Quỹ", fontSize = 12.sp, color = C.TextMuted, modifier = Modifier.weight(0.42f))
+        Text(":", fontSize = 12.sp, color = C.TextMuted)
+        Spacer(Modifier.width(6.dp))
+        Column(modifier = Modifier.weight(0.58f)) {
+            Box {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { expanded = true }.padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        name,
+                        fontSize = 13.sp,
+                        color = if (currentId == null) C.TextMuted else C.Text,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Icon(Icons.Default.ArrowDropDown, null, tint = C.TextMuted, modifier = Modifier.size(16.dp).padding(start = 2.dp))
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    if (cashers.isEmpty()) {
+                        DropdownMenuItem(text = { Text("(Chưa có quỹ tiền mặt active)", color = C.TextMuted) }, onClick = { expanded = false })
+                    } else cashers.forEach { c ->
+                        DropdownMenuItem(text = { Text(c.name) }, onClick = { onSelect(c.id); expanded = false })
+                    }
                 }
             }
+            HorizontalDivider(color = C.Border, thickness = 1.dp)
         }
     }
 }
