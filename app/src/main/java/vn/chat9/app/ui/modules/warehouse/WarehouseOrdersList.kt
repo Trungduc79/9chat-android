@@ -122,10 +122,12 @@ private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text(o.notes!!, fontSize = 12.sp, color = AdminColors.TextMuted)
             }
-            // Tab Hoàn thành: ai đã xác nhận (ngày hiện ở góc phải trên).
-            if (tab == 2) o.meta?.fulfillment?.byName?.let { name ->
+            // Tab Hoàn thành: truy vết "NV X · HH:mm dd/mm" (mirror web), màu success.
+            if (tab == 2) o.meta?.fulfillment?.takeIf { it.byName != null || it.at != null }?.let { f ->
                 Spacer(Modifier.height(6.dp))
-                Text("Xác nhận: $name", fontSize = 12.sp, color = AdminColors.TextSecondary)
+                val nm = f.byName ?: "—"
+                val ts = fmtDateTime(f.at ?: o.completedAt)
+                Text("$nm · $ts", fontSize = 12.sp, color = AdminColors.Success)
             }
         }
     }

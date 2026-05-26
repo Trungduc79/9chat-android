@@ -399,8 +399,8 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean) {
                     Icon(Icons.Default.CheckCircle, null, tint = C.Success, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        "Xác nhận bởi ${f.byName ?: "—"} · ${fmtDateTime(f.at ?: o.completedAt)}",
-                        fontSize = 12.sp, color = C.TextMuted,
+                        "Đã ${if (isPurchase) "nhận" else "giao"} bởi ${f.byName ?: "—"} · ${fmtDateTime(f.at ?: o.completedAt)}",
+                        fontSize = 12.sp, color = C.Success,
                     )
                 }
             }
