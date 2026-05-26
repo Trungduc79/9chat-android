@@ -264,13 +264,13 @@ fun WarehouseOrderDetail(
                         }
                     }
                     items.forEach { it2 ->
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = C.Border)
+                        HorizontalDivider(Modifier.padding(vertical = 2.dp), color = C.Border)
                         ItemRow(
                             item = it2, canFulfill = canFulfill,
                             delivered = delivered[it2.id] ?: it2.qtyUnit,
                             checkedVal = (checked[it2.id] == true) && !blocked(it2),
                             blocked = blocked(it2),
-                            onStep = { d -> delivered[it2.id] = ((delivered[it2.id] ?: it2.qtyUnit) + d).coerceAtLeast(0.0) },
+                            onSet = { v -> delivered[it2.id] = v.coerceAtLeast(0.0) },
                             onCheck = { v -> checked[it2.id] = v },
                         )
                     }
@@ -407,61 +407,78 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean) {
 @Composable
 private fun ItemRow(
     item: OrderItemDto, canFulfill: Boolean, delivered: Double, checkedVal: Boolean,
-    blocked: Boolean, onStep: (Double) -> Unit, onCheck: (Boolean) -> Unit,
+    blocked: Boolean, onSet: (Double) -> Unit, onCheck: (Boolean) -> Unit,
 ) {
-    val faint = C.Border.copy(alpha = 0.5f) // nút ± mờ thêm 50%
-    // Row ngoài: thumb trái 48dp (rowspan=2 — fill height của Column), Column phải = 2 dòng.
+    // Row ngoài: thumb trái 55dp (rowspan=2 — fill 2 dòng của Column phải).
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         val img = item.imageUrl
         if (img != null) AsyncImage(
             model = img, contentDescription = null, contentScale = ContentScale.Crop,
-            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)),
+            modifier = Modifier.size(55.dp).clip(RoundedCornerShape(7.dp)),
         ) else Box(
-            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)).background(C.Border.copy(alpha = 0.3f)),
+            modifier = Modifier.size(55.dp).clip(RoundedCornerShape(7.dp)).background(C.Border.copy(alpha = 0.3f)),
         )
         Spacer(Modifier.width(8.dp))
-    Column(modifier = Modifier.weight(1f)) {
-        Text(item.productName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = C.Text)
-        Spacer(Modifier.height(3.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            // Tên nhóm phân loại: viết thường, mờ, KHÔNG nghiêng, ": " + giá trị trắng (chuẩn web).
-            val variantText = buildAnnotatedString {
-                val pairs = item.variantPairs
-                if (pairs.isEmpty()) withStyle(SpanStyle(color = C.TextMuted)) { append("—") }
-                else pairs.forEachIndexed { i, (name, value) ->
-                    if (i > 0) withStyle(SpanStyle(color = C.TextMuted)) { append(", ") }
-                    withStyle(SpanStyle(color = C.TextMuted)) { append("$name: ") }
-                    withStyle(SpanStyle(color = C.Text)) { append(value) }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(item.productName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = C.Text)
+            Spacer(Modifier.height(3.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                val variantText = buildAnnotatedString {
+                    val pairs = item.variantPairs
+                    if (pairs.isEmpty()) withStyle(SpanStyle(color = C.TextMuted)) { append("—") }
+                    else pairs.forEachIndexed { i, (name, value) ->
+                        if (i > 0) withStyle(SpanStyle(color = C.TextMuted)) { append(", ") }
+                        withStyle(SpanStyle(color = C.TextMuted)) { append("$name: ") }
+                        withStyle(SpanStyle(color = C.Text)) { append(value) }
+                    }
                 }
-            }
-            Text(variantText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            if (canFulfill) {
-                OutlinedIconButton(onClick = { onStep(-1.0) }, modifier = Modifier.size(40.dp), border = BorderStroke(1.dp, faint), colors = IconButtonDefaults.outlinedIconButtonColors(contentColor = faint)) { Text("−", fontSize = 18.sp) }
-                Text(trimZeros(delivered), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text, textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 44.dp))
-                OutlinedIconButton(onClick = { onStep(1.0) }, modifier = Modifier.size(40.dp), border = BorderStroke(1.dp, faint), colors = IconButtonDefaults.outlinedIconButtonColors(contentColor = faint)) { Text("+", fontSize = 18.sp) }
-            } else {
-                Text(trimZeros(item.qtyUnit), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text)
-            }
-            Spacer(Modifier.width(6.dp))
-            // "Tồn N đơn vị" (bỏ dấu :) cùng 1 dòng, no wrap.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Đơn đã hoàn thành (không còn xác nhận): KHÔNG hiển thị tồn kho.
-                if (canFulfill) item.stockUnit?.let {
-                    Text("Tồn ${trimZeros(it)}", fontSize = 13.sp, color = if (blocked) C.Danger else C.TextMuted, maxLines = 1, softWrap = false)
-                    Spacer(Modifier.width(3.dp))
+                Text(variantText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(6.dp))
+                if (canFulfill) {
+                    // Bỏ nút −/+. Qty là BasicTextField inline tap-to-edit: border-bottom
+                    // Primary, text center, width 56dp. Sync local string ↔ delivered Double
+                    // qua key=item.id (chỉ reset khi item đổi, để không mất "1." giữa lúc gõ).
+                    var qtyText by remember(item.id) { mutableStateOf(trimZeros(delivered)) }
+                    BasicTextField(
+                        value = qtyText,
+                        onValueChange = { raw ->
+                            val filtered = raw.filter { c -> c.isDigit() || c == '.' }
+                            qtyText = filtered
+                            onSet(filtered.toDoubleOrNull() ?: 0.0)
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        textStyle = TextStyle(color = C.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
+                        cursorBrush = SolidColor(C.Primary),
+                        decorationBox = { inner ->
+                            Column {
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) { inner() }
+                                HorizontalDivider(thickness = 1.dp, color = if (blocked) C.Danger else C.Primary)
+                            }
+                        },
+                        modifier = Modifier.width(56.dp),
+                    )
+                } else {
+                    Text(trimZeros(item.qtyUnit), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text)
                 }
-                Text(item.unitName, fontSize = 13.sp, color = C.TextMuted, maxLines = 1, softWrap = false)
-            }
-            if (canFulfill) {
-                Spacer(Modifier.width(10.dp))
-                WhCheckbox(
-                    checked = checkedVal, enabled = !blocked, onCheckedChange = onCheck,
-                    checkedColor = C.Primary, borderColor = C.TextMuted,
-                )
+                Spacer(Modifier.width(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (canFulfill) item.stockUnit?.let {
+                        Text("Tồn ${trimZeros(it)}", fontSize = 13.sp, color = if (blocked) C.Danger else C.TextMuted, maxLines = 1, softWrap = false)
+                        Spacer(Modifier.width(3.dp))
+                    }
+                    Text(item.unitName, fontSize = 13.sp, color = C.TextMuted, maxLines = 1, softWrap = false)
+                }
+                if (canFulfill) {
+                    Spacer(Modifier.width(10.dp))
+                    WhCheckbox(
+                        checked = checkedVal, enabled = !blocked, onCheckedChange = onCheck,
+                        checkedColor = C.Primary, borderColor = C.TextMuted,
+                    )
+                }
             }
         }
-    }  // close inner Column (weight 1f)
-    }  // close outer Row (thumb + Column)
+    }
 }
 
 /**
