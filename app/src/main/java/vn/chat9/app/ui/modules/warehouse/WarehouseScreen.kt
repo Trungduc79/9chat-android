@@ -31,10 +31,13 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -186,27 +189,44 @@ fun WarehouseScreen(onBack: () -> Unit) {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.width(40.dp)) {
                     Icon(Icons.Default.MoreVert, "Tùy chọn", tint = AdminColors.TextMuted)
                 }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Tài khoản: $userName", color = AdminColors.TextMuted, fontSize = 13.sp) },
-                        onClick = { menuOpen = false },
-                        enabled = false,
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "Kho làm việc: ${currentWarehouse?.name ?: "Chưa chọn"}",
-                                color = if (currentWarehouse == null) AdminColors.Danger else AdminColors.Text,
-                                fontSize = 14.sp,
-                            )
-                        },
-                        onClick = { menuOpen = false; pickerOpen = true },
-                        leadingIcon = { Icon(Icons.Default.Warehouse, null, tint = AdminColors.Primary) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Tải lại", color = AdminColors.Text, fontSize = 14.sp) },
-                        onClick = { menuOpen = false; refresh() },
-                    )
+                // Wrap MaterialTheme dark → DropdownMenu container nền tối (mặc định M3 = surface light).
+                MaterialTheme(
+                    colorScheme = darkColorScheme(
+                        surface = AdminColors.Card,
+                        onSurface = AdminColors.Text,
+                        onSurfaceVariant = AdminColors.TextMuted,
+                    ),
+                ) {
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        val itemColors = MenuDefaults.itemColors(
+                            textColor = AdminColors.Text,
+                            disabledTextColor = AdminColors.TextMuted,
+                            leadingIconColor = AdminColors.Primary,
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Tài khoản: $userName", fontSize = 13.sp) },
+                            onClick = { menuOpen = false },
+                            enabled = false,
+                            colors = itemColors,
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Kho làm việc: ${currentWarehouse?.name ?: "Chưa chọn"}",
+                                    color = if (currentWarehouse == null) AdminColors.Danger else AdminColors.Text,
+                                    fontSize = 14.sp,
+                                )
+                            },
+                            onClick = { menuOpen = false; pickerOpen = true },
+                            leadingIcon = { Icon(Icons.Default.Warehouse, null, tint = AdminColors.Primary) },
+                            colors = itemColors,
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Tải lại", fontSize = 14.sp) },
+                            onClick = { menuOpen = false; refresh() },
+                            colors = itemColors,
+                        )
+                    }
                 }
             }
         }

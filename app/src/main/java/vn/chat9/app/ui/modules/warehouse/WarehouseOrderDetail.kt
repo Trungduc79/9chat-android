@@ -86,12 +86,11 @@ fun WarehouseOrderDetail(
     var confirming by remember { mutableStateOf(false) }
     var uploading by remember { mutableStateOf(false) }
 
-    // Phí ship + Thu hộ — NV kho chốt lúc giao (init từ order, có thể sửa).
+    // Phí ship + Thu hộ — NV kho chốt lúc giao (init từ order). NV KHÔNG chọn quỹ:
+    // BE auto-resolve quỹ thu mặc định của kho làm việc (cài trong "Quỹ tiền mặt").
     var shipCustomer by remember { mutableStateOf("") }   // Phí ship KH → order.shipping_fee → công nợ
     var shipCompany by remember { mutableStateOf("") }    // Phí ship KHO → actual_shipping_fee → chi phí
-    var codAmount by remember { mutableStateOf("") }      // Thu hộ → cust_cash_in
-    var codCasherId by remember { mutableStateOf<Long?>(null) }
-    var cashers by remember { mutableStateOf<List<CasherDto>>(emptyList()) }
+    var codAmount by remember { mutableStateOf("") }      // Thu hộ → cust_cash_in (BE chọn quỹ)
 
     LaunchedEffect(orderId) {
         loading = true; order = null
@@ -110,20 +109,6 @@ fun WarehouseOrderDetail(
         loading = false
     }
 
-    LaunchedEffect(Unit) {
-        try { cashers = repo.listCashers() } catch (_: Exception) {}
-    }
-    // Quỹ tiền mặt active (loại bank_account) cho dropdown COD.
-    val cashCashers = cashers.filter { it.isActive && it.type != "bank_account" }
-    LaunchedEffect(cashCashers) {
-        if (codCasherId == null) {
-            val workWh = container.tokenManager.selectedWarehouseId
-            codCasherId = cashCashers.firstOrNull { it.warehouseId == workWh && workWh != null }?.id
-                ?: cashCashers.firstOrNull { it.isDefault }?.id
-                ?: cashCashers.firstOrNull()?.id
-        }
-    }
-
     val o = order
     val isPurchase = o?.isPurchase == true
     val consumesStock = !isPurchase
@@ -137,12 +122,9 @@ fun WarehouseOrderDetail(
     val hasOverStock = items.any { blocked(it) }
     val totalDelivered = items.sumOf { (delivered[it.id] ?: 0.0).coerceAtLeast(0.0) }
     val allChecked = items.isNotEmpty() && items.all { (checked[it.id] == true) && !blocked(it) }
-    // COD>0 phải chọn quỹ (chỉ áp đơn bán); nếu không có quỹ tiền mặt active → chặn.
-    val codNum = codAmount.toDoubleOrNull() ?: 0.0
-    val codValid = isPurchase || codNum <= 0.0 || codCasherId != null
-    val canConfirm = photos.isNotEmpty() && allChecked && totalDelivered > 0 && !hasOverStock && codValid && !uploading
+    // Điều kiện xác nhận. Quỹ COD do BE auto-resolve theo cài đặt kho — không check ở FE.
+    val canConfirm = photos.isNotEmpty() && allChecked && totalDelivered > 0 && !hasOverStock && !uploading
 
-    // Lý do button ẩn — hiện ra chỗ bar đáy thay nút (mirror web confirmBlockReason).
     val confirmBlockReason: String = when {
         !canFulfill -> ""
         hasOverStock -> "Có món vượt tồn — giảm SL xuống ≤ tồn"
@@ -150,7 +132,6 @@ fun WarehouseOrderDetail(
         !allChecked -> "Tích kiểm tất cả món đã giao"
         photos.isEmpty() -> "Cần ≥1 ảnh xác nhận"
         uploading -> "Đang tải ảnh..."
-        !codValid -> "Thu hộ > 0 — chưa chọn quỹ"
         else -> ""
     }
 
@@ -173,7 +154,7 @@ fun WarehouseOrderDetail(
         val shipKh = if (!isPurchase) shipCustomer.toDoubleOrNull() else null
         val shipKho = shipCompany.toDoubleOrNull()
         val cod = if (!isPurchase) codAmount.toDoubleOrNull() else null
-        val codCasher = if (!isPurchase && (cod ?: 0.0) > 0) codCasherId else null
+        // Không truyền codCasherId — BE auto-resolve theo cài đặt kho.
         scope.launch {
             confirming = true
             try {
@@ -187,7 +168,7 @@ fun WarehouseOrderDetail(
                         shippingFee = shipKh,
                         actualShippingFee = shipKho,
                         codAmount = cod,
-                        codCasherId = codCasher,
+                        codCasherId = null, // BE auto-resolve theo warehouse_id
                     ),
                 )
                 val base = if (isPurchase) "Đã xác nhận nhập hàng" else "Đã xác nhận giao hàng"
@@ -305,13 +286,6 @@ fun WarehouseOrderDetail(
                         ShipFieldRow("Phí ship KHO", shipCompany) { shipCompany = it }
                         if (!isPurchase) {
                             ShipFieldRow("Thu hộ", codAmount) { codAmount = it }
-                            if ((codAmount.toDoubleOrNull() ?: 0.0) > 0.0) {
-                                CasherSelectCompact(
-                                    cashers = cashCashers,
-                                    currentId = codCasherId,
-                                    onSelect = { codCasherId = it },
-                                )
-                            }
                         }
                     }
                 }
@@ -540,8 +514,9 @@ private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Uni
                     textStyle = TextStyle(color = C.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
                     cursorBrush = SolidColor(C.Primary),
                     decorationBox = { inner ->
-                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                            if (value.isEmpty()) Text("0", color = C.TextMuted, fontSize = 13.sp, textAlign = TextAlign.End, modifier = Modifier.fillMaxWidth())
+                        // contentAlignment=CenterEnd: cả placeholder lẫn innerTextField căn phải.
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.CenterEnd) {
+                            if (value.isEmpty()) Text("0", color = C.TextMuted, fontSize = 13.sp)
                             inner()
                         }
                     },
@@ -554,44 +529,3 @@ private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Uni
     }
 }
 
-/** Hàng chọn quỹ COD compact: chung style với ShipFieldRow (label + giá trị + border-bottom). */
-@Composable
-private fun CasherSelectCompact(cashers: List<CasherDto>, currentId: Long?, onSelect: (Long?) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val name = cashers.firstOrNull { it.id == currentId }?.name ?: "Chọn quỹ"
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-    ) {
-        Text("→ Quỹ", fontSize = 12.sp, color = C.TextMuted, modifier = Modifier.weight(0.42f))
-        Text(":", fontSize = 12.sp, color = C.TextMuted)
-        Spacer(Modifier.width(6.dp))
-        Column(modifier = Modifier.weight(0.58f)) {
-            Box {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { expanded = true }.padding(vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        name,
-                        fontSize = 13.sp,
-                        color = if (currentId == null) C.TextMuted else C.Text,
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.End,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Icon(Icons.Default.ArrowDropDown, null, tint = C.TextMuted, modifier = Modifier.size(16.dp).padding(start = 2.dp))
-                }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    if (cashers.isEmpty()) {
-                        DropdownMenuItem(text = { Text("(Chưa có quỹ tiền mặt active)", color = C.TextMuted) }, onClick = { expanded = false })
-                    } else cashers.forEach { c ->
-                        DropdownMenuItem(text = { Text(c.name) }, onClick = { onSelect(c.id); expanded = false })
-                    }
-                }
-            }
-            HorizontalDivider(color = C.Border, thickness = 1.dp)
-        }
-    }
-}
