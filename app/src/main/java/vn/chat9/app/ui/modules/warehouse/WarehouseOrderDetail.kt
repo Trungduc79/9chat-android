@@ -479,10 +479,10 @@ private fun ItemRow(
                 Spacer(Modifier.width(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (canFulfill) item.stockUnit?.let {
-                        Text("Kho ${trimZeros(it)}", fontSize = 13.sp, color = if (blocked) C.Danger else C.TextMuted, maxLines = 1, softWrap = false)
+                        Text("Kho ${trimZeros(it)}", fontSize = 13.sp, color = (if (blocked) C.Danger else C.TextMuted).copy(alpha = 0.6f), maxLines = 1, softWrap = false)
                         Spacer(Modifier.width(3.dp))
                     }
-                    Text(item.unitName, fontSize = 13.sp, color = C.TextMuted, maxLines = 1, softWrap = false)
+                    Text(item.unitName, fontSize = 13.sp, color = C.TextMuted.copy(alpha = 0.6f), maxLines = 1, softWrap = false)
                 }
                 if (canFulfill) {
                     Spacer(Modifier.width(10.dp))
