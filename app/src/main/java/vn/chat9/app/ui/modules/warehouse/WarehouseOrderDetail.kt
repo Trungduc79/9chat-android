@@ -39,7 +39,6 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -229,22 +228,20 @@ fun WarehouseOrderDetail(
 
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
-    val imeBottomPx = WindowInsets.ime.getBottom(density)
-    val keyboardOpen = imeBottomPx > 0
+    val imeBottomPx = WindowInsets.ime.getBottom(density).toFloat()
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
     val scrollState = rememberScrollState()
-    // Ctx cho ItemRow: scroll explicit để center input vào giữa "view còn lại"
-    // (= screen - keyboard), không phải center theo viewport scroll (lệch vì có
-    // status bar / tab bar / cards InfoCard chiếm phần trên).
-    val focusCenterCtx = FocusCenterCtx(scrollState, screenHeightPx, imeBottomPx.toFloat())
+    // Ctx cho ItemRow + ShipFieldRow: scroll explicit center input vào "view còn lại"
+    // (= screen - keyboard). imeBottomState dùng rememberUpdatedState để coroutine
+    // sau delay(280) đọc được giá trị IME ĐÃ MỞ XONG, không phải 0 lúc onFocus.
+    val imeBottomState = rememberUpdatedState(imeBottomPx)
+    val focusCenterCtx = FocusCenterCtx(scrollState, screenHeightPx, imeBottomState)
     Box(
         Modifier.fillMaxSize().background(C.Bg)
-            // imePadding() chuẩn — bottom padding = IME inset = chiều cao bàn phím từ system.
-            // "Gap" cảm thấy thừa trước kia thực ra là 96dp bottomPad của Column reserve cho nút
-            // xác nhận float dưới đáy. Khi keyboardOpen → ẩn nút (xem AnimatedVisibility bên dưới)
-            // + bottomPad giảm về 12dp → content sát ngay trên bàn phím, không gap.
-            .imePadding()
+            // KHÔNG imePadding: anh Đức muốn bàn phím overlay (che luôn bg nút Xác nhận +
+            // BottomNav), không đẩy layout. Scroll explicit lo việc đưa input lên giữa
+            // "view còn lại" cho từng input riêng.
             // Tap vùng trống (không phải input field) → tắt bàn phím.
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
@@ -269,9 +266,8 @@ fun WarehouseOrderDetail(
         // Bottom padding chừa chỗ cho bar đáy: nút Xác nhận (96dp) khi đủ ĐK,
         // hoặc bar blocker (~44dp) khi có lý do chặn.
         val bottomPad = when {
-            keyboardOpen -> 12.dp                                  // bàn phím mở → nút confirm ẩn → bỏ reserve
             !canFulfill -> 12.dp
-            canConfirm -> 96.dp
+            canConfirm -> 96.dp                                    // reserve cho nút Xác nhận float (kể cả khi IME mở — bàn phím chỉ overlay)
             confirmBlockReason.isNotEmpty() -> 44.dp
             else -> 12.dp
         }
@@ -332,10 +328,10 @@ fun WarehouseOrderDetail(
             if (canFulfill) {
                 Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        if (!isPurchase) ShipFieldRow("Phí ship KH", shipCustomer) { shipCustomer = it }
-                        ShipFieldRow("Phí ship KHO", shipCompany) { shipCompany = it }
+                        if (!isPurchase) ShipFieldRow("Phí ship KH", shipCustomer, focusCenterCtx) { shipCustomer = it }
+                        ShipFieldRow("Phí ship KHO", shipCompany, focusCenterCtx) { shipCompany = it }
                         if (!isPurchase) {
-                            ShipFieldRow("Thu hộ", codAmount) { codAmount = it }
+                            ShipFieldRow("Thu hộ", codAmount, focusCenterCtx) { codAmount = it }
                         }
                     }
                 }
@@ -401,7 +397,7 @@ fun WarehouseOrderDetail(
         // Nút xác nhận chỉ hiện (trượt lên từ đáy) khi ĐỦ điều kiện; chưa đủ → bar
         // blocker (ở trên) hiện text lý do.
         AnimatedVisibility(
-            visible = canFulfill && canConfirm && !keyboardOpen,    // bàn phím mở → ẩn nút để không che + bỏ gap
+            visible = canFulfill && canConfirm,                     // luôn giữ nút (bàn phím chỉ overlay che, không cần ẩn)
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -576,7 +572,7 @@ private fun ItemRow(
                                     kotlinx.coroutines.delay(280) // chờ IME mở xong + layout resize
                                     // Visible app area = screen - keyboard (top). Center field
                                     // vào giữa vùng này: targetY = visibleH/2 - fieldH/2.
-                                    val visibleH = focusCtx.screenHeightPx - focusCtx.imeBottomPx
+                                    val visibleH = focusCtx.screenHeightPx - focusCtx.imeBottomState.value
                                     val targetY = visibleH / 2f - fieldHeightPx / 2f
                                     val delta = fieldYInWindow - targetY
                                     if (delta > 0f) runCatching {
@@ -650,7 +646,10 @@ private object ThousandsVisualTransformation : VisualTransformation {
  * Hiển thị tự tách hàng nghìn (1.000.000); state vẫn chỉ digit.
  */
 @Composable
-private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Unit) {
+private fun ShipFieldRow(label: String, value: String, focusCtx: FocusCenterCtx, onChange: (String) -> Unit) {
+    var fieldYInWindow by remember { mutableStateOf(0f) }
+    var fieldHeightPx by remember { mutableStateOf(0f) }
+    val scope = rememberCoroutineScope()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -675,7 +674,20 @@ private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Uni
                             inner()
                         }
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f)
+                        .onGloballyPositioned { coords ->
+                            fieldYInWindow = coords.positionInWindow().y
+                            fieldHeightPx = coords.size.height.toFloat()
+                        }
+                        .onFocusChanged { state ->
+                            if (state.isFocused) scope.launch {
+                                kotlinx.coroutines.delay(280)   // chờ IME mở xong
+                                val visibleH = focusCtx.screenHeightPx - focusCtx.imeBottomState.value
+                                val targetY = visibleH / 2f - fieldHeightPx / 2f
+                                val delta = fieldYInWindow - targetY
+                                if (delta > 0f) runCatching { focusCtx.scrollState.animateScrollBy(delta) }
+                            }
+                        },
                 )
                 Text("đ", fontSize = 11.sp, color = C.TextMuted, modifier = Modifier.padding(start = 4.dp))
             }
@@ -684,10 +696,10 @@ private fun ShipFieldRow(label: String, value: String, onChange: (String) -> Uni
     }
 }
 
-/** Ctx truyền xuống ItemRow để qty input scroll explicit (center theo screen - keyboard). */
+/** Ctx truyền xuống ItemRow/ShipFieldRow để input scroll explicit (center theo screen - keyboard). */
 data class FocusCenterCtx(
     val scrollState: ScrollState,
     val screenHeightPx: Float,
-    val imeBottomPx: Float,
+    val imeBottomState: androidx.compose.runtime.State<Float>,
 )
 
