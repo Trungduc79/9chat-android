@@ -468,7 +468,7 @@ private fun ItemRow(
                         decorationBox = { inner ->
                             Column {
                                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) { inner() }
-                                HorizontalDivider(thickness = 1.dp, color = (if (blocked) C.Danger else C.Primary).copy(alpha = 0.5f))
+                                HorizontalDivider(thickness = 0.5.dp, color = (if (blocked) C.Danger else C.Primary).copy(alpha = 0.5f))
                             }
                         },
                         modifier = Modifier.width(56.dp),
