@@ -218,6 +218,9 @@ fun WarehouseOrderDetail(
     val focusManager = LocalFocusManager.current
     Box(
         Modifier.fillMaxSize().background(C.Bg)
+            // Khi bàn phím (IME) mở, đẩy nội dung lên đúng bằng chiều cao bàn phím — không che input.
+            // Edge-to-edge (setDecorFitsSystemWindows=false) bypass system resize → cần imePadding tay.
+            .imePadding()
             // Tap vùng trống (không phải input field) → tắt bàn phím.
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
