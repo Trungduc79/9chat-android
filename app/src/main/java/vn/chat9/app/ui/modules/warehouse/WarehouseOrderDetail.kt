@@ -187,9 +187,27 @@ fun WarehouseOrderDetail(
                     ),
                 )
                 val base = if (isPurchase) "Đã xác nhận nhập hàng" else "Đã xác nhận giao hàng"
-                val msg = res?.remainderOrder?.code?.let { "$base. Đơn còn lại: $it" } ?: base
+                // Drop-ship cascade: nhận đơn nhập → BE tự giao đơn bán liên kết. Báo cho NV.
+                val linked = res?.order?.linkedOrder
+                val cascadeNote = if (isPurchase && linked?.code?.isNotEmpty() == true && linked.type == "sale" && linked.status == "delivered") {
+                    "Đơn bán liên kết ${linked.code} đã tự giao."
+                } else null
+                val remainderNote = res?.remainderOrder?.code?.let { "Đơn còn lại: $it" }
+                val msg = listOfNotNull(base, cascadeNote, remainderNote).joinToString(" · ")
                 Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                 onClose()
+            } catch (e: retrofit2.HttpException) {
+                // Parse error body — bắt code DROPSHIP_SALE_VIA_PURCHASE cho thông điệp đúng.
+                val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                val (code, msgStr) = try {
+                    val j = org.json.JSONObject(body ?: "")
+                    j.optString("code", "") to j.optString("error", j.optString("message", ""))
+                } catch (_: Exception) { "" to "" }
+                val msg = when (code) {
+                    "DROPSHIP_SALE_VIA_PURCHASE" -> "Đơn bán giao thẳng (drop-ship) — xác nhận qua đơn NHẬP liên kết, không xác nhận riêng."
+                    else -> msgStr.ifBlank { "Xác nhận thất bại (HTTP ${e.code()})" }
+                }
+                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
             } catch (_: Exception) {
                 Toast.makeText(ctx, "Xác nhận thất bại", Toast.LENGTH_SHORT).show()
             }

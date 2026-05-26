@@ -20,6 +20,10 @@ data class OrderDto(
     @SerializedName("shipping_fee") val shippingFee: Double? = null,           // Phí ship KH → công nợ
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // Phí ship KHO → chi phí
     @SerializedName("cod_collected") val codCollected: Double? = null,         // Thu hộ COD
+    // Drop-ship: đơn liên kết (đơn nhập trỏ tới đơn bán đã tự giao sau cascade fulfill,
+    // hoặc đơn bán bị chặn fulfill trực tiếp — phải đi qua đơn nhập).
+    @SerializedName("linked_order_id") val linkedOrderId: Long? = null,
+    @SerializedName("linked_order") val linkedOrder: LinkedOrderDto? = null,
     val meta: MetaDto? = null,
     val items: List<OrderItemDto> = emptyList(),
 ) {
@@ -96,6 +100,14 @@ data class DeliveredItem(
 data class FulfillResult(
     val order: OrderDto? = null,
     @SerializedName("remainder_order") val remainderOrder: OrderDto? = null,
+)
+
+/** Đơn liên kết drop-ship eager-load nhẹ (BE trả 4 cột id/code/type/status). */
+data class LinkedOrderDto(
+    val id: Long = 0,
+    val code: String = "",
+    val type: String = "",                     // sale|purchase
+    val status: String = "",                   // draft|confirmed|delivered|received|...
 )
 
 // ----- attachments -----
