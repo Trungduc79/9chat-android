@@ -27,6 +27,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
@@ -68,6 +73,7 @@ import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.OrderItemDto
 import vn.chat9.app.ui.explore.AdminColors as C
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WarehouseOrderDetail(
     orderId: Long,
@@ -93,6 +99,9 @@ fun WarehouseOrderDetail(
     var shipCustomer by remember { mutableStateOf("") }   // Phí ship KH → order.shipping_fee → công nợ
     var shipCompany by remember { mutableStateOf("") }    // Phí ship KHO → actual_shipping_fee → chi phí
     var codAmount by remember { mutableStateOf("") }      // Thu hộ → cust_cash_in (BE chọn quỹ)
+    // Ngày xác nhận giao/nhận (NV chọn); ms. Init từ order.completedAt/orderedAt/now.
+    var confirmDateMs by remember { mutableStateOf<Long?>(null) }
+    var datePickerOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(orderId) {
         loading = true; order = null
@@ -104,6 +113,9 @@ fun WarehouseOrderDetail(
             shipCustomer = o?.shippingFee?.takeIf { it > 0 }?.toLong()?.toString() ?: ""
             shipCompany = o?.actualShippingFee?.takeIf { it > 0 }?.toLong()?.toString() ?: ""
             codAmount = o?.codCollected?.takeIf { it > 0 }?.toLong()?.toString() ?: ""
+            val dateStr = o?.completedAt ?: o?.orderedAt ?: o?.confirmedAt
+            confirmDateMs = dateStr?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+                ?: System.currentTimeMillis()
             photos = repo.photos(orderId)
         } catch (_: Exception) {
             Toast.makeText(ctx, "Không tải được đơn", Toast.LENGTH_SHORT).show()
@@ -171,6 +183,7 @@ fun WarehouseOrderDetail(
                         actualShippingFee = shipKho,
                         codAmount = cod,
                         codCasherId = null, // BE auto-resolve theo warehouse_id
+                        completedAt = confirmDateMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
                     ),
                 )
                 val base = if (isPurchase) "Đã xác nhận nhập hàng" else "Đã xác nhận giao hàng"
@@ -242,7 +255,7 @@ fun WarehouseOrderDetail(
                 return@Column
             }
 
-            InfoCard(o, isPurchase)
+            InfoCard(o, isPurchase, canFulfill, confirmDateMs) { datePickerOpen = true }
 
             if (!o.notes.isNullOrBlank()) {
                 Box(
@@ -378,15 +391,50 @@ fun WarehouseOrderDetail(
             }
         }
     }
+
+    // DatePickerDialog cho ngày xác nhận — NV tap vào ô ngày trên InfoCard mở picker.
+    if (datePickerOpen) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = confirmDateMs)
+        DatePickerDialog(
+            onDismissRequest = { datePickerOpen = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { confirmDateMs = it }
+                    datePickerOpen = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { datePickerOpen = false }) { Text("Huỷ") }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
 
 @Composable
-private fun InfoCard(o: OrderDto, isPurchase: Boolean) {
+private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, confirmDateMs: Long?, onDateClick: () -> Unit) {
     Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(12.dp)) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(o.partyName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = C.Text, modifier = Modifier.weight(1f))
-                Text(o.code, color = C.Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                // Thay mã đơn = ngày xác nhận giao/nhận (NV chọn). canFulfill = tap → mở picker.
+                val dateLabel = confirmDateMs?.let {
+                    java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale("vi")).format(java.util.Date(it))
+                } ?: "—"
+                if (canFulfill) {
+                    Text(
+                        dateLabel,
+                        color = C.Primary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable { onDateClick() }
+                            .background(C.Primary.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                } else {
+                    Text(dateLabel, color = C.TextMuted, fontSize = 12.sp)
+                }
             }
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

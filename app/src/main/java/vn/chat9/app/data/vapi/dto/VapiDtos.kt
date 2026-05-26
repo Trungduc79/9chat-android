@@ -91,6 +91,7 @@ data class FulfillRequest(
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null,
     @SerializedName("cod_amount") val codAmount: Double? = null,
     @SerializedName("cod_casher_id") val codCasherId: Long? = null,
+    @SerializedName("completed_at") val completedAt: String? = null,   // ISO date NV chọn
 )
 
 data class DeliveredItem(
