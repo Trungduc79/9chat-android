@@ -36,14 +36,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
@@ -227,11 +227,16 @@ fun WarehouseOrderDetail(
     }
 
     val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val keyboardOpen = imeBottomPx > 0
     Box(
         Modifier.fillMaxSize().background(C.Bg)
-            // Padding = IME inset TRỪ nav bar (nav bar không pad sẵn ở edge-to-edge → imePadding()
-            // mặc định bao gồm vùng nav bar = đẩy lên cao hơn chiều cao bàn phím thật).
-            .windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars))
+            // imePadding() chuẩn — bottom padding = IME inset = chiều cao bàn phím từ system.
+            // "Gap" cảm thấy thừa trước kia thực ra là 96dp bottomPad của Column reserve cho nút
+            // xác nhận float dưới đáy. Khi keyboardOpen → ẩn nút (xem AnimatedVisibility bên dưới)
+            // + bottomPad giảm về 12dp → content sát ngay trên bàn phím, không gap.
+            .imePadding()
             // Tap vùng trống (không phải input field) → tắt bàn phím.
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
@@ -256,6 +261,7 @@ fun WarehouseOrderDetail(
         // Bottom padding chừa chỗ cho bar đáy: nút Xác nhận (96dp) khi đủ ĐK,
         // hoặc bar blocker (~44dp) khi có lý do chặn.
         val bottomPad = when {
+            keyboardOpen -> 12.dp                                  // bàn phím mở → nút confirm ẩn → bỏ reserve
             !canFulfill -> 12.dp
             canConfirm -> 96.dp
             confirmBlockReason.isNotEmpty() -> 44.dp
@@ -386,7 +392,7 @@ fun WarehouseOrderDetail(
         // Nút xác nhận chỉ hiện (trượt lên từ đáy) khi ĐỦ điều kiện; chưa đủ → bar
         // blocker (ở trên) hiện text lý do.
         AnimatedVisibility(
-            visible = canFulfill && canConfirm,
+            visible = canFulfill && canConfirm && !keyboardOpen,    // bàn phím mở → ẩn nút để không che + bỏ gap
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -531,6 +537,7 @@ private fun ItemRow(
                     var qtyText by remember(item.id) { mutableStateOf(trimZeros(delivered)) }
                     val viewRequester = remember(item.id) { BringIntoViewRequester() }
                     val scope = rememberCoroutineScope()
+                    val density = LocalDensity.current
                     BasicTextField(
                         value = qtyText,
                         onValueChange = { raw ->
@@ -553,7 +560,10 @@ private fun ItemRow(
                             .onFocusChanged { state ->
                                 if (state.isFocused) scope.launch {
                                     kotlinx.coroutines.delay(250) // chờ IME mở xong + layout resize
-                                    runCatching { viewRequester.bringIntoView() }
+                                    // Rect mở rộng 220dp lên trên + 220dp xuống dưới so với element →
+                                    // scroll parent kéo element vào giữa viewport (không chỉ vừa cạnh trên).
+                                    val pad = with(density) { 220.dp.toPx() }
+                                    runCatching { viewRequester.bringIntoView(Rect(0f, -pad, 0f, pad)) }
                                 }
                             },
                     )
