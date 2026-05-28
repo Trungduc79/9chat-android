@@ -158,18 +158,49 @@ data class ProductSearchDto(
     @SerializedName("primary_image") val primaryImage: PrimaryImageDto? = null,
 )
 
+/**
+ * Variant từ /v1/variants (indexGlobal) — eager-load product + units + image,
+ * append stock_base (tồn theo kho khi truyền warehouse_id).
+ */
 data class VariantSearchDto(
     val id: Long = 0,
     val sku: String? = null,
     val name: String? = null,
     val price: Double? = null,
     val stock: Double? = null,
+    @SerializedName("stock_base") val stockBase: Double? = null,   // tồn base unit theo kho
     val image: String? = null,
     val attributes: Map<String, String>? = null,
-    @SerializedName("default_unit_id") val defaultUnitId: Long? = null,    // BE: is_default_sale unit
+    val units: List<VariantUnitDto> = emptyList(),
+    val product: ProductMiniDto? = null,
+    @SerializedName("default_unit_id") val defaultUnitId: Long? = null,
+)
+
+/** Đơn vị tính của variant (cho dropdown + quy đổi tồn). */
+data class VariantUnitDto(
+    val id: Long = 0,
+    val name: String = "",
+    @SerializedName("conversion_factor") val conversionFactor: Double = 1.0,
+    val price: Double? = null,
+    @SerializedName("is_base") val isBase: Boolean = false,
+    @SerializedName("is_default_sale") val isDefaultSale: Boolean = false,
+)
+
+/** Product rút gọn eager-load trong variant. */
+data class ProductMiniDto(
+    val id: Long = 0,
+    val name: String = "",
+    @SerializedName("primary_image") val primaryImage: PrimaryImageDto? = null,
 )
 
 data class PrimaryImageDto(val url: String? = null)
+
+/** SP hay mua của KH (chip gợi ý). */
+data class RecentProductDto(
+    @SerializedName("product_id") val productId: Long = 0,
+    @SerializedName("product_name") val productName: String = "",
+    @SerializedName("product_sku") val productSku: String? = null,
+)
 
 /** Last price KH-variant từ đơn gần nhất. */
 data class LastPriceDto(
@@ -184,6 +215,10 @@ data class CreateOrderRequest(
     @SerializedName("party_type") val partyType: String = "customer",
     @SerializedName("party_id") val partyId: Long,
     val status: String = "draft",                                          // draft | confirmed
+    @SerializedName("warehouse_id") val warehouseId: Long? = null,         // kho bán → NV kho đó thấy
+    @SerializedName("shipping_fee") val shippingFee: Double? = null,       // phí ship KH
+    @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // phí ship kho
+    @SerializedName("cod_collected") val codCollected: Double? = null,     // thu hộ
     val items: List<CreateOrderItem>,
     val notes: String? = null,
     @SerializedName("created_by_user_id") val createdByUserId: Long? = null, // 9chat user id

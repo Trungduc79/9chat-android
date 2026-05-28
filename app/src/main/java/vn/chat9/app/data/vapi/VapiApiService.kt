@@ -19,6 +19,8 @@ import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.LastPriceDto
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.ProductSearchDto
+import vn.chat9.app.data.vapi.dto.RecentProductDto
+import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 
 /**
@@ -100,11 +102,29 @@ interface VapiApiService {
         @Query("per_page") perPage: Int = 20,
     ): VapiResponse<List<ProductSearchDto>>
 
+    /** Search BIẾN THỂ trực tiếp (/v1/variants) — eager-load product+units+image,
+     *  append stock_base theo warehouse_id (tồn theo kho). */
+    @GET("v1/variants")
+    suspend fun listAllVariants(
+        @Query("search") search: String? = null,
+        @Query("product_id") productId: Long? = null,
+        @Query("warehouse_id") warehouseId: Long? = null,
+        @Query("per_page") perPage: Int = 30,
+    ): VapiResponse<List<VariantSearchDto>>
+
+    /** 5 SP hay mua của KH (chip gợi ý). */
+    @GET("v1/customers/{customerId}/recent-products")
+    suspend fun recentProducts(
+        @Path("customerId") customerId: Long,
+        @Query("limit") limit: Int = 5,
+    ): VapiResponse<List<RecentProductDto>>
+
     /** Last price KH đã mua variant này (cho auto-fill giá khi add item). */
     @GET("v1/customers/{customerId}/last-price")
     suspend fun lastPrice(
         @Path("customerId") customerId: Long,
         @Query("variant_id") variantId: Long,
+        @Query("unit_id") unitId: Long? = null,
     ): VapiResponse<LastPriceDto>
 
     /** Tạo đơn nháp / xác nhận (status quyết payload). */
