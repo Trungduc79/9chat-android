@@ -1,11 +1,17 @@
 package vn.chat9.app.ui.modules.sale
 
 import android.widget.Toast
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -37,9 +43,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
@@ -102,6 +114,19 @@ fun SaleOrderForm(onDone: () -> Unit) {
     var orderDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var datePickerOpen by remember { mutableStateOf(false) }
 
+    // ===== Keyboard handling: tap ngoài tắt bàn phím + scroll input vào giữa view
+    // còn lại (= screen - keyboard). Công thức port từ WarehouseOrderDetail. =====
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val view = LocalView.current
+    val scrollState = rememberScrollState()
+    val imeBottomPx = WindowInsets.ime.getBottom(density).toFloat()
+    val statusBarPx = WindowInsets.statusBars.getTop(density).toFloat()
+    val screenHeightPx = view.rootView.height.toFloat()
+    val appBarPx = with(density) { 48.dp.toPx() }   // SaleScreen app bar
+    val imeBottomState = rememberUpdatedState(imeBottomPx)
+    val focusCtx = FocusCenterCtx(scrollState, screenHeightPx, statusBarPx, appBarPx, imeBottomState)
+
     // Kho bán
     var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
     var selectedWarehouseId by remember { mutableStateOf<Long?>(null) }
@@ -152,8 +177,11 @@ fun SaleOrderForm(onDone: () -> Unit) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(AdminColors.Bg)) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+    Box(
+        Modifier.fillMaxSize().background(AdminColors.Bg)
+            .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
+    ) {
+        Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)) {
             // ===== Card KH + Kho =====
             Card("Khách hàng & kho") {
                 Row(Modifier.fillMaxWidth().clickable { customerPickerOpen = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -196,7 +224,7 @@ fun SaleOrderForm(onDone: () -> Unit) {
                                     Modifier.clip(RoundedCornerShape(16.dp)).background(AdminColors.Primary.copy(alpha = 0.1f))
                                         .clickable {
                                             pickerInitQuery = p.productName; pickerProductId = p.productId; productPickerOpen = true
-                                        }.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        }.padding(horizontal = 10.dp, vertical = 2.dp),   // bg cao -20% (4→2)
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text("+ ${p.productName}", color = AdminColors.Primary, fontSize = 12.sp, maxLines = 1)
@@ -212,6 +240,8 @@ fun SaleOrderForm(onDone: () -> Unit) {
                         items.forEachIndexed { idx, it ->
                             ItemRow(
                                 draft = it,
+                                focusCtx = focusCtx,
+                                scope = scope,
                                 onDelete = { items.removeAt(idx) },
                                 onQtyChange = { q -> items[idx] = it.copy(qty = q) },
                                 onPriceChange = { p -> items[idx] = it.copy(price = p) },
@@ -244,9 +274,9 @@ fun SaleOrderForm(onDone: () -> Unit) {
 
             // ===== Card phí ship + COD (bỏ title) =====
             Card("") {
-                ShipRow("Phí ship KH", shipCustomer) { shipCustomer = it }
-                ShipRow("Phí ship KHO", shipCompany) { shipCompany = it }
-                ShipRow("Thu hộ", codAmount) { codAmount = it }
+                ShipRow("Phí ship KH", shipCustomer, focusCtx, scope) { shipCustomer = it }
+                ShipRow("Phí ship KHO", shipCompany, focusCtx, scope) { shipCompany = it }
+                ShipRow("Thu hộ", codAmount, focusCtx, scope) { codAmount = it }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -366,6 +396,8 @@ private fun WarehouseDropdown(warehouses: List<WarehouseDto>, selectedId: Long?,
 @Composable
 private fun ItemRow(
     draft: OrderItemDraft,
+    focusCtx: FocusCenterCtx,
+    scope: kotlinx.coroutines.CoroutineScope,
     onDelete: () -> Unit,
     onQtyChange: (Double) -> Unit,
     onPriceChange: (Double) -> Unit,
@@ -409,12 +441,13 @@ private fun ItemRow(
                             singleLine = true,
                             textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
                             cursorBrush = SolidColor(AdminColors.Primary),
-                            modifier = Modifier.width(40.dp),
+                            modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}"),
                         )
                         UnitDropdown(draft.units, draft.unitId, onUnitChange)
                     }
-                    // Nhóm 2 (weight 3): × — price — =, gap đều.
-                    Row(Modifier.weight(3f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    // Nhóm 2 (weight 3): × — price — =. SpaceEvenly + price wrap (widthIn) →
+                    // gap ×→price = price→= (price text-center để không lệch).
+                    Row(Modifier.weight(3f), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                         Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
                         var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
                         BasicTextField(
@@ -422,9 +455,9 @@ private fun ItemRow(
                             onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
                             cursorBrush = SolidColor(AdminColors.Primary),
-                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                            modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}"),
                         )
                         Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
                     }
@@ -463,7 +496,7 @@ private fun UnitDropdown(units: List<VariantUnitDto>, selectedId: Long, onSelect
 }
 
 @Composable
-private fun ShipRow(label: String, value: String, onChange: (String) -> Unit) {
+private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, onChange: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(0.42f))
         Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
@@ -477,13 +510,13 @@ private fun ShipRow(label: String, value: String, onChange: (String) -> Unit) {
                     singleLine = true,
                     textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
                     cursorBrush = SolidColor(AdminColors.Primary),
+                    modifier = Modifier.weight(1f).centerOnFocus(focusCtx, scope, "ship-$label"),
                     decorationBox = { inner ->
                         Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.CenterEnd) {
                             if (value.isEmpty()) Text("0", color = AdminColors.TextMuted, fontSize = 13.sp)
                             inner()
                         }
                     },
-                    modifier = Modifier.weight(1f),
                 )
                 Text(" đ", color = AdminColors.TextMuted, fontSize = 11.sp)
             }
@@ -659,4 +692,36 @@ private fun submit(
             Toast.makeText(context, "Tạo đơn thất bại: ${e.message}", Toast.LENGTH_LONG).show()
         } finally { setSaving(false) }
     }
+}
+
+/** Ctx scroll center input vào giữa "view còn lại" (= screen - keyboard). */
+data class FocusCenterCtx(
+    val scrollState: ScrollState,
+    val screenHeightPx: Float,
+    val statusBarPx: Float,
+    val appBarPx: Float,
+    val imeBottomState: androidx.compose.runtime.State<Float>,
+)
+
+/**
+ * Khi focus input + bàn phím mở → scroll input vào GIỮA vùng hiển thị
+ *   center = ((statusBar + appBar) + (screen - IME)) / 2
+ * delay 280ms chờ IME mở xong + layout resize. positionInWindow đọc y tuyệt đối.
+ */
+@Composable
+private fun Modifier.centerOnFocus(ctx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, key: Any): Modifier {
+    var y by remember(key) { mutableStateOf(0f) }
+    var h by remember(key) { mutableStateOf(0f) }
+    return this
+        .onGloballyPositioned { y = it.positionInWindow().y; h = it.size.height.toFloat() }
+        .onFocusChanged { st ->
+            if (st.isFocused) scope.launch {
+                delay(280)
+                val top = ctx.statusBarPx + ctx.appBarPx
+                val bottom = ctx.screenHeightPx - ctx.imeBottomState.value
+                val target = (top + bottom) / 2f - h / 2f
+                val delta = y - target
+                if (delta > 0f) runCatching { ctx.scrollState.animateScrollBy(delta) }
+            }
+        }
 }
