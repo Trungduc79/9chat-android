@@ -17,14 +17,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +83,7 @@ private fun variantDisplay(v: VariantSearchDto, productName: String): String {
  * (thumb, tên variant, qty, unit dropdown, × giá = thành tiền, swipe-delete) +
  * chip 5 SP hay mua + ship/COD + 2 nút Lưu nháp/Xác nhận.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaleOrderForm(onDone: () -> Unit) {
     val context = LocalContext.current
@@ -92,6 +99,8 @@ fun SaleOrderForm(onDone: () -> Unit) {
     var shipCustomer by remember { mutableStateOf("") }
     var shipCompany by remember { mutableStateOf("") }
     var codAmount by remember { mutableStateOf("") }
+    var orderDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    var datePickerOpen by remember { mutableStateOf(false) }
 
     // Kho bán
     var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
@@ -161,25 +170,37 @@ fun SaleOrderForm(onDone: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Kho bán", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
                     WarehouseDropdown(warehouses, selectedWarehouseId) { selectedWarehouseId = it }
+                    Spacer(Modifier.weight(1f))
+                    // Ngày đơn — tap mở DatePicker.
+                    val dateLabel = java.text.SimpleDateFormat("dd/MM/yyyy", Locale("vi")).format(java.util.Date(orderDateMs))
+                    Text(dateLabel, color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable { datePickerOpen = true }
+                            .background(AdminColors.Primary.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp))
                 }
             }
 
             Spacer(Modifier.height(12.dp))
 
             // ===== Card Items =====
-            Card("Mặt hàng (${items.size})") {
-                // Chip SP hay mua
-                if (suggested.isNotEmpty()) {
-                    LazyRow(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(suggested, key = { it.productId }) { p ->
-                            Row(
-                                Modifier.clip(RoundedCornerShape(16.dp)).background(AdminColors.Primary.copy(alpha = 0.1f))
-                                    .clickable {
-                                        pickerInitQuery = p.productName; pickerProductId = p.productId; productPickerOpen = true
-                                    }.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text("+ ${p.productName}", color = AdminColors.Primary, fontSize = 12.sp, maxLines = 1)
+            Card("") {
+                // Header: title "Mặt hàng (N)" + chip SP hay mua CÙNG DÒNG (LazyRow vuốt
+                // ngang, không wrap).
+                Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Mặt hàng (${items.size})", color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    if (suggested.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(suggested, key = { it.productId }) { p ->
+                                Row(
+                                    Modifier.clip(RoundedCornerShape(16.dp)).background(AdminColors.Primary.copy(alpha = 0.1f))
+                                        .clickable {
+                                            pickerInitQuery = p.productName; pickerProductId = p.productId; productPickerOpen = true
+                                        }.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text("+ ${p.productName}", color = AdminColors.Primary, fontSize = 12.sp, maxLines = 1)
+                                }
                             }
                         }
                     }
@@ -203,10 +224,14 @@ fun SaleOrderForm(onDone: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 // Footer: Thêm SP (trái) + Tổng (phải)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = {
-                        if (selectedCustomer == null) Toast.makeText(context, "Chọn khách hàng trước", Toast.LENGTH_SHORT).show()
-                        else { pickerInitQuery = ""; pickerProductId = null; productPickerOpen = true }
-                    }) { Text("+ Thêm SP", color = AdminColors.Primary, fontSize = 13.sp) }
+                    OutlinedButton(
+                        onClick = {
+                            if (selectedCustomer == null) Toast.makeText(context, "Chọn khách hàng trước", Toast.LENGTH_SHORT).show()
+                            else { pickerInitQuery = ""; pickerProductId = null; productPickerOpen = true }
+                        },
+                        modifier = Modifier.height(32.dp),                         // -20% so default 40dp
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    ) { Text("+ Thêm SP", color = AdminColors.Primary, fontSize = 13.sp) }
                     Spacer(Modifier.weight(1f))
                     val total = items.sumOf { it.qty * it.price }
                     Text("Tổng ", color = AdminColors.TextMuted, fontSize = 13.sp)
@@ -217,8 +242,8 @@ fun SaleOrderForm(onDone: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            // ===== Card phí ship + COD =====
-            Card("Phí ship & thu hộ") {
+            // ===== Card phí ship + COD (bỏ title) =====
+            Card("") {
                 ShipRow("Phí ship KH", shipCustomer) { shipCustomer = it }
                 ShipRow("Phí ship KHO", shipCompany) { shipCompany = it }
                 ShipRow("Thu hộ", codAmount) { codAmount = it }
@@ -247,12 +272,12 @@ fun SaleOrderForm(onDone: () -> Unit) {
             // ===== 2 nút =====
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { submit(scope, container, userId, selectedCustomer, selectedWarehouseId, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", context, onDone) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     modifier = Modifier.weight(1f),
                 ) { Text("Lưu nháp") }
                 Button(
-                    onClick = { submit(scope, container, userId, selectedCustomer, selectedWarehouseId, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", context, onDone) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
                     modifier = Modifier.weight(1f),
@@ -278,6 +303,17 @@ fun SaleOrderForm(onDone: () -> Unit) {
             onClose = { productPickerOpen = false },
         )
     }
+    if (datePickerOpen) {
+        val dpState = rememberDatePickerState(initialSelectedDateMillis = orderDateMs)
+        MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
+            DatePickerDialog(
+                onDismissRequest = { datePickerOpen = false },
+                confirmButton = { TextButton(onClick = { dpState.selectedDateMillis?.let { orderDateMs = it }; datePickerOpen = false }) { Text("OK", color = AdminColors.Primary) } },
+                dismissButton = { TextButton(onClick = { datePickerOpen = false }) { Text("Huỷ", color = AdminColors.TextMuted) } },
+                colors = DatePickerDefaults.colors(containerColor = AdminColors.Card),
+            ) { DatePicker(state = dpState) }
+        }
+    }
 }
 
 /** Local draft mỗi dòng item. */
@@ -295,8 +331,10 @@ data class OrderItemDraft(
 @Composable
 private fun Card(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(12.dp)) {
-        Text(title, color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(6.dp))
+        if (title.isNotEmpty()) {
+            Text(title, color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(6.dp))
+        }
         content()
     }
 }
@@ -361,32 +399,37 @@ private fun ItemRow(
                 Text(draft.variantName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // qty
-                    var qtyText by remember(draft.variantId) { mutableStateOf(trimZeros(draft.qty)) }
-                    BasicTextField(
-                        value = qtyText,
-                        onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                        cursorBrush = SolidColor(AdminColors.Primary),
-                        modifier = Modifier.width(40.dp),
-                    )
-                    // unit dropdown
-                    UnitDropdown(draft.units, draft.unitId, onUnitChange)
-                    Text(" × ", color = AdminColors.TextMuted, fontSize = 12.sp)
-                    // price
-                    var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
-                    BasicTextField(
-                        value = priceText,
-                        onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
-                        cursorBrush = SolidColor(AdminColors.Primary),
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(" = ", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    // Nhóm 1 (weight 2): qty — unit, gap đều (SpaceBetween).
+                    Row(Modifier.weight(2f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        var qtyText by remember(draft.variantId) { mutableStateOf(trimZeros(draft.qty)) }
+                        BasicTextField(
+                            value = qtyText,
+                            onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            modifier = Modifier.width(40.dp),
+                        )
+                        UnitDropdown(draft.units, draft.unitId, onUnitChange)
+                    }
+                    // Nhóm 2 (weight 3): × — price — =, gap đều.
+                    Row(Modifier.weight(3f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
+                        var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
+                        BasicTextField(
+                            value = priceText,
+                            onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                        )
+                        Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    }
+                    // Total + đ cố định phải.
+                    Spacer(Modifier.width(4.dp))
                     Text(fmtMoney(draft.qty * draft.price), color = AdminColors.Primary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                 }
@@ -583,6 +626,7 @@ private fun submit(
     userId: Long?,
     customer: CustomerDto?,
     warehouseId: Long?,
+    orderDateMs: Long,
     items: List<OrderItemDraft>,
     notes: String,
     shipCustomer: Double,
@@ -599,6 +643,7 @@ private fun submit(
         try {
             val req = CreateOrderRequest(
                 type = "sale", partyType = "customer", partyId = customer.id, status = status,
+                orderedAt = java.time.Instant.ofEpochMilli(orderDateMs).toString(),
                 warehouseId = warehouseId,
                 shippingFee = shipCustomer.takeIf { it > 0 },
                 actualShippingFee = shipCompany.takeIf { it > 0 },

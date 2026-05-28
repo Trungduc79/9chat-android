@@ -215,6 +215,7 @@ data class CreateOrderRequest(
     @SerializedName("party_type") val partyType: String = "customer",
     @SerializedName("party_id") val partyId: Long,
     val status: String = "draft",                                          // draft | confirmed
+    @SerializedName("ordered_at") val orderedAt: String? = null,           // ngày đơn (ISO)
     @SerializedName("warehouse_id") val warehouseId: Long? = null,         // kho bán → NV kho đó thấy
     @SerializedName("shipping_fee") val shippingFee: Double? = null,       // phí ship KH
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // phí ship kho
