@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -31,7 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -335,7 +338,7 @@ private fun ItemRow(
     var rowWidth by remember { mutableStateOf(1f) }
     Box(
         Modifier.fillMaxWidth()
-            .onSizeChangedWidth { rowWidth = it.toFloat() }
+            .onSizeChanged { rowWidth = it.width.toFloat() }
             .pointerInput(draft.variantId) {
                 detectHorizontalDragGestures(
                     onDragEnd = { if (-offsetX > rowWidth / 3f) onDelete() else offsetX = 0f },
@@ -347,7 +350,7 @@ private fun ItemRow(
             Text("Xoá", color = AdminColors.Danger, fontSize = 13.sp, modifier = Modifier.padding(end = 16.dp))
         }
         Row(
-            Modifier.fillMaxWidth().offsetX(offsetX).background(AdminColors.Card).padding(vertical = 6.dp),
+            Modifier.fillMaxWidth().offset { IntOffset(offsetX.toInt(), 0) }.background(AdminColors.Card).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (draft.imageUrl != null) AsyncImage(model = draft.imageUrl, contentDescription = null,
@@ -612,14 +615,3 @@ private fun submit(
         } finally { setSaving(false) }
     }
 }
-
-// Helper modifiers
-private fun Modifier.offsetX(x: Float): Modifier = this.then(
-    androidx.compose.ui.layout.layout { measurable, constraints ->
-        val placeable = measurable.measure(constraints)
-        layout(placeable.width, placeable.height) { placeable.placeRelative(x.toInt(), 0) }
-    },
-)
-private fun Modifier.onSizeChangedWidth(cb: (Int) -> Unit): Modifier = this.then(
-    androidx.compose.ui.layout.onSizeChanged { cb(it.width) },
-)
