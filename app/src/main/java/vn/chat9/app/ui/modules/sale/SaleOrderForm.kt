@@ -185,15 +185,15 @@ fun SaleOrderForm(onDone: () -> Unit) {
             .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)) {
-            // ===== Card KH + Kho =====
-            Card("Khách hàng & kho") {
+            // ===== Card KH + Kho (bỏ title, padding bottom giảm 50% = 6dp) =====
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card)
+                    .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 6.dp),
+            ) {
                 Row(Modifier.fillMaxWidth().clickable { customerPickerOpen = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         if (selectedCustomer == null) Text("Chưa chọn khách hàng", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic)
-                        else {
-                            Text(selectedCustomer!!.name, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            selectedCustomer!!.phone?.let { Text(it, color = AdminColors.TextMuted, fontSize = 12.sp) }
-                        }
+                        else Text(selectedCustomer!!.name, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
                     Text(if (selectedCustomer == null) "Chọn KH" else "Đổi KH", color = AdminColors.Primary, fontSize = 12.sp)
                 }
@@ -338,6 +338,15 @@ fun SaleOrderForm(onDone: () -> Unit) {
     }
     if (datePickerOpen) {
         val dpState = rememberDatePickerState(initialSelectedDateMillis = orderDateMs)
+        // Tự đóng sau 0.5s khi user chọn được ngày mới (không cần bấm OK).
+        LaunchedEffect(dpState.selectedDateMillis) {
+            val sel = dpState.selectedDateMillis
+            if (sel != null && sel != orderDateMs) {
+                delay(500)
+                orderDateMs = sel
+                datePickerOpen = false
+            }
+        }
         MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
             DatePickerDialog(
                 onDismissRequest = { datePickerOpen = false },
