@@ -126,6 +126,8 @@ fun SaleOrderForm(onDone: () -> Unit) {
     val appBarPx = with(density) { 48.dp.toPx() }   // SaleScreen app bar
     val imeBottomState = rememberUpdatedState(imeBottomPx)
     val focusCtx = FocusCenterCtx(scrollState, screenHeightPx, statusBarPx, appBarPx, imeBottomState)
+    // Đẩy layout lên = 80% chiều cao bàn phím khi IME mở (Đức 2026-05-29).
+    val pushUpDp = with(density) { (imeBottomPx * 0.8f).toDp() }
 
     // Kho bán
     var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
@@ -179,6 +181,7 @@ fun SaleOrderForm(onDone: () -> Unit) {
 
     Box(
         Modifier.fillMaxSize().background(AdminColors.Bg)
+            .padding(bottom = pushUpDp)   // đẩy lên 80% chiều cao bàn phím
             .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)) {
