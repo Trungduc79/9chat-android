@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
@@ -332,6 +333,7 @@ fun SaleOrderForm(onDone: () -> Unit) {
             warehouseId = selectedWarehouseId,
             initQuery = pickerInitQuery,
             productId = pickerProductId,
+            suggested = suggested,
             onPick = { v -> addVariant(v); productPickerOpen = false },
             onClose = { productPickerOpen = false },
         )
@@ -581,6 +583,7 @@ private fun VariantPicker(
     warehouseId: Long?,
     initQuery: String,
     productId: Long?,
+    suggested: List<RecentProductDto>,
     onPick: (VariantSearchDto) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -592,7 +595,18 @@ private fun VariantPicker(
     var loading by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, productId) {
-        if (query.length < 2 && productId == null) { results = emptyList(); return@LaunchedEffect }
+        // Query rỗng + không filter product → hiện variants của 5 SP hay mua.
+        if (query.length < 2 && productId == null) {
+            if (suggested.isEmpty()) { results = emptyList(); return@LaunchedEffect }
+            loading = true
+            val all = mutableListOf<VariantSearchDto>()
+            for (p in suggested) {
+                try { all += container.vapi.listAllVariants(productId = p.productId, warehouseId = warehouseId, perPage = 20).data ?: emptyList() } catch (_: Exception) {}
+            }
+            results = all
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         if (productId == null) delay(280)
         try {
@@ -606,8 +620,7 @@ private fun VariantPicker(
     PickerSheet(title = "Chọn biến thể", onClose = onClose) {
         SearchField(query, "Tìm biến thể — tên / SKU...") { query = it }
         Spacer(Modifier.height(8.dp))
-        if (query.length < 2 && productId == null) Text("Gõ ≥2 ký tự để tìm", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
-        else if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+        if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
         } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
             items(results, key = { it.id }) { v ->
@@ -631,10 +644,13 @@ private fun VariantPicker(
 // ===== shared picker UI =====
 @Composable
 private fun PickerSheet(title: String, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onClose)) {
+    // imePadding trên Box → khi bàn phím mở, vùng Box co lại = screen - IME; dialog
+    // align Center nằm giữa vùng còn lại → KHÔNG bị bàn phím che. Hiện ở giữa-trên
+    // gần khu thao tác (nút Thêm SP), không phải bottom sheet sát đáy.
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).imePadding().clickable(onClick = onClose)) {
         Column(
-            Modifier.fillMaxWidth().align(Alignment.BottomCenter)
-                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+            Modifier.fillMaxWidth().align(Alignment.Center).padding(12.dp)
+                .clip(RoundedCornerShape(16.dp))
                 .background(AdminColors.Card).padding(16.dp)
                 .clickable(enabled = false, onClick = {}),
         ) {
