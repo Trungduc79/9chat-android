@@ -94,14 +94,29 @@ fun SaleProductsList() {
 
         if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
         else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
-        else LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(variants, key = { it.id }) { v -> VariantRow(v) }
+        else {
+            // Màu số tồn theo KHO đang chọn (mỗi kho 1 màu nổi, dễ phân biệt).
+            val whIdx = warehouses.indexOfFirst { it.id == selectedWarehouseId }.coerceAtLeast(0)
+            val stockColor = WAREHOUSE_STOCK_COLORS[whIdx % WAREHOUSE_STOCK_COLORS.size]
+            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(variants, key = { it.id }) { v -> VariantRow(v, stockColor) }
+            }
         }
     }
 }
 
+// Palette màu tồn theo kho — đều nổi, tương phản tốt trên nền tối.
+private val WAREHOUSE_STOCK_COLORS = listOf(
+    androidx.compose.ui.graphics.Color(0xFF4CB782),   // xanh lá
+    androidx.compose.ui.graphics.Color(0xFF4AA3F2),   // xanh dương
+    androidx.compose.ui.graphics.Color(0xFFF2994A),   // cam
+    androidx.compose.ui.graphics.Color(0xFFB388FF),   // tím
+    androidx.compose.ui.graphics.Color(0xFFF25287),   // hồng
+    androidx.compose.ui.graphics.Color(0xFF26C6DA),   // cyan
+)
+
 @Composable
-private fun VariantRow(v: VariantSearchDto) {
+private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.graphics.Color) {
     val units = v.units
     val defUnit = units.firstOrNull { it.isDefaultSale } ?: units.firstOrNull { it.isBase } ?: units.firstOrNull()
     val factor = defUnit?.conversionFactor ?: 1.0
@@ -114,18 +129,19 @@ private fun VariantRow(v: VariantSearchDto) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Thumb 50dp (-10% so 55 → giảm chiều cao thẻ ~10%).
         val img = v.image ?: v.product?.primaryImage?.url
-        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(55.dp).clip(RoundedCornerShape(6.dp)))
-        else Box(Modifier.size(55.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(22.dp))
+        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(6.dp)))
+        else Box(Modifier.size(50.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.width(10.dp))
         Text(name, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
-        // 3 dòng center: Kho / số / đơn vị
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // 3 dòng center: Kho / số (màu theo kho) / đơn vị. Gap 2→1.5dp (-10%).
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
             Text("Kho", color = AdminColors.TextMuted, fontSize = 11.sp)
-            Text(trimZeros(stockInUnit), color = if (stockInUnit > 0) AdminColors.Success else AdminColors.TextMuted, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(trimZeros(stockInUnit), color = if (stockInUnit > 0) stockColor else AdminColors.TextMuted, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             defUnit?.name?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp) }
         }
     }
