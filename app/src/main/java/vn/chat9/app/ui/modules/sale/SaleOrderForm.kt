@@ -683,14 +683,14 @@ private fun VariantPicker(
         loading = false
     }
 
-    PickerSheet(title = "Chọn biến thể", onClose = onClose) {
+    PickerSheet(title = "Chọn biến thể", onClose = onClose, fillHeight = true) {
         SearchField(query, "Tìm biến thể — tên / SKU...") { query = it }
         Spacer(Modifier.height(8.dp))
         if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
-        } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
+        } else LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
             items(results, key = { it.id }) { v ->
-                Row(Modifier.fillMaxWidth().clickable { onPick(v) }.padding(1.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable { onPick(v) }.padding(0.5.dp), verticalAlignment = Alignment.CenterVertically) {
                     val img = v.image ?: v.product?.primaryImage?.url
                     if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)))
                     else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
@@ -718,13 +718,15 @@ private fun VariantPicker(
 
 // ===== shared picker UI =====
 @Composable
-private fun PickerSheet(title: String, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    // imePadding trên Box → khi bàn phím mở, vùng Box co lại = screen - IME; dialog
-    // align Center nằm giữa vùng còn lại → KHÔNG bị bàn phím che. Hiện ở giữa-trên
-    // gần khu thao tác (nút Thêm SP), không phải bottom sheet sát đáy.
+private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    // imePadding trên Box → khi bàn phím mở, vùng Box co lại = screen - IME → đáy Box = top bàn phím.
+    // fillHeight=true: dialog fillMaxHeight → đáy dialog chạm bàn phím, cao tối đa (variant picker).
+    // fillHeight=false: dialog wrap content, align Center vùng còn lại (customer picker).
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).imePadding().clickable(onClick = onClose)) {
         Column(
-            Modifier.fillMaxWidth().align(Alignment.Center).padding(12.dp)
+            Modifier.fillMaxWidth()
+                .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier)
+                .align(if (fillHeight) Alignment.TopCenter else Alignment.Center).padding(12.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(AdminColors.Card)
                 .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))   // viền mỏng sáng phân định vùng làm việc
