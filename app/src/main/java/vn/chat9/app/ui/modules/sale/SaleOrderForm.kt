@@ -482,8 +482,8 @@ private fun ItemRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (draft.imageUrl != null) AsyncImage(model = draft.imageUrl, contentDescription = null,
-                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)))
-            else Box(Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)))
+            else Box(Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(draft.variantName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
