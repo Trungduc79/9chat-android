@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -316,8 +317,8 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            // ===== Card phí ship + COD (bỏ title) =====
-            Card("") {
+            // ===== Card phí ship + COD (bỏ title, pt/pb gọn) =====
+            Card("", vPadding = 6.dp) {
                 ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit) { shipCustomer = it }
                 ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit) { shipCompany = it }
                 ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit) { codAmount = it }
@@ -415,8 +416,8 @@ data class OrderItemDraft(
 )
 
 @Composable
-private fun Card(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(12.dp)) {
+private fun Card(title: String, vPadding: Dp = 12.dp, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 12.dp, vertical = vPadding)) {
         if (title.isNotEmpty()) {
             Text(title, color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(6.dp))
