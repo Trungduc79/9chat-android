@@ -126,8 +126,8 @@ private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.grap
         else v.attributes?.values?.filter { it.isNotBlank() }?.joinToString(", ") ?: (v.product?.name ?: "")
 
     Row(
-        // Giảm chiều cao thẻ ~10% bằng padding vertical 4→1 (thumb giữ 55dp).
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 4.dp, vertical = 1.dp),
+        // Giảm chiều cao thẻ tối đa (thumb giữ 55dp → padding vertical 0, chỉ horizontal).
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Thumb giữ 55dp.
@@ -139,8 +139,8 @@ private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.grap
         Spacer(Modifier.width(10.dp))
         Text(name, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
-        // 3 dòng center: Kho / số (màu theo kho) / đơn vị. Gap 2→1.5dp (-10%).
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.5.dp)) {
+        // 3 dòng center: Kho / số (màu theo kho) / đơn vị. Gap giảm còn 1dp.
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text("Kho", color = AdminColors.TextMuted, fontSize = 11.sp)
             Text(trimZeros(stockInUnit), color = if (stockInUnit > 0) stockColor else AdminColors.TextMuted, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             defUnit?.name?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp) }
