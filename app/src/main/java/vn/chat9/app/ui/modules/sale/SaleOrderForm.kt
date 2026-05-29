@@ -215,6 +215,9 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
         }
     }
 
+    // Box wrapper: form + pickers nằm CHUNG 1 Box → picker z-stack đè lên form
+    // (overlay), không bị đẩy ra ngoài khi SaleOrderForm đặt trong Column của caller.
+    Box(Modifier.fillMaxSize()) {
     Box(
         Modifier.fillMaxSize().background(AdminColors.Bg)
             .padding(bottom = pushUpDp)   // đẩy lên 80% chiều cao bàn phím
@@ -412,6 +415,7 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
             ) { DatePicker(state = dpState) }
         }
     }
+    }   // đóng Box wrapper (form + pickers z-stack overlay)
 }
 
 /** Local draft mỗi dòng item. */
