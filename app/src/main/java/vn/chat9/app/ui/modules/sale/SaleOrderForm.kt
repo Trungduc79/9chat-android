@@ -719,10 +719,15 @@ private fun VariantPicker(
 // ===== shared picker UI =====
 @Composable
 private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
-    // imePadding trên Box → khi bàn phím mở, vùng Box co lại = screen - IME → đáy Box = top bàn phím.
+    // KHÔNG dùng imePadding() thuần: picker Box nằm trong vùng content (trên thanh điều hướng
+    // hệ thống) nên imePadding (inset mức cửa sổ) đẩy lên dư đúng phần nav bar → hở 1 khoảng
+    // trên bàn phím. Pad đúng = imeBottom − navBar → đáy Box = top bàn phím thật.
     // fillHeight=true: dialog fillMaxHeight → đáy dialog chạm bàn phím, cao tối đa (variant picker).
-    // fillHeight=false: dialog wrap content, align Center vùng còn lại (customer picker).
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).imePadding().clickable(onClick = onClose)) {
+    val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val navBarPx = WindowInsets.navigationBars.getBottom(density)
+    val padBottom = with(density) { (imeBottomPx - navBarPx).coerceAtLeast(0).toDp() }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).padding(bottom = padBottom).clickable(onClick = onClose)) {
         Column(
             Modifier.fillMaxWidth()
                 .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier)
