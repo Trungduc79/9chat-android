@@ -3,6 +3,7 @@ package vn.chat9.app.ui.modules.sale
 import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -713,7 +714,9 @@ private fun PickerSheet(title: String, onClose: () -> Unit, content: @Composable
         Column(
             Modifier.fillMaxWidth().align(Alignment.Center).padding(12.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(AdminColors.Card).padding(16.dp)
+                .background(AdminColors.Card)
+                .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(16.dp))   // viền mỏng sáng phân định vùng làm việc
+                .padding(16.dp)
                 .clickable(enabled = false, onClick = {}),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
