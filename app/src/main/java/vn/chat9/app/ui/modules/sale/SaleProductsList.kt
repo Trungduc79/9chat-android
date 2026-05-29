@@ -130,11 +130,11 @@ private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.grap
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Thumb 59dp (+8% so 55). Padding vertical 0 → chiều cao thẻ = thumb, không tăng thêm.
+        // Thumb 62dp (+5% so 59). Padding vertical 0 → chiều cao thẻ = thumb.
         val img = v.image ?: v.product?.primaryImage?.url
-        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)))
-        else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(24.dp))
+        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(62.dp).clip(RoundedCornerShape(6.dp)))
+        else Box(Modifier.size(62.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(25.dp))
         }
         Spacer(Modifier.width(10.dp))
         Text(name, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2, modifier = Modifier.weight(1f))
