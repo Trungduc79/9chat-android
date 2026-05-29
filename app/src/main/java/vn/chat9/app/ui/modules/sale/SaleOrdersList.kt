@@ -1,24 +1,25 @@
 package vn.chat9.app.ui.modules.sale
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,12 +29,15 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.ui.explore.AdminColors
+import vn.chat9.app.ui.explore.AdminPullToRefresh
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -54,7 +58,8 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
-    var deliveryDateMs by remember { mutableStateOf<Long?>(null) }
+    var startDateMs by remember { mutableStateOf<Long?>(null) }
+    var endDateMs by remember { mutableStateOf<Long?>(null) }
     var datePickerOpen by remember { mutableStateOf(false) }
 
     fun load() {
@@ -71,14 +76,22 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     }
     LaunchedEffect(userId) { load() }
 
-    val dayFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
+    val dayFmt = SimpleDateFormat("dd/MM", Locale("vi"))
+    val keyFmt = SimpleDateFormat("yyyyMMdd", Locale("vi"))
+    fun dayKey(ms: Long): Int = keyFmt.format(Date(ms)).toInt()
     val filtered = orders.filter { o ->
-        val q = query.trim().lowercase()
-        val matchQ = q.isEmpty() || o.partyName.lowercase().contains(q)
-        val matchDate = deliveryDateMs?.let { sel ->
+        // Khớp tên KH cả khi gõ không dấu (đa số NV search không dấu).
+        val q = vnNoAccent(query.trim())
+        val matchQ = q.isEmpty() || vnNoAccent(o.partyName).contains(q)
+        // Lọc theo KHOẢNG ngày (so theo ngày, bỏ giờ). Chỉ start = từ ngày đó; chỉ end = đến ngày đó.
+        val matchDate = if (startDateMs == null && endDateMs == null) true else {
             val d = o.completedAt ?: o.orderedAt
-            d != null && runCatching { dayFmt.format(Date(java.time.Instant.parse(d).toEpochMilli())) }.getOrNull() == dayFmt.format(Date(sel))
-        } ?: true
+            val om = d?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+            if (om == null) false else {
+                val ok = dayKey(om)
+                (startDateMs?.let { ok >= dayKey(it) } ?: true) && (endDateMs?.let { ok <= dayKey(it) } ?: true)
+            }
+        }
         matchQ && matchDate
     }
 
@@ -99,30 +112,46 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
                 Modifier.weight(0.3f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg)
                     .clickable { datePickerOpen = true }.padding(horizontal = 10.dp, vertical = 8.dp),
             ) {
+                val s = startDateMs; val e = endDateMs
+                val rangeLabel = when {
+                    s != null && e != null -> "${dayFmt.format(Date(s))}–${dayFmt.format(Date(e))}"
+                    s != null -> "Từ ${dayFmt.format(Date(s))}"
+                    e != null -> "Đến ${dayFmt.format(Date(e))}"
+                    else -> "Khoảng ngày"
+                }
                 Text(
-                    deliveryDateMs?.let { dayFmt.format(Date(it)) } ?: "Ngày giao",
-                    color = if (deliveryDateMs != null) AdminColors.Text else AdminColors.TextMuted,
+                    rangeLabel,
+                    color = if (s != null || e != null) AdminColors.Text else AdminColors.TextMuted,
                     fontSize = 13.sp, maxLines = 1,
                 )
             }
         }
 
-        // Vuốt xuống = reload (PullToRefreshBox).
-        PullToRefreshBox(isRefreshing = loading, onRefresh = { load() }, modifier = Modifier.weight(1f)) {
+        // Vuốt xuống = reload + reset lọc (khoảng ngày + tên KH). Empty/error state phải
+        // scrollable (verticalScroll) thì PullToRefreshBox mới nhận cử chỉ vuốt khi list rỗng.
+        AdminPullToRefresh(
+            isRefreshing = loading,
+            onRefresh = { query = ""; startDateMs = null; endDateMs = null; load() },
+            modifier = Modifier.weight(1f),
+        ) {
             when {
                 loading && orders.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
-                error != null -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(error!!, color = AdminColors.Danger, fontSize = 14.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Text("Chạm để thử lại", color = AdminColors.Primary, fontSize = 13.sp, modifier = Modifier.clickable { load() }.padding(8.dp))
+                error != null -> Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), Alignment.Center) {
+                    Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(error!!, color = AdminColors.Danger, fontSize = 14.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Text("Chạm để thử lại", color = AdminColors.Primary, fontSize = 13.sp, modifier = Modifier.clickable { load() }.padding(8.dp))
+                    }
                 }
-                filtered.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                filtered.isEmpty() -> Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), Alignment.Center) {
                     Text(if (orders.isEmpty()) "Chưa có đơn nào — nhấn + để tạo" else "Không có đơn khớp lọc", color = AdminColors.TextMuted, fontSize = 14.sp)
                 }
-                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
+                else -> LazyColumn(
+                    Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     items(filtered, key = { it.id }) { o ->
                         OrderRow(o, onClick = { onTapOrder(o.id) })
-                        HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.5f))
                     }
                 }
             }
@@ -130,22 +159,58 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     }
 
     if (datePickerOpen) {
-        val dpState = rememberDatePickerState(initialSelectedDateMillis = deliveryDateMs)
-        LaunchedEffect(dpState.selectedDateMillis) {
-            val sel = dpState.selectedDateMillis
-            if (sel != null && sel != deliveryDateMs) { kotlinx.coroutines.delay(300); deliveryDateMs = sel; datePickerOpen = false }
-        }
+        val rangeState = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = startDateMs,
+            initialSelectedEndDateMillis = endDateMs,
+        )
+        val headFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
         MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
             DatePickerDialog(
                 onDismissRequest = { datePickerOpen = false },
-                confirmButton = { TextButton(onClick = { dpState.selectedDateMillis?.let { deliveryDateMs = it }; datePickerOpen = false }) { Text("OK", color = AdminColors.Primary) } },
-                dismissButton = { TextButton(onClick = { deliveryDateMs = null; datePickerOpen = false }) { Text("Xoá lọc", color = AdminColors.TextMuted) } },
+                // OK trải hết chiều ngang (nhấn đáy chỗ nào cũng OK), không có nút Xoá lọc.
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            startDateMs = rangeState.selectedStartDateMillis
+                            endDateMs = rangeState.selectedEndDateMillis
+                            datePickerOpen = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("OK", color = AdminColors.Primary) }
+                },
                 colors = DatePickerDefaults.colors(containerColor = AdminColors.Card),
-            ) { DatePicker(state = dpState) }
+            ) {
+                DateRangePicker(
+                    state = rangeState,
+                    modifier = Modifier.weight(1f),
+                    title = {},                  // bỏ chữ "Chọn ngày"
+                    showModeToggle = false,      // bỏ pen icon (toggle nhập tay)
+                    headline = {                 // 1 dòng, font nhỏ, no-wrap
+                        val s = rangeState.selectedStartDateMillis
+                        val e = rangeState.selectedEndDateMillis
+                        Text(
+                            text = (s?.let { headFmt.format(Date(it)) } ?: "Bắt đầu") + "  –  " + (e?.let { headFmt.format(Date(it)) } ?: "Kết thúc"),
+                            color = AdminColors.Text, fontSize = 16.sp, maxLines = 1, softWrap = false,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                    },
+                )
+            }
         }
     }
 }
 
+/** Bỏ dấu tiếng Việt + lowercase để search không dấu khớp có dấu. NFD tách dấu thanh/mũ;
+ *  đ/Đ KHÔNG bị NFD tách nên thay tay. */
+private fun vnNoAccent(s: String): String =
+    java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .replace('đ', 'd').replace('Đ', 'D')
+        .lowercase()
+
+/** Card đơn — layout port từ web SaleOrdersListView: hàng mã+badge, tên KH, dòng "N mặt
+ *  hàng · ngày" + tổng tiền. */
 @Composable
 private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
     val statusColor = when (o.status) {
@@ -160,18 +225,38 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
         "delivered" -> "Đã giao"; "completed" -> "Hoàn thành"
         "cancelled" -> "Huỷ"; else -> o.status
     }
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AdminColors.Card)
+            .border(1.dp, AdminColors.Border, RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(12.dp),
     ) {
-        Column(Modifier.weight(1f)) {
+        // Hàng 1: mã đơn + badge trạng thái (góc phải)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(o.code, color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(2.dp))
-            Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(2.dp))
-            Text("${o.items.size} mặt hàng", color = AdminColors.TextMuted, fontSize = 12.sp)
+            Spacer(Modifier.weight(1f))
+            Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
         }
-        Text(statusLabel, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-            modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
+        Spacer(Modifier.height(6.dp))
+        // Hàng 2: tên KH
+        Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(6.dp))
+        // Hàng 3: N mặt hàng · ngày  +  tổng tiền
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("${o.items.size} mặt hàng · ${fmtOrderDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt)}",
+                color = AdminColors.TextMuted, fontSize = 12.sp)
+            Spacer(Modifier.weight(1f))
+            Text("${fmtMoney(o.totalAmount ?: 0.0)} đ", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        }
     }
 }
+
+private val moneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))
+private fun fmtMoney(n: Double): String = moneyFmt.format(n.toLong())
+
+private val orderDayFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
+private fun fmtOrderDate(iso: String?): String =
+    iso?.let { runCatching { orderDayFmt.format(Date(java.time.Instant.parse(it).toEpochMilli())) }.getOrNull() } ?: "—"

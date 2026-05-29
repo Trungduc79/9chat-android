@@ -40,6 +40,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import vn.chat9.app.ui.theme._9chatTheme
 
@@ -396,7 +398,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             _9chatTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.White) {
-                  Box(Modifier.fillMaxSize()) {
+                  // Tap ngoài vùng nhập → đóng bàn phím (TOÀN app). Tap vào nút/field/clickable
+                  // bị child consume nên root onTap KHÔNG fire; chỉ tap vùng trống mới clearFocus.
+                  val rootFocusManager = LocalFocusManager.current
+                  Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { rootFocusManager.clearFocus() }) }) {
                     val scope = rememberCoroutineScope()
                     var screen by remember {
                         mutableStateOf(if (container.tokenManager.isLoggedIn) "home" else "login")

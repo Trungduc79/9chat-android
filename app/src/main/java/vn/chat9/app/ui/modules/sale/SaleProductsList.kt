@@ -17,7 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import vn.chat9.app.ui.explore.AdminPullToRefresh
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.runtime.*
@@ -98,7 +98,7 @@ fun SaleProductsList() {
 
         // Vuốt xuống = reload (PullToRefreshBox).
         val scope = rememberCoroutineScope()
-        PullToRefreshBox(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.weight(1f)) {
+        AdminPullToRefresh(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.weight(1f)) {
             if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
             else {

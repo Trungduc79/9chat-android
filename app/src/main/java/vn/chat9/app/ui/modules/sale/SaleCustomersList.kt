@@ -11,7 +11,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,6 +25,7 @@ import kotlinx.coroutines.delay
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.ui.explore.AdminColors
+import vn.chat9.app.ui.explore.AdminPullToRefresh
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -75,7 +75,7 @@ fun SaleCustomersList() {
             }
         }
 
-        PullToRefreshBox(isRefreshing = loading, onRefresh = { refreshTick++ }, modifier = Modifier.weight(1f)) {
+        AdminPullToRefresh(isRefreshing = loading, onRefresh = { refreshTick++ }, modifier = Modifier.weight(1f)) {
             if (loading && customers.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             else if (customers.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có khách hàng", color = AdminColors.TextMuted) }
             else LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
