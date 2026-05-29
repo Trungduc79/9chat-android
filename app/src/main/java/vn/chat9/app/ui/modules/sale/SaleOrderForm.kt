@@ -309,8 +309,10 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                     ) { Text("+ Thêm SP", color = AdminColors.Primary, fontSize = 13.sp) }
                     Spacer(Modifier.weight(1f))
                     val total = items.sumOf { it.qty * it.price }
-                    Text("Tổng tiền hàng: ", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
-                    Text(fmtMoney(total), color = AdminColors.Primary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                    Text("Tổng tiền hàng ", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+                    Text("(1)", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+                    Text(": ", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+                    Text(fmtMoney(total), color = AdminColors.Primary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                 }
             }
@@ -319,16 +321,19 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
 
             // ===== Card phí ship + COD (bỏ title, pt/pb gọn) =====
             Card("", vPadding = 6.dp) {
-                ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit) { shipCustomer = it }
+                ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit, marker = "(2)") { shipCustomer = it }
                 ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit) { shipCompany = it }
-                ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit) { codAmount = it }
+                ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit, marker = "(3)") { codAmount = it }
                 // Tổng cộng = tổng tiền hàng + ship KH - thu hộ
                 val grandTotal = items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount)
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tổng cộng", color = AdminColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(0.42f))
+                    Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Tổng cộng ", color = AdminColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text("(1) + (2) - (3)", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, maxLines = 1)
+                    }
                     Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.width(6.dp))
-                    Row(Modifier.weight(0.58f), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(0.58f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
                         Text(fmtMoney(grandTotal), color = AdminColors.Primary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
                         Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                     }
@@ -566,9 +571,12 @@ private fun UnitDropdown(units: List<VariantUnitDto>, selectedId: Long, enabled:
 }
 
 @Composable
-private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, enabled: Boolean, onChange: (String) -> Unit) {
+private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, enabled: Boolean, marker: String = "", onChange: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(0.42f))
+        Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = AdminColors.TextMuted, fontSize = 12.sp)
+            if (marker.isNotEmpty()) Text(" $marker", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+        }
         Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
         Spacer(Modifier.width(6.dp))
         Column(Modifier.weight(0.58f)) {
