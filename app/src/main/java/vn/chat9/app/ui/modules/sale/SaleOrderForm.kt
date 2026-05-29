@@ -720,13 +720,13 @@ private fun VariantPicker(
 @Composable
 private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     // KHÔNG dùng imePadding() thuần: picker Box ở trong vùng content trên AppShell BottomNav nên
-    // imePadding (inset mức cửa sổ) đẩy dư → hở 1 khoảng trên bàn phím. Tab Khám phá: BottomNav
-    // ở chế độ compact = 32dp. Pad đúng = imeBottom − 32dp → đáy Box = top bàn phím thật.
-    // fillHeight=true: dialog fillMaxHeight chạm bàn phím.
+    // imePadding (inset mức cửa sổ) đẩy dư → hở 1 khoảng trên bàn phím. Pad đúng = imeBottom − 86dp
+    // (giá trị tinh chỉnh thực tế cho overlay trong tab Khám phá: BottomNav + chênh lệch inset) →
+    // đáy Box sát top bàn phím. fillHeight=true: dialog fillMaxHeight chạm bàn phím.
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
-    val appBottomNavPx = with(density) { 50.dp.toPx() }   // AppShell BottomNav compact (tab Khám phá, giảm 50%)
-    val padBottom = with(density) { (imeBottomPx - appBottomNavPx).coerceAtLeast(0f).toDp() }
+    val offsetPx = with(density) { 86.dp.toPx() }
+    val padBottom = with(density) { (imeBottomPx - offsetPx).coerceAtLeast(0f).toDp() }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).padding(bottom = padBottom).clickable(onClick = onClose)) {
         Column(
             Modifier.fillMaxWidth()
