@@ -719,14 +719,15 @@ private fun VariantPicker(
 // ===== shared picker UI =====
 @Composable
 private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
-    // KHÔNG dùng imePadding() thuần: picker Box nằm trong vùng content (trên thanh điều hướng
-    // hệ thống) nên imePadding (inset mức cửa sổ) đẩy lên dư đúng phần nav bar → hở 1 khoảng
-    // trên bàn phím. Pad đúng = imeBottom − navBar → đáy Box = top bàn phím thật.
-    // fillHeight=true: dialog fillMaxHeight → đáy dialog chạm bàn phím, cao tối đa (variant picker).
+    // KHÔNG dùng imePadding() thuần: picker Box ở trong vùng content (trên AppShell BottomNav +
+    // thanh điều hướng hệ thống) nên imePadding (inset mức cửa sổ) đẩy dư 2 phần đó → hở 1 khoảng
+    // trên bàn phím. Pad đúng = imeBottom − AppShell BottomNav(64dp) − navBar → đáy Box = top bàn
+    // phím thật. Cùng công thức WarehouseOrderDetail. fillHeight=true: dialog fillMaxHeight chạm bàn phím.
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val navBarPx = WindowInsets.navigationBars.getBottom(density)
-    val padBottom = with(density) { (imeBottomPx - navBarPx).coerceAtLeast(0).toDp() }
+    val appBottomNavPx = with(density) { 64.dp.toPx() }   // AppShell HomeScreen BottomNav (default, non-compact)
+    val padBottom = with(density) { (imeBottomPx - appBottomNavPx - navBarPx).coerceAtLeast(0f).toDp() }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).padding(bottom = padBottom).clickable(onClick = onClose)) {
         Column(
             Modifier.fillMaxWidth()
