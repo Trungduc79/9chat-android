@@ -725,7 +725,7 @@ private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean 
     // fillHeight=true: dialog fillMaxHeight chạm bàn phím.
     val density = LocalDensity.current
     val imeBottomPx = WindowInsets.ime.getBottom(density)
-    val appBottomNavPx = with(density) { 32.dp.toPx() }   // AppShell BottomNav compact (tab Khám phá, giảm 50%)
+    val appBottomNavPx = with(density) { 50.dp.toPx() }   // AppShell BottomNav compact (tab Khám phá, giảm 50%)
     val padBottom = with(density) { (imeBottomPx - appBottomNavPx).coerceAtLeast(0f).toDp() }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).padding(bottom = padBottom).clickable(onClick = onClose)) {
         Column(
