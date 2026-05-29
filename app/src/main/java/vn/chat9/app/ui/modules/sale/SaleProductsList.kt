@@ -126,14 +126,15 @@ private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.grap
         else v.attributes?.values?.filter { it.isNotBlank() }?.joinToString(", ") ?: (v.product?.name ?: "")
 
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(4.dp),
+        // Giảm chiều cao thẻ ~10% bằng padding vertical 4→1 (thumb giữ 55dp).
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 4.dp, vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Thumb 50dp (-10% so 55 → giảm chiều cao thẻ ~10%).
+        // Thumb giữ 55dp.
         val img = v.image ?: v.product?.primaryImage?.url
-        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(6.dp)))
-        else Box(Modifier.size(50.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(20.dp))
+        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(55.dp).clip(RoundedCornerShape(6.dp)))
+        else Box(Modifier.size(55.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.width(10.dp))
         Text(name, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2, modifier = Modifier.weight(1f))
