@@ -15,6 +15,8 @@ data class OrderDto(
     @SerializedName("ordered_at") val orderedAt: String? = null,
     @SerializedName("confirmed_at") val confirmedAt: String? = null,
     @SerializedName("completed_at") val completedAt: String? = null,
+    @SerializedName("warehouse_id") val warehouseId: Long? = null,   // kho bán (sale edit)
+    @SerializedName("total_amount") val totalAmount: Double? = null,
     val notes: String? = null,
     // Phí ship + COD (init form ở màn fulfill; NV kho có thể sửa rồi gửi qua FulfillRequest)
     @SerializedName("shipping_fee") val shippingFee: Double? = null,           // Phí ship KH → công nợ
@@ -40,13 +42,16 @@ data class OrderDto(
 data class PartyDto(
     val id: Long = 0,
     val name: String? = null,
+    val phone: String? = null,
     @SerializedName("short_name") val shortName: String? = null,
 )
 
 data class OrderItemDto(
     val id: Long = 0,
     @SerializedName("variant_id") val variantId: Long = 0,
+    @SerializedName("unit_id") val unitId: Long = 0,
     @SerializedName("qty_unit") val qtyUnit: Double = 0.0,
+    @SerializedName("unit_price") val unitPrice: Double = 0.0,
     @SerializedName("stock_unit") val stockUnit: Double? = null,   // tồn quy đổi (BE @show)
     @SerializedName("image_url") val imageUrl: String? = null,     // thumb variant (BE resolve)
     val snapshot: SnapshotDto = SnapshotDto(),
@@ -68,6 +73,7 @@ data class OrderItemDto(
 
 data class SnapshotDto(
     @SerializedName("product_name") val productName: String? = null,
+    @SerializedName("variant_name") val variantName: String? = null,
     @SerializedName("variant_attributes") val variantAttributes: Map<String, String>? = null,
     @SerializedName("unit_name") val unitName: String? = null,
 )

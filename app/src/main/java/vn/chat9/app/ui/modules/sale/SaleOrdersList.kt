@@ -43,7 +43,7 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaleOrdersList() {
+fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -118,7 +118,7 @@ fun SaleOrdersList() {
             }
             else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
                 items(filtered, key = { it.id }) { o ->
-                    OrderRow(o)
+                    OrderRow(o, onClick = { onTapOrder(o.id) })
                     HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.5f))
                 }
             }
@@ -143,7 +143,7 @@ fun SaleOrdersList() {
 }
 
 @Composable
-private fun OrderRow(o: OrderDto) {
+private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
     val statusColor = when (o.status) {
         "draft" -> AdminColors.TextMuted
         "confirmed" -> AdminColors.Info
@@ -157,7 +157,7 @@ private fun OrderRow(o: OrderDto) {
         "cancelled" -> "Huỷ"; else -> o.status
     }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 4.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

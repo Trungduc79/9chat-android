@@ -33,22 +33,23 @@ private enum class SaleTab(val label: String) { ORDERS("Đơn hàng"), PRODUCTS(
 fun SaleScreen(onBack: () -> Unit) {
     var tab by remember { mutableStateOf(SaleTab.ORDERS) }
     var creating by remember { mutableStateOf(false) }
+    var viewingOrderId by remember { mutableStateOf<Long?>(null) }   // tap đơn → chi tiết/edit
 
     androidx.activity.compose.BackHandler(enabled = true) {
-        if (creating) creating = false else onBack()
+        if (creating || viewingOrderId != null) { creating = false; viewingOrderId = null } else onBack()
     }
 
-    // Overlay tạo đơn (full-screen).
-    if (creating) {
+    // Overlay tạo đơn / chi tiết đơn (full-screen) — dùng chung SaleOrderForm.
+    if (creating || viewingOrderId != null) {
         Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
             Row(
                 Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { creating = false }) { Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text) }
-                Text("Tạo đơn bán", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                IconButton(onClick = { creating = false; viewingOrderId = null }) { Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text) }
+                Text(if (creating) "Tạo đơn bán" else "Chi tiết đơn", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
-            SaleOrderForm(onDone = { creating = false })
+            SaleOrderForm(orderId = viewingOrderId, onDone = { creating = false; viewingOrderId = null })
         }
         return
     }
@@ -79,7 +80,7 @@ fun SaleScreen(onBack: () -> Unit) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
                 SaleTab.ORDERS -> {
-                    SaleOrdersList()
+                    SaleOrdersList(onTapOrder = { viewingOrderId = it })
                     FloatingActionButton(
                         onClick = { creating = true },
                         containerColor = AdminColors.Primary,

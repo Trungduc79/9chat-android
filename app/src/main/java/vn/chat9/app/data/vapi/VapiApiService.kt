@@ -130,4 +130,8 @@ interface VapiApiService {
     /** Tạo đơn nháp / xác nhận (status quyết payload). */
     @POST("v1/orders")
     suspend fun createOrder(@Body body: CreateOrderRequest): VapiResponse<OrderDto>
+
+    /** Cập nhật đơn (edit đơn draft từ màn chi tiết sale). */
+    @retrofit2.http.PUT("v1/orders/{id}")
+    suspend fun updateOrder(@Path("id") id: Long, @Body body: CreateOrderRequest): VapiResponse<OrderDto>
 }
