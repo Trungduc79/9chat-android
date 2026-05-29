@@ -442,39 +442,38 @@ private fun ItemRow(
             Column(Modifier.weight(1f)) {
                 Text(draft.variantName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
+                // 1 Row duy nhất: qty · unit · × · price · = với 4 spacer weight(1f)
+                // đều → gap qty-unit = unit-× = ×-price = price-= BẰNG NHAU.
+                // Total + đ cố định phải (không weight).
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Nhóm 1 (weight 2): qty — unit, gap đều (SpaceBetween).
-                    Row(Modifier.weight(2f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        var qtyText by remember(draft.variantId) { mutableStateOf(trimZeros(draft.qty)) }
-                        BasicTextField(
-                            value = qtyText,
-                            onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                            cursorBrush = SolidColor(AdminColors.Primary),
-                            modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}"),
-                        )
-                        UnitDropdown(draft.units, draft.unitId, onUnitChange)
-                    }
-                    // Nhóm 2 (weight 3): × — price — =. SpaceEvenly + price wrap (widthIn) →
-                    // gap ×→price = price→= (price text-center để không lệch).
-                    Row(Modifier.weight(3f), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
-                        var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
-                        BasicTextField(
-                            value = priceText,
-                            onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                            cursorBrush = SolidColor(AdminColors.Primary),
-                            modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}"),
-                        )
-                        Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
-                    }
-                    // Total + đ cố định phải.
-                    Spacer(Modifier.width(4.dp))
+                    var qtyText by remember(draft.variantId) { mutableStateOf(trimZeros(draft.qty)) }
+                    BasicTextField(
+                        value = qtyText,
+                        onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                        cursorBrush = SolidColor(AdminColors.Primary),
+                        modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}"),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    UnitDropdown(draft.units, draft.unitId, onUnitChange)
+                    Spacer(Modifier.weight(1f))
+                    Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.weight(1f))
+                    var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
+                    BasicTextField(
+                        value = priceText,
+                        onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                        cursorBrush = SolidColor(AdminColors.Primary),
+                        modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}"),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.width(6.dp))
                     Text(fmtMoney(draft.qty * draft.price), color = AdminColors.Primary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                 }
