@@ -225,23 +225,6 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
             .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)) {
-            // ===== Trạng thái đơn (chỉ khi mở đơn có sẵn) — nháp = sửa được, khác = chỉ xem =====
-            if (orderId != null) {
-                val stLabel = when (existingStatus) {
-                    "draft" -> "Nháp"; "confirmed" -> "Đã xác nhận"; "processing" -> "Đang xử lý"
-                    "shipped" -> "Đang giao"; "delivered" -> "Đã giao"; "received" -> "Đã nhận"
-                    "completed" -> "Hoàn thành"; "cancelled" -> "Đã huỷ"; "refunded" -> "Đã hoàn"
-                    null -> "Đang tải..."; else -> existingStatus ?: "—"
-                }
-                val stColor = if (existingStatus == "draft") AdminColors.Primary else AdminColors.TextMuted
-                Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stLabel, color = stColor, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                        modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(stColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 3.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (canEdit) "Có thể sửa" else "Chỉ xem", color = AdminColors.TextMuted, fontSize = 11.sp)
-                }
-            }
-
             // ===== Card KH + Kho (bỏ title, padding bottom giảm 50% = 6dp) =====
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card)
@@ -715,7 +698,7 @@ private fun PickerSheet(title: String, onClose: () -> Unit, content: @Composable
             Modifier.fillMaxWidth().align(Alignment.Center).padding(12.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(AdminColors.Card)
-                .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(16.dp))   // viền mỏng sáng phân định vùng làm việc
+                .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))   // viền mỏng sáng phân định vùng làm việc
                 .padding(16.dp)
                 .clickable(enabled = false, onClick = {}),
         ) {
