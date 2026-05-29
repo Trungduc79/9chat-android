@@ -342,7 +342,7 @@ fun SaleOrderForm(onDone: () -> Unit) {
         LaunchedEffect(dpState.selectedDateMillis) {
             val sel = dpState.selectedDateMillis
             if (sel != null && sel != orderDateMs) {
-                delay(500)
+                delay(300)
                 orderDateMs = sel
                 datePickerOpen = false
             }
