@@ -12,10 +12,12 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.runtime.*
@@ -31,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
@@ -40,6 +43,7 @@ import vn.chat9.app.ui.explore.AdminColors
  * Tab Sản phẩm (Android) — port web SaleProductsView. Search biến thể (70%) +
  * dropdown kho (30%). Tồn theo đơn vị mặc định, 3 dòng (Kho / số / tên đơn vị).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaleProductsList() {
     val context = LocalContext.current
@@ -92,14 +96,18 @@ fun SaleProductsList() {
             }
         }
 
-        if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
-        else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
-        else {
-            // Màu số tồn theo KHO đang chọn (mỗi kho 1 màu nổi, dễ phân biệt).
-            val whIdx = warehouses.indexOfFirst { it.id == selectedWarehouseId }.coerceAtLeast(0)
-            val stockColor = WAREHOUSE_STOCK_COLORS[whIdx % WAREHOUSE_STOCK_COLORS.size]
-            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(variants, key = { it.id }) { v -> VariantRow(v, stockColor) }
+        // Vuốt xuống = reload (PullToRefreshBox).
+        val scope = rememberCoroutineScope()
+        PullToRefreshBox(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.weight(1f)) {
+            if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
+            else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
+            else {
+                // Màu số tồn theo KHO đang chọn (mỗi kho 1 màu nổi, dễ phân biệt).
+                val whIdx = warehouses.indexOfFirst { it.id == selectedWarehouseId }.coerceAtLeast(0)
+                val stockColor = WAREHOUSE_STOCK_COLORS[whIdx % WAREHOUSE_STOCK_COLORS.size]
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(variants, key = { it.id }) { v -> VariantRow(v, stockColor) }
+                }
             }
         }
     }

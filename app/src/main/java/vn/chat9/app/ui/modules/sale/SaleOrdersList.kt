@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -106,20 +107,23 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
             }
         }
 
-        when {
-            loading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
-            error != null -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(error!!, color = AdminColors.Danger, fontSize = 14.sp)
-                Spacer(Modifier.height(12.dp))
-                Text("Chạm để thử lại", color = AdminColors.Primary, fontSize = 13.sp, modifier = Modifier.clickable { load() }.padding(8.dp))
-            }
-            filtered.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                Text(if (orders.isEmpty()) "Chưa có đơn nào — nhấn + để tạo" else "Không có đơn khớp lọc", color = AdminColors.TextMuted, fontSize = 14.sp)
-            }
-            else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
-                items(filtered, key = { it.id }) { o ->
-                    OrderRow(o, onClick = { onTapOrder(o.id) })
-                    HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.5f))
+        // Vuốt xuống = reload (PullToRefreshBox).
+        PullToRefreshBox(isRefreshing = loading, onRefresh = { load() }, modifier = Modifier.weight(1f)) {
+            when {
+                loading && orders.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
+                error != null -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(error!!, color = AdminColors.Danger, fontSize = 14.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Chạm để thử lại", color = AdminColors.Primary, fontSize = 13.sp, modifier = Modifier.clickable { load() }.padding(8.dp))
+                }
+                filtered.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text(if (orders.isEmpty()) "Chưa có đơn nào — nhấn + để tạo" else "Không có đơn khớp lọc", color = AdminColors.TextMuted, fontSize = 14.sp)
+                }
+                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
+                    items(filtered, key = { it.id }) { o ->
+                        OrderRow(o, onClick = { onTapOrder(o.id) })
+                        HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.5f))
+                    }
                 }
             }
         }
