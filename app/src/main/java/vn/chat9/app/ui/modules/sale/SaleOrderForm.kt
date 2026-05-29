@@ -690,16 +690,25 @@ private fun VariantPicker(
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
         } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
             items(results, key = { it.id }) { v ->
-                Row(Modifier.fillMaxWidth().clickable { onPick(v) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable { onPick(v) }.padding(1.dp), verticalAlignment = Alignment.CenterVertically) {
                     val img = v.image ?: v.product?.primaryImage?.url
-                    if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(5.dp)))
-                    else Box(Modifier.size(40.dp).clip(RoundedCornerShape(5.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
+                    if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)))
+                    else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f)) {
                         Text(variantDisplay(v, v.product?.name ?: ""), color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
                         v.sku?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp) }
                     }
-                    v.price?.let { Text("${fmtMoney(it)} đ", color = AdminColors.Primary, fontSize = 12.sp) }
+                    Spacer(Modifier.width(8.dp))
+                    // 3 dòng tồn giống tab SP: Kho / số (theo đơn vị mặc định) / tên đơn vị
+                    val defUnit = v.units.firstOrNull { it.isDefaultSale } ?: v.units.firstOrNull { it.isBase } ?: v.units.firstOrNull()
+                    val factor = defUnit?.conversionFactor ?: 1.0
+                    val stockInUnit = (v.stockBase ?: 0.0).let { if (factor > 0) it / factor else it }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text("Kho", color = AdminColors.TextMuted, fontSize = 11.sp)
+                        Text(trimZeros(stockInUnit), color = if (stockInUnit > 0) AdminColors.Primary else AdminColors.TextMuted, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        defUnit?.name?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp) }
+                    }
                 }
                 HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.4f))
             }
