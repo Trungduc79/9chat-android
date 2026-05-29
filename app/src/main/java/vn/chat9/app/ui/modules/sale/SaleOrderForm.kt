@@ -309,8 +309,8 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                     ) { Text("+ Thêm SP", color = AdminColors.Primary, fontSize = 13.sp) }
                     Spacer(Modifier.weight(1f))
                     val total = items.sumOf { it.qty * it.price }
-                    Text("Tổng ", color = AdminColors.TextMuted, fontSize = 13.sp)
-                    Text(fmtMoney(total), color = AdminColors.Primary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Text("Tổng tiền hàng: ", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+                    Text(fmtMoney(total), color = AdminColors.Primary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
                     Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                 }
             }
@@ -322,6 +322,17 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                 ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit) { shipCustomer = it }
                 ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit) { shipCompany = it }
                 ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit) { codAmount = it }
+                // Tổng cộng = tổng tiền hàng + ship KH - thu hộ
+                val grandTotal = items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount)
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tổng cộng", color = AdminColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(0.42f))
+                    Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Row(Modifier.weight(0.58f), verticalAlignment = Alignment.CenterVertically) {
+                        Text(fmtMoney(grandTotal), color = AdminColors.Primary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                        Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -478,12 +489,12 @@ private fun ItemRow(
             Text("Xoá", color = AdminColors.Danger, fontSize = 13.sp, modifier = Modifier.padding(end = 16.dp))
         }
         Row(
-            Modifier.fillMaxWidth().offset { IntOffset(offsetX.toInt(), 0) }.background(AdminColors.Card).padding(vertical = 6.dp),
+            Modifier.fillMaxWidth().offset { IntOffset(offsetX.toInt(), 0) }.background(AdminColors.Card).padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (draft.imageUrl != null) AsyncImage(model = draft.imageUrl, contentDescription = null,
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)))
-            else Box(Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
+                modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)))
+            else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(draft.variantName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
