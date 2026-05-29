@@ -1,11 +1,5 @@
 package vn.chat9.app.ui.modules.sale
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -15,6 +9,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,72 +22,74 @@ import androidx.compose.ui.unit.sp
 import vn.chat9.app.ui.explore.AdminColors
 
 /**
- * Module "Bán hàng" — entry của tab Khám phá → Sale.
+ * Module "Bán hàng" — entry tab Khám phá → Sale. 3 tab: Đơn hàng / Sản phẩm /
+ * Khách hàng (mirror web SaleLayout). Tạo đơn = overlay full-screen.
  *
- * State nav: list (đơn của tôi) ↔ form (tạo đơn). Detail xem đơn = list_item
- * → mở SaleOrderForm với readonly = true (TODO sau).
- *
- * Permission gate ở [ModuleRegistry]: cần `sale.create_order` OR `sale.view_orders`.
- * BE filter `created_by_user_id` để tách đơn theo NV (xem migration vapi d8e029d).
+ * Permission gate ở [ModuleRegistry]: sale.create_order OR sale.view_orders.
  */
-private sealed interface SaleNavState {
-    object List : SaleNavState
-    object Create : SaleNavState
-}
+private enum class SaleTab(val label: String) { ORDERS("Đơn hàng"), PRODUCTS("Sản phẩm"), CUSTOMERS("Khách hàng") }
 
 @Composable
 fun SaleScreen(onBack: () -> Unit) {
-    var nav by remember { mutableStateOf<SaleNavState>(SaleNavState.List) }
+    var tab by remember { mutableStateOf(SaleTab.ORDERS) }
+    var creating by remember { mutableStateOf(false) }
 
     androidx.activity.compose.BackHandler(enabled = true) {
-        if (nav is SaleNavState.List) onBack() else nav = SaleNavState.List
+        if (creating) creating = false else onBack()
+    }
+
+    // Overlay tạo đơn (full-screen).
+    if (creating) {
+        Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
+            Row(
+                Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp).padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { creating = false }) { Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text) }
+                Text("Tạo đơn bán", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            }
+            SaleOrderForm(onDone = { creating = false })
+        }
+        return
     }
 
     Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
-        // App bar đơn giản — back ←  title  + (FAB nổi ở list)
+        // App bar: back + tab bar 3 tab.
         Row(
-            modifier = Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = {
-                if (nav is SaleNavState.List) onBack() else nav = SaleNavState.List
-            }) {
-                Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text)
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text) }
+            TabRow(
+                selectedTabIndex = tab.ordinal,
+                containerColor = AdminColors.Card,
+                contentColor = AdminColors.Primary,
+                modifier = Modifier.weight(1f).height(48.dp),
+            ) {
+                SaleTab.entries.forEach { t ->
+                    Tab(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        text = { Text(t.label, fontSize = 13.sp, color = if (tab == t) AdminColors.Primary else AdminColors.TextMuted) },
+                    )
+                }
             }
-            val title = when (nav) {
-                is SaleNavState.List -> "Đơn của tôi"
-                is SaleNavState.Create -> "Tạo đơn bán"
-            }
-            Text(title, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            AnimatedContent(
-                targetState = nav,
-                transitionSpec = {
-                    val dir = if (targetState is SaleNavState.Create) 1 else -1
-                    (slideInHorizontally { dir * it } + fadeIn()) togetherWith
-                        (slideOutHorizontally { -dir * it } + fadeOut())
-                },
-                label = "saleContent",
-            ) { state ->
-                when (state) {
-                    is SaleNavState.List -> SaleOrdersList()
-                    is SaleNavState.Create -> SaleOrderForm(onDone = { nav = SaleNavState.List })
+            when (tab) {
+                SaleTab.ORDERS -> {
+                    SaleOrdersList()
+                    FloatingActionButton(
+                        onClick = { creating = true },
+                        containerColor = AdminColors.Primary,
+                        contentColor = Color.White,
+                        shape = CircleShape,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                    ) { Icon(Icons.Default.Add, "Tạo đơn bán") }
                 }
-            }
-
-            // FAB Tạo đơn — chỉ ở màn list.
-            if (nav is SaleNavState.List) {
-                FloatingActionButton(
-                    onClick = { nav = SaleNavState.Create },
-                    containerColor = AdminColors.Primary,
-                    contentColor = Color.White,
-                    shape = CircleShape,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                ) {
-                    Icon(Icons.Default.Add, "Tạo đơn bán")
-                }
+                SaleTab.PRODUCTS -> SaleProductsList()
+                SaleTab.CUSTOMERS -> SaleCustomersList()
             }
         }
     }
