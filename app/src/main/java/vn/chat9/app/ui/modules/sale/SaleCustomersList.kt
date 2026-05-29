@@ -54,9 +54,9 @@ fun SaleCustomersList() {
     val fmt = NumberFormat.getNumberInstance(Locale("vi"))
 
     Column(Modifier.fillMaxSize().background(AdminColors.Bg)) {
-        // Header search
-        Row(Modifier.fillMaxWidth().background(AdminColors.Card).padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 8.dp)) {
+        // Header: search 70% + dropdown TODO 30% (chưa làm — đồng nhất layout 3 tab)
+        Row(Modifier.fillMaxWidth().background(AdminColors.Card).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(0.7f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 8.dp)) {
                 BasicTextField(
                     value = query, onValueChange = { query = it },
                     textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp),
@@ -64,6 +64,10 @@ fun SaleCustomersList() {
                     decorationBox = { inner -> if (query.isEmpty()) Text("Tìm khách hàng theo tên", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(0.3f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Text("TODO", color = AdminColors.TextMuted, fontSize = 13.sp, maxLines = 1)
             }
         }
 
