@@ -10,9 +10,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
@@ -43,7 +41,6 @@ import vn.chat9.app.ui.explore.AdminColors
  * Tab Sản phẩm (Android) — port web SaleProductsView. Search biến thể (70%) +
  * dropdown kho (30%). Tồn theo đơn vị mặc định, 3 dòng (Kho / số / tên đơn vị).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaleProductsList() {
     val context = LocalContext.current
@@ -96,7 +93,7 @@ fun SaleProductsList() {
             }
         }
 
-        // Vuốt xuống = reload (PullToRefreshBox).
+        // Vuốt xuống = reload.
         val scope = rememberCoroutineScope()
         AdminPullToRefresh(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.weight(1f)) {
             if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
