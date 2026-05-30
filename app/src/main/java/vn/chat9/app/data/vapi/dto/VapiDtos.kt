@@ -144,6 +144,27 @@ data class WarehouseDto(
     @SerializedName("is_default") val isDefault: Boolean = false,
 )
 
+/** Danh mục (dòng sản phẩm) cho dropdown lọc Kiểm kho. */
+data class CategoryDto(
+    val id: Long = 0,
+    val name: String = "",
+    val code: String? = null,
+)
+
+// ===== Kiểm kho =====
+data class StocktakeItemReq(
+    @SerializedName("variant_id") val variantId: Long,
+    val qty: Double,
+    @SerializedName("unit_id") val unitId: Long? = null,
+)
+data class StocktakeRequest(
+    @SerializedName("warehouse_id") val warehouseId: Long? = null,
+    @SerializedName("user_id") val userId: Long? = null,
+    val note: String? = null,
+    val items: List<StocktakeItemReq>,
+)
+data class StocktakeResultDto(val count: Int = 0)
+
 // ===== Module Sale =====
 
 /** KH cho picker + search. BE trả full Customer; chỉ dùng cột nhẹ ở UI. */

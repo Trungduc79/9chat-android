@@ -12,6 +12,9 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.CasherDto
+import vn.chat9.app.data.vapi.dto.CategoryDto
+import vn.chat9.app.data.vapi.dto.StocktakeRequest
+import vn.chat9.app.data.vapi.dto.StocktakeResultDto
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
 import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
@@ -95,19 +98,33 @@ interface VapiApiService {
         @Query("per_page") perPage: Int = 20,
     ): VapiResponse<List<CustomerDto>>
 
-    /** Search variant/SP (`vapi /products` paginated search). */
+    /** Search/list SP (`vapi /products`). q rỗng + category_id → list SP theo danh mục
+     *  (dùng cho dropdown sản phẩm cascade ở Kiểm kho). */
     @GET("v1/products")
     suspend fun searchProducts(
-        @Query("q") q: String,
-        @Query("per_page") perPage: Int = 20,
+        @Query("q") q: String? = null,
+        @Query("category_id") categoryId: Long? = null,
+        @Query("warehouse_id") warehouseId: Long? = null,   // → BE sort theo tồn kho cao→thấp
+        @Query("per_page") perPage: Int = 50,
     ): VapiResponse<List<ProductSearchDto>>
 
+    /** Danh mục (dòng sản phẩm) cho dropdown lọc. */
+    @GET("v1/categories")
+    suspend fun listCategories(
+        @Query("per_page") perPage: Int = 200,
+    ): VapiResponse<List<CategoryDto>>
+
+    /** Lưu kiểm kho: áp số đếm thực tế cho 1 kho (điều chỉnh tồn + ghi lịch sử). */
+    @POST("v1/stocktake")
+    suspend fun submitStocktake(@Body req: StocktakeRequest): VapiResponse<StocktakeResultDto>
+
     /** Search BIẾN THỂ trực tiếp (/v1/variants) — eager-load product+units+image,
-     *  append stock_base theo warehouse_id (tồn theo kho). */
+     *  append stock_base theo warehouse_id (tồn theo kho). category_id lọc theo danh mục. */
     @GET("v1/variants")
     suspend fun listAllVariants(
         @Query("search") search: String? = null,
         @Query("product_id") productId: Long? = null,
+        @Query("category_id") categoryId: Long? = null,
         @Query("warehouse_id") warehouseId: Long? = null,
         @Query("per_page") perPage: Int = 30,
     ): VapiResponse<List<VariantSearchDto>>

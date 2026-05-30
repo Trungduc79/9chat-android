@@ -36,14 +36,12 @@ import vn.chat9.app.ui.explore.AdminColors
 fun WarehouseOrdersList(
     tab: Int,
     list: List<OrderDto>,
-    photos: List<AttachmentDto>,
     loading: Boolean,
     error: String?,
     onOpenOrder: (Long, List<Long>) -> Unit,
     onTabDelta: (Int) -> Unit,
     onExitModule: () -> Unit,
 ) {
-    val empty = if (tab == 3) photos.isEmpty() else list.isEmpty()
     Box(
         Modifier.fillMaxSize().pointerInput(tab) {
             var dragSum = 0f
@@ -59,23 +57,34 @@ fun WarehouseOrdersList(
         },
     ) {
         when {
-            loading && empty ->
+            loading && list.isEmpty() ->
                 ScrollableCenter { CircularProgressIndicator(color = AdminColors.Primary) }
-            tab == 3 -> {
-                if (photos.isEmpty()) ScrollableCenter { Text(error ?: "Chưa có ảnh", color = AdminColors.TextMuted) }
-                else LazyVerticalGrid(columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp)) {
-                    gridItems(photos, key = { it.id }) { p ->
-                        AsyncImage(
-                            model = p.url, contentDescription = null, contentScale = ContentScale.Crop,
-                            modifier = Modifier.padding(2.dp).aspectRatio(1f).clip(RoundedCornerShape(8.dp))
-                                .clickable { onOpenOrder(p.attachableId, photos.map { it.attachableId }.distinct()) },
-                        )
-                    }
-                }
-            }
             list.isEmpty() -> ScrollableCenter { Text(error ?: "Không có đơn", color = AdminColors.TextMuted) }
             else -> LazyColumn(contentPadding = PaddingValues(12.dp)) {
                 items(list, key = { it.id }) { o -> OrderCard(o, tab) { onOpenOrder(o.id, list.map { it.id }) } }
+            }
+        }
+    }
+}
+
+/** Grid ảnh chụp — mở từ menu 3 chấm (không còn là tab). Tap 1 ảnh → mở đơn của ảnh đó. */
+@Composable
+fun WarehousePhotosGrid(
+    photos: List<AttachmentDto>,
+    loading: Boolean,
+    error: String?,
+    onOpenPhoto: (Long, List<Long>) -> Unit,
+) {
+    when {
+        loading && photos.isEmpty() -> ScrollableCenter { CircularProgressIndicator(color = AdminColors.Primary) }
+        photos.isEmpty() -> ScrollableCenter { Text(error ?: "Chưa có ảnh", color = AdminColors.TextMuted) }
+        else -> LazyVerticalGrid(columns = GridCells.Fixed(3), contentPadding = PaddingValues(8.dp)) {
+            gridItems(photos, key = { it.id }) { p ->
+                AsyncImage(
+                    model = p.url, contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.padding(2.dp).aspectRatio(1f).clip(RoundedCornerShape(8.dp))
+                        .clickable { onOpenPhoto(p.attachableId, photos.map { it.attachableId }.distinct()) },
+                )
             }
         }
     }

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warehouse
 import androidx.compose.material3.AlertDialog
@@ -79,6 +80,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var openOrderId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var photosOpen by rememberSaveable { mutableStateOf(false) }   // Ảnh chụp: mở từ menu 3 chấm (không còn là tab)
     var siblingIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var forward by remember { mutableStateOf(true) }
 
@@ -119,7 +121,10 @@ fun WarehouseScreen(onBack: () -> Unit) {
             } catch (e: Exception) { error = "Không tải được đơn hoàn thành" }
             loading = false
         }
-        if (tab == 3 && !photosLoaded) {
+    }
+    // Ảnh chụp tải khi mở từ menu (không gắn tab nữa).
+    LaunchedEffect(photosOpen, selectedWarehouseId) {
+        if (photosOpen && !photosLoaded && selectedWarehouseId != null) {
             loading = true; error = null
             try { photos = repo.allPhotos(); photosLoaded = true }
             catch (e: Exception) { error = "Không tải được ảnh" }
@@ -142,23 +147,29 @@ fun WarehouseScreen(onBack: () -> Unit) {
     }
     fun listFor(t: Int): List<OrderDto> = when (t) { 0 -> saleList; 1 -> purchaseList; 2 -> doneList; else -> emptyList() }
 
-    BackHandler(enabled = openOrderId != null) { forward = false; openOrderId = null }
+    // Back: detail → list; ảnh chụp → đóng; list → thoát module. (Mở ảnh rồi tap đơn:
+    // back đóng detail trước, vẫn ở ảnh; back nữa đóng ảnh.)
+    BackHandler(enabled = openOrderId != null || photosOpen) {
+        forward = false
+        if (openOrderId != null) openOrderId = null else photosOpen = false
+    }
 
-    fun goTab(t: Int) { if (t in 0..3) { forward = t > tab; tab = t; openOrderId = null } }
+    fun goTab(t: Int) { if (t in 0..3) { forward = t > tab; tab = t; openOrderId = null; photosOpen = false } }
 
-    // TEST tạm: vuốt xuống reload data tab hiện tại (gỡ sau khi test xong).
+    // Vuốt xuống reload data đang xem (ảnh chụp / đơn theo tab).
     fun refresh() {
         scope.launch {
             refreshing = true; error = null
             try {
-                when (tab) {
-                    0, 1 -> confirmed = repo.listOrders("confirmed", selectedWarehouseId)
-                    2 -> {
+                when {
+                    photosOpen -> { photos = repo.allPhotos(); photosLoaded = true }
+                    tab == 0 || tab == 1 -> confirmed = repo.listOrders("confirmed", selectedWarehouseId)
+                    tab == 2 -> {
                         done = repo.listOrders("delivered", selectedWarehouseId) +
                             repo.listOrders("received", selectedWarehouseId)
                         doneLoaded = true
                     }
-                    3 -> { photos = repo.allPhotos(); photosLoaded = true }
+                    // tab == 3 (Kiểm kho) chưa có data
                 }
             } catch (e: Exception) { error = "Không tải được dữ liệu" }
             refreshing = false
@@ -183,7 +194,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
                 WhTab(tab == 0, "Đơn bán", saleList.size, AdminColors.Warning) { goTab(0) }
                 WhTab(tab == 1, "Đơn nhập", purchaseList.size, AdminColors.Info) { goTab(1) }
                 WhTab(tab == 2, "Hoàn thành", doneList.size, AdminColors.Success) { goTab(2) }
-                WhTab(tab == 3, "Ảnh chụp", 0, null) { goTab(3) }
+                WhTab(tab == 3, "Kiểm kho", 0, null) { goTab(3) }
             }
             Box {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.width(40.dp)) {
@@ -222,6 +233,12 @@ fun WarehouseScreen(onBack: () -> Unit) {
                             colors = itemColors,
                         )
                         DropdownMenuItem(
+                            text = { Text("Ảnh chụp", fontSize = 14.sp) },
+                            onClick = { menuOpen = false; forward = true; openOrderId = null; photosOpen = true },
+                            leadingIcon = { Icon(Icons.Default.Image, null, tint = AdminColors.Primary) },
+                            colors = itemColors,
+                        )
+                        DropdownMenuItem(
                             text = { Text("Tải lại", fontSize = 14.sp) },
                             onClick = { menuOpen = false; refresh() },
                             colors = itemColors,
@@ -233,16 +250,28 @@ fun WarehouseScreen(onBack: () -> Unit) {
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             AnimatedContent(
-                targetState = openOrderId to tab,
+                targetState = Triple(openOrderId, tab, photosOpen),
                 transitionSpec = {
                     val dir = if (forward) 1 else -1
                     (slideInHorizontally { dir * it } + fadeIn()) togetherWith
                         (slideOutHorizontally { -dir * it } + fadeOut())
                 },
                 label = "warehouseContent",
-            ) { (oid, t) ->
-                if (oid == null) {
-                    // TEST tạm: vuốt xuống để reload (gỡ sau khi test xong).
+            ) { (oid, t, ph) ->
+                if (oid != null) {
+                    WarehouseOrderDetail(
+                        orderId = oid,
+                        siblingIds = siblingIds,
+                        onNavigate = { newId ->
+                            forward = siblingIds.indexOf(newId) > siblingIds.indexOf(openOrderId)
+                            openOrderId = newId
+                        },
+                        onClose = { forward = false; openOrderId = null },
+                    )
+                } else if (!ph && t == 3) {
+                    // Tab Kiểm kho — màn tự chứa (header + list + nút lưu), không qua PullToRefreshBox chung.
+                    WarehouseStocktake(warehouseId = selectedWarehouseId, warehouseName = currentWarehouse?.name)
+                } else {
                     PullToRefreshBox(
                         isRefreshing = refreshing,
                         onRefresh = { refresh() },
@@ -258,27 +287,25 @@ fun WarehouseScreen(onBack: () -> Unit) {
                             )
                         },
                     ) {
-                        WarehouseOrdersList(
-                            tab = t,
-                            list = listFor(t),
-                            photos = photos,
-                            loading = loading,
-                            error = error,
-                            onOpenOrder = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
-                            onTabDelta = { d -> goTab(tab + d) },
-                            onExitModule = onBack,
-                        )
+                        if (ph) {
+                            WarehousePhotosGrid(
+                                photos = photos,
+                                loading = loading,
+                                error = error,
+                                onOpenPhoto = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
+                            )
+                        } else {
+                            WarehouseOrdersList(
+                                tab = t,
+                                list = listFor(t),
+                                loading = loading,
+                                error = error,
+                                onOpenOrder = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
+                                onTabDelta = { d -> goTab(tab + d) },
+                                onExitModule = onBack,
+                            )
+                        }
                     }
-                } else {
-                    WarehouseOrderDetail(
-                        orderId = oid,
-                        siblingIds = siblingIds,
-                        onNavigate = { newId ->
-                            forward = siblingIds.indexOf(newId) > siblingIds.indexOf(openOrderId)
-                            openOrderId = newId
-                        },
-                        onClose = { forward = false; openOrderId = null },
-                    )
                 }
             }
         }
