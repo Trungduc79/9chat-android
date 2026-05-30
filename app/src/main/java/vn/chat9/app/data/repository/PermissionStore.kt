@@ -24,7 +24,13 @@ import vn.chat9.app.data.model.PermissionsData
  * on `has(code)` / `isAdmin` / `bypass_all`. Don't cache the snapshot in
  * a long-lived variable — it can change after invite-accept.
  */
-class PermissionStore(private val api: ApiService) {
+class PermissionStore(
+    private val api: ApiService,
+    // Tra vai trò nhân viên vapi theo SĐT (rỗng nếu không khớp / lỗi). Mở module 9chat
+    // theo vai trò NV khi SĐT đăng ký 9chat trùng SĐT nhân viên (realtime, mỗi refresh).
+    private val staffRolesByPhone: suspend (String) -> List<String> = { emptyList() },
+    private val phoneProvider: () -> String? = { null },
+) {
 
     private val _state = MutableStateFlow(PermissionsData())
     val state: StateFlow<PermissionsData> = _state.asStateFlow()
@@ -77,6 +83,18 @@ class PermissionStore(private val api: ApiService) {
             } catch (_: Exception) {
                 // ignore — state cũ giữ nguyên
             }
+
+            // Merge quyền module theo vai trò nhân viên vapi (khớp SĐT). Chạy sau khi
+            // set _state từ 9chat → mở Bán hàng/Kho cho NV dù 9chat role chưa gán.
+            val phone = phoneProvider()
+            if (!phone.isNullOrBlank()) {
+                val roles = try { staffRolesByPhone(phone) } catch (_: Exception) { emptyList() }
+                val extra = roles.flatMap { VAPI_ROLE_PERMS[it] ?: emptyList() }
+                if (extra.isNotEmpty()) {
+                    val cur = _state.value
+                    _state.value = cur.copy(permissions = (cur.permissions + extra).distinct())
+                }
+            }
         }
     }
 
@@ -87,5 +105,11 @@ class PermissionStore(private val api: ApiService) {
 
     companion object {
         private const val REFRESH_INTERVAL_MS = 5 * 60 * 1000L // 5 phút
+
+        /** Map mã vai trò nhân viên vapi → permission code 9chat (gating module). */
+        private val VAPI_ROLE_PERMS: Map<String, List<String>> = mapOf(
+            "sales"     to listOf("sale.create_order", "sale.view_orders"),
+            "warehouse" to listOf("warehouse.view", "warehouse.fulfill"),
+        )
     }
 }

@@ -48,8 +48,15 @@ class AppContainer(context: Context) {
 
     val socket: ChatSocket = ChatSocket { tokenManager.accessToken ?: "" }
 
-    /** Phase 2 RBAC store. Refresh sau login + force-refresh sau accept invite. */
-    val permissions: PermissionStore = PermissionStore(api)
+    /** Phase 2 RBAC store. Refresh sau login + force-refresh sau accept invite.
+     *  Merge thêm vai trò nhân viên vapi khớp SĐT → mở module Bán hàng/Kho. */
+    val permissions: PermissionStore = PermissionStore(
+        api,
+        staffRolesByPhone = { phone ->
+            runCatching { vapi.staffRolesByPhone(phone).data?.roles ?: emptyList() }.getOrDefault(emptyList())
+        },
+        phoneProvider = { tokenManager.user?.phone },
+    )
 
     /** Global cache map(user_id → alias). Single source of truth cho alias
      *  resolution trên toàn app. Refresh sau login + force-refresh sau khi

@@ -13,6 +13,7 @@ import retrofit2.http.Query
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.CategoryDto
+import vn.chat9.app.data.vapi.dto.StaffRolesDto
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
 import vn.chat9.app.data.vapi.dto.StocktakeResultDto
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
@@ -117,6 +118,10 @@ interface VapiApiService {
     /** Lưu kiểm kho: áp số đếm thực tế cho 1 kho (điều chỉnh tồn + ghi lịch sử). */
     @POST("v1/stocktake")
     suspend fun submitStocktake(@Body req: StocktakeRequest): VapiResponse<StocktakeResultDto>
+
+    /** Vai trò nhân viên khớp theo SĐT — mở module 9chat theo vai trò. */
+    @GET("v1/staff/roles-by-phone")
+    suspend fun staffRolesByPhone(@Query("phone") phone: String): VapiResponse<StaffRolesDto>
 
     /** Search BIẾN THỂ trực tiếp (/v1/variants) — eager-load product+units+image,
      *  append stock_base theo warehouse_id (tồn theo kho). category_id lọc theo danh mục. */

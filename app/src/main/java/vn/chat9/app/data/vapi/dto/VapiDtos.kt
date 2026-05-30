@@ -165,6 +165,12 @@ data class StocktakeRequest(
 )
 data class StocktakeResultDto(val count: Int = 0)
 
+/** Vai trò nhân viên vapi khớp theo SĐT (mở module 9chat theo vai trò). */
+data class StaffRolesDto(
+    val matched: Boolean = false,
+    val roles: List<String> = emptyList(),
+)
+
 // ===== Module Sale =====
 
 /** KH cho picker + search. BE trả full Customer; chỉ dùng cột nhẹ ở UI. */
