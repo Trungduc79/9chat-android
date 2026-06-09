@@ -165,10 +165,12 @@ data class StocktakeRequest(
 )
 data class StocktakeResultDto(val count: Int = 0)
 
-/** Vai trò nhân viên vapi khớp theo SĐT (mở module 9chat theo vai trò). */
+/** Vai trò + QUYỀN nhân viên vapi khớp theo SĐT (mở module 9chat). Phase 4: dùng
+ *  `permissions` (code thật từ roles.permissions) trực tiếp, không map cứng. */
 data class StaffRolesDto(
     val matched: Boolean = false,
     val roles: List<String> = emptyList(),
+    val permissions: List<String> = emptyList(),
 )
 
 // ===== Module Sale =====

@@ -26,9 +26,10 @@ import vn.chat9.app.data.model.PermissionsData
  */
 class PermissionStore(
     private val api: ApiService,
-    // Tra vai trò nhân viên vapi theo SĐT (rỗng nếu không khớp / lỗi). Mở module 9chat
-    // theo vai trò NV khi SĐT đăng ký 9chat trùng SĐT nhân viên (realtime, mỗi refresh).
-    private val staffRolesByPhone: suspend (String) -> List<String> = { emptyList() },
+    // Phase 4: tra QUYỀN nhân viên vapi theo SĐT (code thật từ roles.permissions; rỗng nếu
+    // không khớp/nghỉ việc). Dùng TRỰC TIẾP để mở module 9chat — đổi quyền trên admin là
+    // app áp dụng (không map cứng, không build APK).
+    private val staffPermissionsByPhone: suspend (String) -> List<String> = { emptyList() },
     private val phoneProvider: () -> String? = { null },
 ) {
 
@@ -37,6 +38,10 @@ class PermissionStore(
 
     private val mutex = Mutex()
     private var lastFetchMs: Long = 0
+
+    // Quyền vapi gán lần refresh TRƯỚC — để gỡ chính xác khi NV nghỉ/đổi vai trò (revoke),
+    // không cộng dồn và không phụ thuộc danh sách cứng.
+    private var lastVapiPerms: List<String> = emptyList()
 
     /**
      * True nếu user có permission code đó (hoặc bypass_all).
@@ -86,36 +91,31 @@ class PermissionStore(
                 // ignore — base cũ giữ nguyên
             }
 
-            // 2. Quyền module theo vai trò nhân viên vapi (khớp SĐT). Tính DỨT KHOÁT:
-            //    gỡ HẾT quyền vapi-managed cũ rồi thêm lại theo vai trò HIỆN TẠI → NV nghỉ
-            //    việc/vô hiệu (roles-by-phone rỗng) bị thu hồi ngay, không cộng dồn quyền cũ.
+            // 2. Phase 4: lấy QUYỀN vapi trực tiếp (code thật từ roles.permissions).
+            //    Lỗi mạng → giữ quyền lần trước (tránh cướp quyền tạm thời); SĐT trống → rỗng.
             val phone = phoneProvider()
-            val roles = if (!phone.isNullOrBlank()) {
-                try { staffRolesByPhone(phone) } catch (_: Exception) { emptyList() }
+            val vapiPerms = if (!phone.isNullOrBlank()) {
+                try { staffPermissionsByPhone(phone) } catch (_: Exception) { lastVapiPerms }
             } else {
                 emptyList()
             }
-            val vapiExtra = roles.flatMap { VAPI_ROLE_PERMS[it] ?: emptyList() }.distinct()
-            val allVapiPerms = VAPI_ROLE_PERMS.values.flatten().toSet()
 
-            // 3. Gộp xong rồi EMIT MỘT LẦN (atomic) → consumer chỉ thấy state cuối cùng.
-            val baseWithoutVapi = base.permissions.filterNot { it in allVapiPerms }
-            _state.value = base.copy(permissions = (baseWithoutVapi + vapiExtra).distinct())
+            // 3. Gộp DỨT KHOÁT + EMIT MỘT LẦN: gỡ quyền vapi LẦN TRƯỚC rồi thêm quyền HIỆN TẠI
+            //    → NV nghỉ/đổi vai trò (rỗng/đổi) thu hồi ngay, không cộng dồn.
+            val baseWithoutVapi = base.permissions.filterNot { it in lastVapiPerms }
+            lastVapiPerms = vapiPerms
+            _state.value = base.copy(permissions = (baseWithoutVapi + vapiPerms).distinct())
         }
     }
 
     fun clear() {
         _state.value = PermissionsData()
         lastFetchMs = 0
+        lastVapiPerms = emptyList()
     }
 
     companion object {
         private const val REFRESH_INTERVAL_MS = 5 * 60 * 1000L // 5 phút
-
-        /** Map mã vai trò nhân viên vapi → permission code 9chat (gating module). */
-        private val VAPI_ROLE_PERMS: Map<String, List<String>> = mapOf(
-            "sales"     to listOf("sale.create_order", "sale.view_orders"),
-            "warehouse" to listOf("warehouse.view", "warehouse.fulfill"),
-        )
+        // (Phase 4: bỏ map cứng VAPI_ROLE_PERMS — quyền lấy thẳng từ roles-by-phone.)
     }
 }

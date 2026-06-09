@@ -52,8 +52,10 @@ class AppContainer(context: Context) {
      *  Merge thêm vai trò nhân viên vapi khớp SĐT → mở module Bán hàng/Kho. */
     val permissions: PermissionStore = PermissionStore(
         api,
-        staffRolesByPhone = { phone ->
-            runCatching { vapi.staffRolesByPhone(phone).data?.roles ?: emptyList() }.getOrDefault(emptyList())
+        // Phase 4: lấy QUYỀN thật (permissions) từ roles-by-phone → dùng trực tiếp,
+        // không map cứng role→quyền. Đổi quyền trên admin là app áp dụng (qua realtime + reload).
+        staffPermissionsByPhone = { phone ->
+            runCatching { vapi.staffRolesByPhone(phone).data?.permissions ?: emptyList() }.getOrDefault(emptyList())
         },
         phoneProvider = { tokenManager.user?.phone },
     )
