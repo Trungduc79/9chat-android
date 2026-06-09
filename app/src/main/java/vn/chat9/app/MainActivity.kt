@@ -612,6 +612,16 @@ class MainActivity : ComponentActivity() {
                         container.socket.on("room_destroyed", handler)
                     }
 
+                    // Realtime: admin/vapi đổi quyền NV (deactive/nghỉ việc/đổi vai trò) →
+                    // 9chat emit `permissions_changed` → refresh quyền NGAY (không chờ poll).
+                    // Mất quyền → ModuleHostScreen tự đá khỏi module quản trị.
+                    LaunchedEffect(Unit) {
+                        val handler: (Array<Any>) -> Unit = {
+                            lifecycleScope.launch { container.permissions.refresh(force = true) }
+                        }
+                        container.socket.on("permissions_changed", handler)
+                    }
+
                     // Friend alias map for resolving incoming caller display name
                     var friendAliases by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
                     var friendAvatars by remember { mutableStateOf<Map<Int, String?>>(emptyMap()) }

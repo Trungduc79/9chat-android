@@ -72,29 +72,35 @@ class PermissionStore(
             // Re-check inside lock — another coroutine có thể đã refresh.
             if (!force && System.currentTimeMillis() - lastFetchMs < REFRESH_INTERVAL_MS) return
 
+            // 1. Base quyền 9chat. Fetch lỗi → giữ base hiện tại (tránh cướp quyền tạm
+            //    thời do mạng yếu / 500). KHÔNG set _state ở đây để không phát trạng thái
+            //    trung gian (thiếu quyền vapi) → tránh màn module bị đá nhầm lúc refresh.
+            var base = _state.value
             try {
                 val resp = api.getMyPermissions()
                 if (resp.success && resp.data != null) {
-                    _state.value = resp.data
+                    base = resp.data
                     lastFetchMs = System.currentTimeMillis()
                 }
-                // Nếu thất bại — giữ state cũ, không clear (tránh cướp quyền tạm thời
-                // do mạng yếu / 500). Default-DENY chỉ áp dụng khi state khởi tạo trống.
             } catch (_: Exception) {
-                // ignore — state cũ giữ nguyên
+                // ignore — base cũ giữ nguyên
             }
 
-            // Merge quyền module theo vai trò nhân viên vapi (khớp SĐT). Chạy sau khi
-            // set _state từ 9chat → mở Bán hàng/Kho cho NV dù 9chat role chưa gán.
+            // 2. Quyền module theo vai trò nhân viên vapi (khớp SĐT). Tính DỨT KHOÁT:
+            //    gỡ HẾT quyền vapi-managed cũ rồi thêm lại theo vai trò HIỆN TẠI → NV nghỉ
+            //    việc/vô hiệu (roles-by-phone rỗng) bị thu hồi ngay, không cộng dồn quyền cũ.
             val phone = phoneProvider()
-            if (!phone.isNullOrBlank()) {
-                val roles = try { staffRolesByPhone(phone) } catch (_: Exception) { emptyList() }
-                val extra = roles.flatMap { VAPI_ROLE_PERMS[it] ?: emptyList() }
-                if (extra.isNotEmpty()) {
-                    val cur = _state.value
-                    _state.value = cur.copy(permissions = (cur.permissions + extra).distinct())
-                }
+            val roles = if (!phone.isNullOrBlank()) {
+                try { staffRolesByPhone(phone) } catch (_: Exception) { emptyList() }
+            } else {
+                emptyList()
             }
+            val vapiExtra = roles.flatMap { VAPI_ROLE_PERMS[it] ?: emptyList() }.distinct()
+            val allVapiPerms = VAPI_ROLE_PERMS.values.flatten().toSet()
+
+            // 3. Gộp xong rồi EMIT MỘT LẦN (atomic) → consumer chỉ thấy state cuối cùng.
+            val baseWithoutVapi = base.permissions.filterNot { it in allVapiPerms }
+            _state.value = base.copy(permissions = (baseWithoutVapi + vapiExtra).distinct())
         }
     }
 
