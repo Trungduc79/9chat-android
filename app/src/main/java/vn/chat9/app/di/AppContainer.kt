@@ -76,7 +76,8 @@ class AppContainer(context: Context) {
     // LAZY: chỉ khởi tạo khi 1 module quản trị thực sự gọi → tài khoản thường
     // (không vào module nào) KHÔNG tốn tài nguyên dựng Retrofit/OkHttp cho vapi.
     val vapi: vn.chat9.app.data.vapi.VapiApiService by lazy {
-        vn.chat9.app.data.vapi.VapiClient.create()
+        // Gửi SĐT staff đang đăng nhập → vapi enforce quyền theo staff (server-side thật).
+        vn.chat9.app.data.vapi.VapiClient.create(phoneProvider = { tokenManager.user?.phone })
     }
     val warehouseRepo: vn.chat9.app.data.repository.WarehouseRepository by lazy {
         vn.chat9.app.data.repository.WarehouseRepository(vapi)

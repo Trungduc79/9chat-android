@@ -15,11 +15,14 @@ import java.util.concurrent.TimeUnit
  * quản trị thực sự gọi vapi.
  */
 object VapiClient {
-    fun create(): VapiApiService {
+    /** @param phoneProvider SĐT nhân viên đang đăng nhập → gửi header X-Staff-Phone để
+     *  vapi enforce quyền THEO STAFF (không chỉ api.key máy). Đọc động mỗi request. */
+    fun create(phoneProvider: () -> String? = { null }): VapiApiService {
         val client = OkHttpClient.Builder()
             .addInterceptor { chain ->
                 val b = chain.request().newBuilder().header("Accept", "application/json")
                 if (BuildConfig.VAPI_API_KEY.isNotBlank()) b.header("X-API-Key", BuildConfig.VAPI_API_KEY)
+                phoneProvider()?.takeIf { it.isNotBlank() }?.let { b.header("X-Staff-Phone", it) }
                 chain.proceed(b.build())
             }
             .addInterceptor(HttpLoggingInterceptor().apply {
