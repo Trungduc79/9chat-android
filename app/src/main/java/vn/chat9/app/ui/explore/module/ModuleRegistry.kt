@@ -28,7 +28,7 @@ object ModuleRegistry {
             title = "Vận hành kho",
             subtitle = "Giao / nhận hàng, tồn kho",
             icon = Icons.Default.Inventory2,
-            requiredPermissions = listOf("warehouse.view", "warehouse.fulfill"),
+            requiredPermissions = listOf("warehouse.read", "warehouse.manage"),
             entry = { onBack -> WarehouseScreen(onBack) },
         ),
         AdminModule(
@@ -36,7 +36,7 @@ object ModuleRegistry {
             title = "Bán hàng",
             subtitle = "Tạo đơn + đơn của tôi",
             icon = Icons.Default.PointOfSale,
-            requiredPermissions = listOf("sale.create_order", "sale.view_orders"),
+            requiredPermissions = listOf("order.read", "order.create"),
             entry = { onBack -> SaleScreen(onBack) },
         ),
         AdminModule(
@@ -44,7 +44,7 @@ object ModuleRegistry {
             title = "Kế toán",
             subtitle = "Công nợ, hoá đơn, báo cáo",
             icon = Icons.Default.Calculate,
-            requiredPermissions = listOf("debt.view_all", "invoice.view_all", "report.financial"),
+            requiredPermissions = listOf("debt.read", "vat_invoice.read", "report.read"),
             entry = { onBack -> ModulePlaceholder("Kế toán", onBack) },
         ),
         AdminModule(
@@ -52,7 +52,7 @@ object ModuleRegistry {
             title = "Quản trị tổng",
             subtitle = "Phân quyền, cài đặt hệ thống",
             icon = Icons.Default.AdminPanelSettings,
-            requiredPermissions = listOf("system.permission_manage", "system.settings"),
+            requiredPermissions = listOf("permission.manage", "system.config"),
             entry = { onBack -> ModulePlaceholder("Quản trị tổng", onBack) },
         ),
     )
