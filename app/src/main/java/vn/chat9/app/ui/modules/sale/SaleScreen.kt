@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import vn.chat9.app.App
 import vn.chat9.app.ui.explore.AdminColors
 
 /**
@@ -37,13 +39,28 @@ fun SaleScreen(onBack: () -> Unit) {
     var creating by remember { mutableStateOf(false) }
     var viewingOrderId by remember { mutableStateOf<Long?>(null) }   // tap đơn → chi tiết/edit
 
+    // Quyền tạo đơn: ẩn nút nếu thiếu order.create (UX — server cũng chặn thật qua X-Staff-Phone).
+    val perms by (LocalContext.current.applicationContext as App).container.permissions.state.collectAsState()
+    val canCreate = perms.bypass_all || "order.create" in perms.permissions
+
     androidx.activity.compose.BackHandler(enabled = true) {
         if (creating || viewingOrderId != null) { creating = false; viewingOrderId = null } else onBack()
     }
 
     // Overlay tạo đơn / chi tiết đơn (full-screen) — dùng chung SaleOrderForm.
     if (creating || viewingOrderId != null) {
-        Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
+        Column(
+            Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()
+                // Vuốt phải (>90px) → về trang gốc (list). Item row tự consume vuốt-trái-xoá
+                // nên không xung đột; vuốt phải ở vùng trống của form sẽ thoát.
+                .pointerInput(Unit) {
+                    var dragAccum = 0f
+                    detectHorizontalDragGestures(
+                        onDragEnd = { if (dragAccum > 90f) { creating = false; viewingOrderId = null }; dragAccum = 0f },
+                        onDragCancel = { dragAccum = 0f },
+                    ) { _, dx -> dragAccum += dx }
+                },
+        ) {
             Row(
                 Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -80,7 +97,10 @@ fun SaleScreen(onBack: () -> Unit) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         if (dragAccum < -80f && tab.ordinal < SaleTab.entries.lastIndex) tab = SaleTab.entries[tab.ordinal + 1]
-                        else if (dragAccum > 80f && tab.ordinal > 0) tab = SaleTab.entries[tab.ordinal - 1]
+                        else if (dragAccum > 80f) {
+                            if (tab.ordinal > 0) tab = SaleTab.entries[tab.ordinal - 1]
+                            else onBack()   // tab đầu (Đơn hàng) vuốt phải → thoát module về Khám phá
+                        }
                         dragAccum = 0f
                     },
                 ) { _, dx -> dragAccum += dx }
@@ -89,13 +109,15 @@ fun SaleScreen(onBack: () -> Unit) {
             when (tab) {
                 SaleTab.ORDERS -> {
                     SaleOrdersList(onTapOrder = { viewingOrderId = it })
-                    FloatingActionButton(
-                        onClick = { creating = true },
-                        containerColor = AdminColors.Primary,
-                        contentColor = Color.White,
-                        shape = CircleShape,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                    ) { Icon(Icons.Default.Add, "Tạo đơn bán") }
+                    if (canCreate) {
+                        FloatingActionButton(
+                            onClick = { creating = true },
+                            containerColor = AdminColors.Primary,
+                            contentColor = Color.White,
+                            shape = CircleShape,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                        ) { Icon(Icons.Default.Add, "Tạo đơn bán") }
+                    }
                 }
                 SaleTab.PRODUCTS -> SaleProductsList()
                 SaleTab.CUSTOMERS -> SaleCustomersList()
