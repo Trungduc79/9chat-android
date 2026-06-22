@@ -46,7 +46,10 @@ class AppContainer(context: Context) {
 
     val api: ApiService = retrofit.create(ApiService::class.java)
 
+    // Đăng nhập đơn-thiết-bị: server emit "force_logout" cho socket cũ → tái dùng luồng
+    // sessionExpired (clear token/permissions + về login + toast) như khi gặp 401.
     val socket: ChatSocket = ChatSocket { tokenManager.accessToken ?: "" }
+        .also { s -> s.on("force_logout") { _sessionExpired.tryEmit(Unit) } }
 
     /** Phase 2 RBAC store. Refresh sau login + force-refresh sau accept invite.
      *  Merge thêm vai trò nhân viên vapi khớp SĐT → mở module Bán hàng/Kho. */
