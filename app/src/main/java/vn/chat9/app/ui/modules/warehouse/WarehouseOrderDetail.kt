@@ -14,11 +14,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -61,6 +63,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -104,6 +110,7 @@ fun WarehouseOrderDetail(
 
     var order by remember { mutableStateOf<OrderDto?>(null) }
     var photos by remember { mutableStateOf<List<AttachmentDto>>(emptyList()) }
+    var viewerUrl by remember { mutableStateOf<String?>(null) } // ảnh đang xem phóng to (pinch zoom)
     val delivered = remember { mutableStateMapOf<Long, Double>() }
     val checked = remember { mutableStateMapOf<Long, Boolean>() }
     var loading by remember { mutableStateOf(false) }
@@ -346,7 +353,7 @@ fun WarehouseOrderDetail(
                                 Spacer(Modifier.width(6.dp))
                                 Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(56.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Spacer(Modifier.width(48.dp)) // placeholder cột đơn vị (không có nhãn)
+                                Text("ĐƠN VỊ", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(64.dp))
                             }
                         }
                     }
@@ -410,7 +417,7 @@ fun WarehouseOrderDetail(
                         LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.height(((photos.size + 2) / 3 * 110).dp), userScrollEnabled = false) {
                             items(photos, key = { it.id }) { p ->
                                 Box(Modifier.padding(2.dp)) {
-                                    AsyncImage(model = p.url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(8.dp)))
+                                    AsyncImage(model = p.url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(8.dp)).clickable { viewerUrl = p.url })
                                     if (canFulfill) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(50)).background(Color(0x99000000)).clickable {
                                         scope.launch { try { repo.deletePhoto(p.id); photos = photos.filter { it.id != p.id } } catch (_: Exception) {} }
                                     }) { Icon(Icons.Default.Close, "Xoá", tint = Color.White, modifier = Modifier.size(18.dp).padding(2.dp)) }
@@ -523,6 +530,42 @@ fun WarehouseOrderDetail(
             ) {
                 DatePicker(state = datePickerState)
             }
+        }
+    }
+
+    // Viewer ảnh xác nhận phóng to: rộng 100%, chụm 2 ngón zoom, X đóng.
+    viewerUrl?.let { url ->
+        PhotoZoomViewer(url = url, onClose = { viewerUrl = null })
+    }
+}
+
+/** Xem ảnh phóng to: ảnh rộng 100% (FitWidth), chụm 2 ngón zoom + kéo, nút X góc phải trên. */
+@Composable
+private fun PhotoZoomViewer(url: String, onClose: () -> Unit) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().background(Color(0xD9000000))) {
+            var scale by remember { mutableStateOf(1f) }
+            var offset by remember { mutableStateOf(Offset.Zero) }
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 8f)
+                            offset += pan
+                        }
+                    },
+            )
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(16.dp).size(40.dp).clip(CircleShape)
+                    .background(Color(0x33FFFFFF)).clickable { onClose() },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Default.Close, "Đóng", tint = Color.White, modifier = Modifier.size(22.dp)) }
         }
     }
 }
@@ -700,7 +743,7 @@ private fun ItemRow(
                         )
                     }
                 } else {
-                    Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
                         Text(item.unitName, fontSize = 13.sp, color = C.TextMuted.copy(alpha = 0.6f), maxLines = 1, softWrap = false)
                     }
                 }
