@@ -92,10 +92,10 @@ interface VapiApiService {
         @Query("limit") limit: Int = 20,
     ): VapiResponse<List<CustomerDto>>
 
-    /** Search KH theo tên / SĐT / mã (vnSearchMatch ascii). */
+    /** Search KH theo tên / SĐT / mã (BE param 'search' — name + name_ascii bỏ dấu). */
     @GET("v1/customers")
     suspend fun searchCustomers(
-        @Query("q") q: String,
+        @Query("search") q: String,
         @Query("per_page") perPage: Int = 20,
     ): VapiResponse<List<CustomerDto>>
 
