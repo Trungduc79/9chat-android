@@ -176,6 +176,19 @@ fun WarehouseScreen(onBack: () -> Unit) {
         }
     }
 
+    // Sau khi xác nhận giao/nhận THÀNH CÔNG: nạp lại confirmed (đơn bán/nhập) + done (hoàn thành)
+    // → cập nhật trạng thái đơn + số đếm mọi tab ngay, không cần vuốt refresh.
+    fun reloadAfterFulfill() {
+        scope.launch {
+            try {
+                confirmed = repo.listOrders("confirmed", selectedWarehouseId)
+                done = repo.listOrders("delivered", selectedWarehouseId) +
+                    repo.listOrders("received", selectedWarehouseId)
+                doneLoaded = true
+            } catch (_: Exception) { /* giữ data cũ nếu lỗi mạng */ }
+        }
+    }
+
     var menuOpen by remember { mutableStateOf(false) }
     val userName = container.tokenManager.user?.username ?: "—"
 
@@ -267,6 +280,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
                             forward = siblingIds.indexOf(newId) > siblingIds.indexOf(openOrderId)
                             openOrderId = newId
                         },
+                        onFulfilled = { reloadAfterFulfill() },
                         onClose = { forward = false; openOrderId = null },
                     )
                 } else if (!ph && t == 3) {

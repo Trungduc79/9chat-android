@@ -94,6 +94,7 @@ fun WarehouseOrderDetail(
     siblingIds: List<Long>,
     warehouseName: String?,
     onNavigate: (Long) -> Unit,
+    onFulfilled: () -> Unit,
     onClose: () -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -212,6 +213,7 @@ fun WarehouseOrderDetail(
                 val remainderNote = res?.remainderOrder?.code?.let { "Đơn còn lại: $it" }
                 val msg = listOfNotNull(base, cascadeNote, remainderNote).joinToString(" · ")
                 Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                onFulfilled() // nạp lại list confirmed + done ở màn chính → trạng thái + số đếm mới
                 onClose()
             } catch (e: retrofit2.HttpException) {
                 // Parse error body — bắt code DROPSHIP_SALE_VIA_PURCHASE cho thông điệp đúng.
