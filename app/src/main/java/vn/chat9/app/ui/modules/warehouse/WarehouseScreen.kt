@@ -262,6 +262,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
                     WarehouseOrderDetail(
                         orderId = oid,
                         siblingIds = siblingIds,
+                        warehouseName = currentWarehouse?.name,
                         onNavigate = { newId ->
                             forward = siblingIds.indexOf(newId) > siblingIds.indexOf(openOrderId)
                             openOrderId = newId
@@ -300,6 +301,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
                                 list = listFor(t),
                                 loading = loading,
                                 error = error,
+                                warehouseName = currentWarehouse?.name,
                                 onOpenOrder = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
                                 onTabDelta = { d -> goTab(tab + d) },
                                 onExitModule = onBack,

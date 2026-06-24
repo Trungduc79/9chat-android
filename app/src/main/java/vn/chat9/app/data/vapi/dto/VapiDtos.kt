@@ -37,6 +37,15 @@ data class OrderDto(
         val n = if (isPurchase) (p?.shortName?.takeIf { it.isNotBlank() } ?: p?.name) else p?.name
         return n ?: "#${p?.id ?: ""}"
     }
+
+    // ===== Drop-ship (đơn nhập tạo đơn bán giao thẳng cho KH) — dùng get() để Gson không NPE.
+    val isDropship: Boolean get() = isPurchase && linkedOrderId != null
+    /** Tên ngắn NCC (party đơn nhập). */
+    val dropshipSupplier: String get() =
+        party?.shortName?.takeIf { it.isNotBlank() } ?: party?.name?.takeIf { it.isNotBlank() } ?: "#${party?.id ?: ""}"
+    /** Tên KH của đơn bán giao thẳng liên kết. */
+    val dropshipCustomer: String get() =
+        linkedOrder?.party?.name?.takeIf { it.isNotBlank() } ?: "khách hàng"
 }
 
 data class PartyDto(
@@ -116,6 +125,7 @@ data class LinkedOrderDto(
     val code: String = "",
     val type: String = "",                     // sale|purchase
     val status: String = "",                   // draft|confirmed|delivered|received|...
+    val party: PartyDto? = null,               // KH đơn bán giao thẳng (BE eager-load ở show + list)
 )
 
 // ----- attachments -----

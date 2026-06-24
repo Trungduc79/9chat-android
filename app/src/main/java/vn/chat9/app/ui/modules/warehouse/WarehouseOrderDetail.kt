@@ -92,6 +92,7 @@ import vn.chat9.app.ui.explore.AdminColors as C
 fun WarehouseOrderDetail(
     orderId: Long,
     siblingIds: List<Long>,
+    warehouseName: String?,
     onNavigate: (Long) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -116,6 +117,8 @@ fun WarehouseOrderDetail(
     // Ngày xác nhận giao/nhận (NV chọn); ms. Init từ order.completedAt/orderedAt/now.
     var confirmDateMs by remember { mutableStateOf<Long?>(null) }
     var datePickerOpen by remember { mutableStateOf(false) }
+    // Drop-ship: hỏi xác nhận giao kèm đơn bán liên kết trước khi fulfill.
+    var dropshipConfirmOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(orderId) {
         loading = true; order = null
@@ -299,7 +302,7 @@ fun WarehouseOrderDetail(
                 return@Column
             }
 
-            InfoCard(o, isPurchase, canFulfill, confirmDateMs) { datePickerOpen = true }
+            InfoCard(o, isPurchase, canFulfill, confirmDateMs, warehouseName) { datePickerOpen = true }
 
             if (!o.notes.isNullOrBlank()) {
                 Box(
@@ -425,7 +428,18 @@ fun WarehouseOrderDetail(
             Surface(shadowElevation = 8.dp, color = C.Card, modifier = Modifier.fillMaxWidth()) {
                 Box(Modifier.padding(12.dp)) {
                     Button(
-                        onClick = { doConfirm() }, enabled = !confirming,
+                        onClick = {
+                            val od = order
+                            // Drop-ship + đơn bán liên kết còn chờ giao → hỏi xác nhận trước.
+                            if (isPurchase && od?.isDropship == true &&
+                                (od.linkedOrder == null || od.linkedOrder.status == "draft" || od.linkedOrder.status == "confirmed")
+                            ) {
+                                dropshipConfirmOpen = true
+                            } else {
+                                doConfirm()
+                            }
+                        },
+                        enabled = !confirming,
                         colors = ButtonDefaults.buttonColors(containerColor = C.Primary),
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                     ) {
@@ -435,6 +449,30 @@ fun WarehouseOrderDetail(
                 }
             }
         }
+    }
+
+    // Drop-ship: hỏi xác nhận giao kèm đơn bán liên kết (BE cascade nhập + giao atomic).
+    if (dropshipConfirmOpen) {
+        val cust = order?.dropshipCustomer ?: "khách hàng"
+        AlertDialog(
+            onDismissRequest = { dropshipConfirmOpen = false },
+            title = { Text("Xác nhận giao đơn liên quan", color = C.Text) },
+            text = {
+                Text(
+                    "Đơn nhập này có đơn bán, giao thẳng cho $cust.\nXác nhận nhập và giao luôn?",
+                    color = C.TextSecondary, fontSize = 14.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { dropshipConfirmOpen = false; doConfirm() }) {
+                    Text("Xác nhận", color = C.Primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { dropshipConfirmOpen = false }) { Text("Huỷ", color = C.TextMuted) }
+            },
+            containerColor = C.Card,
+        )
     }
 
     // DatePickerDialog cho ngày xác nhận — NV tap vào ô ngày trên InfoCard mở picker.
@@ -471,7 +509,7 @@ fun WarehouseOrderDetail(
 }
 
 @Composable
-private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, confirmDateMs: Long?, onDateClick: () -> Unit) {
+private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, confirmDateMs: Long?, warehouseName: String?, onDateClick: () -> Unit) {
     Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(12.dp)) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -495,12 +533,33 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, conf
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                WhBadge(if (isPurchase) "Nhập kho" else "Xuất kho", if (isPurchase) C.Info else C.Warning)
-                Spacer(Modifier.width(8.dp))
-                Text("Tổng:", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
-                Spacer(Modifier.width(4.dp))
-                Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
+            // Đơn nhập: mô tả "Nhập hàng {kho}" / "Giao hàng từ {NCC} → {KH}" (drop-ship),
+            // Tổng xuống dòng riêng. Đơn bán giữ badge "Xuất kho" cùng dòng Tổng.
+            if (isPurchase) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (o.isDropship) {
+                        Text("Giao hàng từ ", fontSize = 14.sp, color = C.TextMuted)
+                        Text(o.dropshipSupplier, fontSize = 14.sp, color = C.Info, fontWeight = FontWeight.Medium)
+                        Text(" → ", fontSize = 14.sp, color = C.Warning)
+                        Text(o.dropshipCustomer, fontSize = 14.sp, color = C.Success, fontWeight = FontWeight.Medium, maxLines = 1)
+                    } else {
+                        Text("Nhập hàng ${warehouseName ?: "—"}", fontSize = 14.sp, color = C.TextSecondary)
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tổng:", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
+                    Spacer(Modifier.width(4.dp))
+                    Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    WhBadge("Xuất kho", C.Warning)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Tổng:", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
+                    Spacer(Modifier.width(4.dp))
+                    Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
+                }
             }
             // Truy vết: ai xác nhận / lúc nào (chỉ hiện khi đơn đã fulfill).
             o.meta?.fulfillment?.takeIf { it.byName != null || it.at != null }?.let { f ->

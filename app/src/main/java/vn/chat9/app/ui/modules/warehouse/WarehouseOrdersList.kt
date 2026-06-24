@@ -38,6 +38,7 @@ fun WarehouseOrdersList(
     list: List<OrderDto>,
     loading: Boolean,
     error: String?,
+    warehouseName: String?,
     onOpenOrder: (Long, List<Long>) -> Unit,
     onTabDelta: (Int) -> Unit,
     onExitModule: () -> Unit,
@@ -61,7 +62,7 @@ fun WarehouseOrdersList(
                 ScrollableCenter { CircularProgressIndicator(color = AdminColors.Primary) }
             list.isEmpty() -> ScrollableCenter { Text(error ?: "Không có đơn", color = AdminColors.TextMuted) }
             else -> LazyColumn(contentPadding = PaddingValues(12.dp)) {
-                items(list, key = { it.id }) { o -> OrderCard(o, tab) { onOpenOrder(o.id, list.map { it.id }) } }
+                items(list, key = { it.id }) { o -> OrderCard(o, tab, warehouseName) { onOpenOrder(o.id, list.map { it.id }) } }
             }
         }
     }
@@ -100,13 +101,15 @@ private fun ScrollableCenter(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
+private fun OrderCard(o: OrderDto, tab: Int, warehouseName: String?, onClick: () -> Unit) {
     val (tagText, tagColor) = when {
         tab == 2 -> (if (isPurchaseOrder(o)) "Đã nhập" else "Đã giao") to AdminColors.Success
         isPurchaseOrder(o) -> "Nhập kho" to AdminColors.Info
         else -> "Xuất kho" to AdminColors.Warning
     }
     val dateStr = if (tab == 2) fmtDate(o.completedAt) else fmtDate(o.orderedAt)
+    // Đơn nhập (chưa hoàn thành) hiện mô tả thay badge; Tổng xuống dòng riêng.
+    val showPurchaseLabel = tab != 2 && isPurchaseOrder(o)
 
     Surface(
         shape = RoundedCornerShape(12.dp), color = AdminColors.Card,
@@ -120,12 +123,32 @@ private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
                 Text(o.code, fontSize = 11.sp, color = AdminColors.Primary, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                WhBadge(tagText, tagColor)
-                Spacer(Modifier.width(8.dp))
-                Text("Tổng:", fontSize = 14.sp, color = AdminColors.TextMuted, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)
-                Spacer(Modifier.width(4.dp))
-                Text(qtySummary(o), fontSize = 14.sp, color = AdminColors.TextSecondary)
+            if (showPurchaseLabel) {
+                // "Nhập hàng {kho}" hoặc "Giao hàng từ {NCC} → {KH}" (drop-ship, tô 2 màu).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (o.isDropship) {
+                        Text("Giao hàng từ ", fontSize = 14.sp, color = AdminColors.TextMuted)
+                        Text(o.dropshipSupplier, fontSize = 14.sp, color = AdminColors.Info, fontWeight = FontWeight.Medium)
+                        Text(" → ", fontSize = 14.sp, color = AdminColors.Warning)
+                        Text(o.dropshipCustomer, fontSize = 14.sp, color = AdminColors.Success, fontWeight = FontWeight.Medium, maxLines = 1)
+                    } else {
+                        Text("Nhập hàng ${warehouseName ?: "—"}", fontSize = 14.sp, color = AdminColors.TextSecondary)
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Tổng:", fontSize = 14.sp, color = AdminColors.TextMuted, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)
+                    Spacer(Modifier.width(4.dp))
+                    Text(qtySummary(o), fontSize = 14.sp, color = AdminColors.TextSecondary)
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    WhBadge(tagText, tagColor)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Tổng:", fontSize = 14.sp, color = AdminColors.TextMuted, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)
+                    Spacer(Modifier.width(4.dp))
+                    Text(qtySummary(o), fontSize = 14.sp, color = AdminColors.TextSecondary)
+                }
             }
             if (!o.notes.isNullOrBlank()) {
                 Spacer(Modifier.height(6.dp))
