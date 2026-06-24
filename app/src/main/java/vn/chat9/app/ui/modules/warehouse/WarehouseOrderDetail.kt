@@ -321,15 +321,15 @@ fun WarehouseOrderDetail(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().then(if (canFulfill) Modifier.height(23.dp) else Modifier),
                     ) {
-                        Text("Ảnh", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(55.dp))
+                        Text("ẢNH", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(55.dp))
                         Spacer(Modifier.width(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Text("Mặt hàng", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("MẶT HÀNG", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                             if (canFulfill) {
                                 Spacer(Modifier.width(6.dp))
-                                Text("sl", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(56.dp))
+                                Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(56.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Kho", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(68.dp))
+                                Text("KHO", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(68.dp))
                                 Spacer(Modifier.width(10.dp))
                                 Icon(
                                     painter = painterResource(R.drawable.ic_checklist_all),
@@ -341,7 +341,7 @@ fun WarehouseOrderDetail(
                                     },
                                 )
                             } else {
-                                Text("sl", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium)
+                                Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
