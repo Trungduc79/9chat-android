@@ -310,7 +310,8 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                     if (canEdit) OutlinedButton(
                         onClick = {
                             if (selectedCustomer == null) Toast.makeText(context, "Chọn khách hàng trước", Toast.LENGTH_SHORT).show()
-                            else { pickerInitQuery = ""; pickerProductId = null; productPickerOpen = true }
+                            // Giữ query + productId lần tìm trước → mở lại hiện đúng list đã tìm.
+                            else productPickerOpen = true
                         },
                         modifier = Modifier.height(32.dp),                         // -20% so default 40dp
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
@@ -397,13 +398,14 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
     if (productPickerOpen && selectedCustomer != null) {
         VariantPicker(
             warehouseId = selectedWarehouseId,
-            initQuery = pickerInitQuery,
+            query = pickerInitQuery,
+            // persist query lên parent → mở lại giữ list đã tìm. Gõ tay = tìm tự do → bỏ filter SP (chip).
+            onQueryChange = { pickerInitQuery = it; pickerProductId = null },
             productId = pickerProductId,
             suggested = suggested,
             selectedIds = items.map { it.variantId }.toSet(),
-            // Giữ picker mở sau khi chọn → chọn nhiều variant cùng SP không phải tìm lại.
-            // Đóng bằng nút X (onClose). List kết quả giữ nguyên tới khi gõ tìm kiếm mới.
-            onPick = { v -> addVariant(v) },
+            // Chọn → đóng dialog (thêm vào đơn). Query giữ lại nên mở "Thêm SP" lần sau hiện list cũ.
+            onPick = { v -> addVariant(v); productPickerOpen = false },
             onClose = { productPickerOpen = false },
         )
     }
@@ -658,7 +660,8 @@ private fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
 @Composable
 private fun VariantPicker(
     warehouseId: Long?,
-    initQuery: String,
+    query: String,
+    onQueryChange: (String) -> Unit,
     productId: Long?,
     suggested: List<RecentProductDto>,
     selectedIds: Set<Long>,
@@ -668,7 +671,7 @@ private fun VariantPicker(
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
 
-    var query by remember { mutableStateOf(initQuery) }
+    // query do parent giữ (persist khi đóng/mở lại); results nội bộ, tự nạp lại theo query.
     var results by remember { mutableStateOf<List<VariantSearchDto>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
 
@@ -696,7 +699,7 @@ private fun VariantPicker(
     }
 
     PickerSheet(title = "Chọn biến thể", onClose = onClose, fillHeight = true) {
-        SearchField(query, "Tìm biến thể — tên / SKU...") { query = it }
+        SearchField(query, "Tìm biến thể — tên / SKU...") { onQueryChange(it) }
         Spacer(Modifier.height(8.dp))
         if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
