@@ -15,6 +15,7 @@ data class OrderDto(
     @SerializedName("ordered_at") val orderedAt: String? = null,
     @SerializedName("confirmed_at") val confirmedAt: String? = null,
     @SerializedName("completed_at") val completedAt: String? = null,
+    @SerializedName("updated_at") val updatedAt: String? = null,
     @SerializedName("warehouse_id") val warehouseId: Long? = null,   // kho bán (sale edit)
     @SerializedName("total_amount") val totalAmount: Double? = null,
     val notes: String? = null,
@@ -46,6 +47,10 @@ data class OrderDto(
     /** Tên KH của đơn bán giao thẳng liên kết. */
     val dropshipCustomer: String get() =
         linkedOrder?.party?.name?.takeIf { it.isNotBlank() } ?: "khách hàng"
+
+    /** Thời điểm BẤM xác nhận thật (giờ VN). Đơn cũ chưa có → fallback updated_at.
+     *  KHÔNG dùng completed_at (= ngày giao NV tự chọn, có thể backdate). */
+    val fulfilledRealTime: String? get() = meta?.fulfillment?.atServer ?: updatedAt
 }
 
 data class PartyDto(
@@ -92,7 +97,8 @@ data class MetaDto(val fulfillment: FulfillmentDto? = null)
 data class FulfillmentDto(
     @SerializedName("by_user_id") val byUserId: Long? = null,
     @SerializedName("by_name") val byName: String? = null,
-    val at: String? = null,                    // thời điểm xác nhận (ISO)
+    val at: String? = null,                    // ngày giao NV chọn (hiển thị)
+    @SerializedName("at_server") val atServer: String? = null, // lúc bấm xác nhận thật (giờ VN) — lọc tab Hoàn thành
 )
 
 // ----- fulfill -----

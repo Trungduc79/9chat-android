@@ -142,8 +142,8 @@ fun WarehouseScreen(onBack: () -> Unit) {
     val doneList = remember(done) {
         val seeAll = container.permissions.isBypass || container.permissions.hasRole("manager")
         val myId = container.tokenManager.user?.id?.toLong()
-        done.filter { isToday(it.completedAt) && (seeAll || it.meta?.fulfillment?.byUserId == myId) }
-            .sortedByDescending { it.completedAt ?: "" }
+        done.filter { isToday(it.fulfilledRealTime) && (seeAll || it.meta?.fulfillment?.byUserId == myId) }
+            .sortedByDescending { it.fulfilledRealTime ?: "" }
     }
     fun listFor(t: Int): List<OrderDto> = when (t) { 0 -> saleList; 1 -> purchaseList; 2 -> doneList; else -> emptyList() }
 
