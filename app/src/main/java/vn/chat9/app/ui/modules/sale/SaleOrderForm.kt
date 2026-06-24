@@ -214,6 +214,8 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                 imageUrl = v.image ?: v.product?.primaryImage?.url,
                 units = units,
             ))
+            // Picker giữ mở → cần xác nhận đã thêm (form bị sheet che).
+            Toast.makeText(context, "Đã thêm \"${variantDisplay(v, v.product?.name ?: "")}\"", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -392,7 +394,9 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
             initQuery = pickerInitQuery,
             productId = pickerProductId,
             suggested = suggested,
-            onPick = { v -> addVariant(v); productPickerOpen = false },
+            // Giữ picker mở sau khi chọn → chọn nhiều variant cùng SP không phải tìm lại.
+            // Đóng bằng nút X (onClose). List kết quả giữ nguyên tới khi gõ tìm kiếm mới.
+            onPick = { v -> addVariant(v) },
             onClose = { productPickerOpen = false },
         )
     }
