@@ -31,7 +31,10 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +48,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -53,6 +58,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.TextStyle
@@ -394,6 +400,7 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
             initQuery = pickerInitQuery,
             productId = pickerProductId,
             suggested = suggested,
+            selectedIds = items.map { it.variantId }.toSet(),
             // Giữ picker mở sau khi chọn → chọn nhiều variant cùng SP không phải tìm lại.
             // Đóng bằng nút X (onClose). List kết quả giữ nguyên tới khi gõ tìm kiếm mới.
             onPick = { v -> addVariant(v) },
@@ -629,7 +636,7 @@ private fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
     }
 
     PickerSheet(title = "Chọn khách hàng", onClose = onClose) {
-        SearchField(query, "Tìm KH theo tên, SĐT...") { query = it }
+        SearchField(query, "Tìm KH theo tên, SĐT...", autoFocus = true) { query = it }
         Spacer(Modifier.height(8.dp))
         if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
@@ -654,6 +661,7 @@ private fun VariantPicker(
     initQuery: String,
     productId: Long?,
     suggested: List<RecentProductDto>,
+    selectedIds: Set<Long>,
     onPick: (VariantSearchDto) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -694,16 +702,22 @@ private fun VariantPicker(
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
         } else LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
             items(results, key = { it.id }) { v ->
+                val picked = v.id in selectedIds
                 Row(Modifier.fillMaxWidth().clickable { onPick(v) }.padding(0.5.dp), verticalAlignment = Alignment.CenterVertically) {
                     val img = v.image ?: v.product?.primaryImage?.url
                     if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)))
                     else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(variantDisplay(v, v.product?.name ?: ""), color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+                        Text(variantDisplay(v, v.product?.name ?: ""), color = if (picked) AdminColors.Success else AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
                         v.sku?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp) }
                     }
                     Spacer(Modifier.width(8.dp))
+                    // Dấu tích cho variant đã có trong đơn.
+                    if (picked) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = "Đã chọn", tint = AdminColors.Success, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                    }
                     // 3 dòng tồn giống tab SP: Kho / số (theo đơn vị mặc định) / tên đơn vị
                     val defUnit = v.units.firstOrNull { it.isDefaultSale } ?: v.units.firstOrNull { it.isBase } ?: v.units.firstOrNull()
                     val factor = defUnit?.conversionFactor ?: 1.0
@@ -753,11 +767,22 @@ private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean 
 }
 
 @Composable
-private fun SearchField(value: String, placeholder: String, onChange: (String) -> Unit) {
+private fun SearchField(value: String, placeholder: String, autoFocus: Boolean = false, onChange: (String) -> Unit) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    // autoFocus = mở dialog là focus ô tìm + bật bàn phím luôn (chờ sheet layout xong).
+    LaunchedEffect(autoFocus) {
+        if (autoFocus) {
+            delay(200)
+            runCatching { focusRequester.requestFocus() }
+            keyboard?.show()
+        }
+    }
     BasicTextField(
         value = value, onValueChange = onChange,
         textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp),
         cursorBrush = SolidColor(AdminColors.Primary), singleLine = true,
+        modifier = Modifier.focusRequester(focusRequester),
         decorationBox = { inner ->
             Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(12.dp)) {
                 if (value.isEmpty()) Text(placeholder, color = AdminColors.TextMuted, fontSize = 13.sp)
