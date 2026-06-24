@@ -331,15 +331,17 @@ fun WarehouseOrderDetail(
                                 Spacer(Modifier.width(6.dp))
                                 Text("KHO", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(68.dp))
                                 Spacer(Modifier.width(10.dp))
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_checklist_all),
-                                    contentDescription = "Chọn tất cả",
-                                    tint = if (allChecked) C.Primary else C.TextSecondary,
-                                    modifier = Modifier.size(22.dp).clickable {
-                                        val v = !allChecked
-                                        items.forEach { if (!blocked(it)) checked[it.id] = v }
-                                    },
-                                )
+                                Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_checklist_all),
+                                        contentDescription = "Chọn tất cả",
+                                        tint = if (allChecked) C.Primary else C.TextSecondary,
+                                        modifier = Modifier.size(22.dp).clickable {
+                                            val v = !allChecked
+                                            items.forEach { if (!blocked(it)) checked[it.id] = v }
+                                        },
+                                    )
+                                }
                             } else {
                                 Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium)
                             }
@@ -696,10 +698,12 @@ private fun ItemRow(
                 }
                 if (canFulfill) {
                     Spacer(Modifier.width(10.dp))
-                    WhCheckbox(
-                        checked = checkedVal, enabled = !blocked, onCheckedChange = onCheck,
-                        checkedColor = C.Primary, borderColor = C.TextMuted,
-                    )
+                    Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                        WhCheckbox(
+                            checked = checkedVal, enabled = !blocked, onCheckedChange = onCheck,
+                            checkedColor = C.Primary, borderColor = C.TextMuted,
+                        )
+                    }
                 }
             }
         }
