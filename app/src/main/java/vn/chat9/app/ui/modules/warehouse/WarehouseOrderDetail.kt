@@ -343,7 +343,10 @@ fun WarehouseOrderDetail(
                                     )
                                 }
                             } else {
-                                Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium)
+                                Spacer(Modifier.width(6.dp))
+                                Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(56.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Spacer(Modifier.width(48.dp)) // placeholder cột đơn vị (không có nhãn)
                             }
                         }
                     }
@@ -681,7 +684,10 @@ private fun ItemRow(
                             },
                     )
                 } else {
-                    Text(trimZeros(item.qtyUnit), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text)
+                    // View mode: số lượng căn giữa cột 56dp khớp header "SL".
+                    Box(modifier = Modifier.width(56.dp), contentAlignment = Alignment.Center) {
+                        Text(trimZeros(item.qtyUnit), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text)
+                    }
                 }
                 Spacer(Modifier.width(6.dp))
                 // Cột tồn kho: căn giữa, cố định 68dp khớp header "Kho" (bỏ tiền tố "Kho" — header đã có).
@@ -694,7 +700,9 @@ private fun ItemRow(
                         )
                     }
                 } else {
-                    Text(item.unitName, fontSize = 13.sp, color = C.TextMuted.copy(alpha = 0.6f), maxLines = 1, softWrap = false)
+                    Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.CenterStart) {
+                        Text(item.unitName, fontSize = 13.sp, color = C.TextMuted.copy(alpha = 0.6f), maxLines = 1, softWrap = false)
+                    }
                 }
                 if (canFulfill) {
                     Spacer(Modifier.width(10.dp))
