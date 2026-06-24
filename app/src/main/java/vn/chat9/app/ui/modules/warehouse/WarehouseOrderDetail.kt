@@ -316,21 +316,33 @@ fun WarehouseOrderDetail(
             // Mặt hàng (top=0 → khoảng cách với card thông tin giảm 50%: 24→12dp)
             Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 12.dp)) {
                 Column(Modifier.padding(12.dp)) {
+                    // Header cột — căn theo cột dữ liệu dưới (ảnh / tên / sl / kho / tích chọn).
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().then(if (canFulfill) Modifier.height(23.dp) else Modifier),
                     ) {
-                        Text("Mặt hàng (${items.size})", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                        if (canFulfill) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_checklist_all),
-                                contentDescription = "Chọn tất cả",
-                                tint = if (allChecked) C.Primary else C.TextSecondary,
-                                modifier = Modifier.size(22.dp).clickable {
-                                    val v = !allChecked
-                                    items.forEach { if (!blocked(it)) checked[it.id] = v }
-                                },
-                            )
+                        Text("Ảnh", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(55.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Text("Mặt hàng", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            if (canFulfill) {
+                                Spacer(Modifier.width(6.dp))
+                                Text("sl", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(56.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Kho", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(68.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_checklist_all),
+                                    contentDescription = "Chọn tất cả",
+                                    tint = if (allChecked) C.Primary else C.TextSecondary,
+                                    modifier = Modifier.size(22.dp).clickable {
+                                        val v = !allChecked
+                                        items.forEach { if (!blocked(it)) checked[it.id] = v }
+                                    },
+                                )
+                            } else {
+                                Text("sl", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium)
+                            }
                         }
                     }
                     items.forEach { it2 ->
@@ -670,11 +682,16 @@ private fun ItemRow(
                     Text(trimZeros(item.qtyUnit), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = C.Text)
                 }
                 Spacer(Modifier.width(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (canFulfill) item.stockUnit?.let {
-                        Text("Kho ${trimZeros(it)}", fontSize = 13.sp, color = (if (blocked) C.Danger else C.TextMuted).copy(alpha = 0.6f), maxLines = 1, softWrap = false)
-                        Spacer(Modifier.width(3.dp))
+                // Cột tồn kho: căn giữa, cố định 68dp khớp header "Kho" (bỏ tiền tố "Kho" — header đã có).
+                if (canFulfill) {
+                    Box(modifier = Modifier.width(68.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            item.stockUnit?.let { "${trimZeros(it)} ${item.unitName}" } ?: item.unitName,
+                            fontSize = 13.sp, color = (if (blocked) C.Danger else C.TextMuted).copy(alpha = 0.6f),
+                            maxLines = 1, softWrap = false,
+                        )
                     }
+                } else {
                     Text(item.unitName, fontSize = 13.sp, color = C.TextMuted.copy(alpha = 0.6f), maxLines = 1, softWrap = false)
                 }
                 if (canFulfill) {
