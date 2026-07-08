@@ -539,9 +539,10 @@ fun WarehouseOrderDetail(
     }
 }
 
-/** Xem ảnh phóng to: ảnh rộng 100% (FitWidth), chụm 2 ngón zoom + kéo, nút X góc phải trên. */
+/** Xem ảnh phóng to: ảnh rộng 100% (FitWidth), chụm 2 ngón zoom + kéo, nút X góc phải trên.
+ *  caption (tuỳ chọn): "tên đối tác - ngày" hiện căn giữa, dưới ảnh, ngoài vùng ảnh. */
 @Composable
-private fun PhotoZoomViewer(url: String, onClose: () -> Unit) {
+internal fun PhotoZoomViewer(url: String, onClose: () -> Unit, caption: String? = null) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color(0xD9000000))) {
             var scale by remember { mutableStateOf(1f) }
@@ -566,6 +567,17 @@ private fun PhotoZoomViewer(url: String, onClose: () -> Unit) {
                     .background(Color(0x33FFFFFF)).clickable { onClose() },
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Default.Close, "Đóng", tint = Color.White, modifier = Modifier.size(22.dp)) }
+            if (!caption.isNullOrBlank()) {
+                Text(
+                    caption,
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp)
+                        .clip(RoundedCornerShape(9999.dp)).background(Color(0x73000000))
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }

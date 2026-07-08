@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.PointOfSale
 import vn.chat9.app.data.repository.PermissionStore
 import vn.chat9.app.ui.explore.ModulePlaceholder
+import vn.chat9.app.ui.modules.accounting.AccountingScreen
 import vn.chat9.app.ui.modules.sale.SaleScreen
 import vn.chat9.app.ui.modules.warehouse.WarehouseScreen
 
@@ -45,7 +46,7 @@ object ModuleRegistry {
             subtitle = "Công nợ, hoá đơn, báo cáo",
             icon = Icons.Default.Calculate,
             requiredPermissions = listOf("debt.read", "vat_invoice.read", "report.read"),
-            entry = { onBack -> ModulePlaceholder("Kế toán", onBack) },
+            entry = { onBack -> AccountingScreen(onBack) },
         ),
         AdminModule(
             id = "admin",

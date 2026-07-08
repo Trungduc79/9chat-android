@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -82,6 +83,7 @@ import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.VariantUnitDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 import vn.chat9.app.ui.explore.AdminColors
+import vn.chat9.app.ui.modules.warehouse.PhotoZoomViewer
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -91,7 +93,7 @@ private fun parseMoney(s: String): Double = s.filter { it.isDigit() }.toDoubleOr
 private fun trimZeros(n: Double): String = if (n == Math.floor(n)) n.toLong().toString() else n.toString()
 
 /** Tên variant ưu tiên cột name; fallback attributes joined; fallback product. */
-private fun variantDisplay(v: VariantSearchDto, productName: String): String {
+internal fun variantDisplay(v: VariantSearchDto, productName: String): String {
     if (!v.name.isNullOrBlank()) return v.name
     val attr = v.attributes?.entries?.filter { it.value.isNotBlank() }?.joinToString(", ") { it.value }
     return if (!attr.isNullOrBlank()) attr else productName
@@ -106,7 +108,7 @@ private fun variantDisplay(v: VariantSearchDto, productName: String): String {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
+fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, onDone: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -123,9 +125,18 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
     var orderDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var datePickerOpen by remember { mutableStateOf(false) }
 
-    // Edit/view existing order: load khi có orderId. canEdit = tạo mới HOẶC draft.
+    // Edit/view existing order: load khi có orderId. canEdit = tạo mới HOẶC draft; allowEditAnyStatus
+    // (dialog công nợ) → cho sửa mọi tình trạng trừ đã huỷ.
     var existingStatus by remember { mutableStateOf<String?>(null) }
-    val canEdit = orderId == null || existingStatus == "draft"
+    val canEdit = orderId == null || existingStatus == "draft" ||
+        (allowEditAnyStatus && existingStatus != null && existingStatus != "cancelled")
+    // Sửa đơn ĐÃ non-draft → lưu qua per-item endpoint (giữ nguyên tình trạng).
+    val editingNonDraft = allowEditAnyStatus && existingStatus != null && existingStatus != "draft" && existingStatus != "cancelled"
+    // Ảnh đính kèm đơn (ảnh xác nhận giao/nhận) + snapshot item để diff khi sửa non-draft.
+    var photos by remember { mutableStateOf<List<String>>(emptyList()) }
+    var viewerUrl by remember { mutableStateOf<String?>(null) }   // ảnh đang preview (zoom/pan)
+    var deliveryDate by remember { mutableStateOf<String?>(null) }   // ngày giao (completed_at) — caption preview
+    val originalItems = remember { mutableStateListOf<OrigItemSnap>() }
 
     // ===== Keyboard handling: tap ngoài tắt bàn phím + scroll input vào giữa view
     // còn lại (= screen - keyboard). Công thức port từ WarehouseOrderDetail. =====
@@ -159,6 +170,7 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
         try {
             val o = container.vapi.getOrder(oid).data ?: return@LaunchedEffect
             existingStatus = o.status
+            deliveryDate = o.completedAt
             o.party?.let { selectedCustomer = CustomerDto(id = it.id, name = it.name ?: "", phone = it.phone) }
             o.warehouseId?.let { selectedWarehouseId = it }
             o.orderedAt?.let { runCatching { orderDateMs = java.time.Instant.parse(it).toEpochMilli() } }
@@ -167,6 +179,7 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
             shipCompany = o.actualShippingFee?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
             codAmount = o.codCollected?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
             items.clear()
+            originalItems.clear()
             o.items.forEach { it2 ->
                 val vName = it2.snapshot.variantName?.takeIf { s -> s.isNotBlank() } ?: it2.variantLabel.ifBlank { it2.productName }
                 items.add(OrderItemDraft(
@@ -179,8 +192,12 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                     imageUrl = it2.imageUrl,
                     // Chỉ giữ 1 unit đã chọn (order item không kèm units list) → không đổi unit khi edit.
                     units = listOf(VariantUnitDto(id = it2.unitId, name = it2.unitName, conversionFactor = 1.0, price = it2.unitPrice, isBase = false, isDefaultSale = false)),
+                    id = it2.id,
                 ))
+                originalItems.add(OrigItemSnap(it2.id, it2.variantId, it2.unitId, it2.qtyUnit, it2.unitPrice))
             }
+            // Ảnh đính kèm đơn (ảnh xác nhận giao/nhận NV kho chụp).
+            photos = try { container.vapi.listAttachments("order", oid, "photo", 50).data?.mapNotNull { it.url } ?: emptyList() } catch (_: Exception) { emptyList() }
         } catch (_: Exception) {}
     }
 
@@ -368,17 +385,41 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
                 )
             }
 
+            // ===== Ảnh đính kèm đơn (ảnh xác nhận giao/nhận) — chỉ hiện khi có =====
+            if (photos.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("Ảnh đính kèm (${photos.size})", color = AdminColors.TextMuted, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    photos.forEach { url ->
+                        AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)).clickable { viewerUrl = url })
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
 
-            // ===== 2 nút (chỉ canEdit: tạo mới hoặc đơn draft) =====
-            if (canEdit) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // ===== Nút lưu =====
+            // Sửa đơn ĐÃ non-draft (dialog công nợ) → 1 nút "Lưu" (giữ tình trạng, per-item).
+            // Tạo mới / draft → Lưu nháp | Xác nhận.
+            if (canEdit && editingNonDraft) {
+                Button(
+                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone) { saving = it } },
+                    enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("Lưu")
+                }
+            } else if (canEdit) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", false, emptyList(), context, onDone) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     modifier = Modifier.weight(1f),
                 ) { Text("Lưu nháp") }
                 Button(
-                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", false, emptyList(), context, onDone) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
                     modifier = Modifier.weight(1f),
@@ -429,10 +470,23 @@ fun SaleOrderForm(orderId: Long? = null, onDone: () -> Unit) {
             ) { DatePicker(state = dpState) }
         }
     }
+    // Preview ảnh đính kèm — zoom/pan (tái dùng viewer màn kho).
+    viewerUrl?.let {
+        // Caption preview: tên KH + ngày giao (căn giữa dưới, ngoài vùng ảnh).
+        val capName = selectedCustomer?.name
+        val capDate = deliveryDate?.take(10)?.let { d ->
+            runCatching {
+                java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale("vi"))
+                    .format(java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(d)!!)
+            }.getOrNull()
+        }
+        val caption = listOfNotNull(capName, capDate).joinToString("  ·  ").ifBlank { null }
+        PhotoZoomViewer(it, onClose = { viewerUrl = null }, caption = caption)
+    }
     }   // đóng Box wrapper (form + pickers z-stack overlay)
 }
 
-/** Local draft mỗi dòng item. */
+/** Local draft mỗi dòng item. id = order_item id (đơn đã lưu) để diff per-item khi sửa non-draft. */
 data class OrderItemDraft(
     val variantId: Long,
     val unitId: Long,
@@ -442,10 +496,14 @@ data class OrderItemDraft(
     val price: Double,
     val imageUrl: String?,
     val units: List<VariantUnitDto>,
+    val id: Long? = null,
 )
 
+/** Snapshot item lúc mở đơn non-draft → so sánh add/update/delete từng item khi lưu. */
+data class OrigItemSnap(val id: Long, val variantId: Long, val unitId: Long, val qty: Double, val price: Double)
+
 @Composable
-private fun Card(title: String, vPadding: Dp = 12.dp, content: @Composable ColumnScope.() -> Unit) {
+internal fun Card(title: String, vPadding: Dp = 12.dp, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 12.dp, vertical = vPadding)) {
         if (title.isNotEmpty()) {
             Text(title, color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
@@ -560,7 +618,7 @@ private fun ItemRow(
 }
 
 @Composable
-private fun UnitDropdown(units: List<VariantUnitDto>, selectedId: Long, enabled: Boolean = true, onSelect: (VariantUnitDto) -> Unit) {
+internal fun UnitDropdown(units: List<VariantUnitDto>, selectedId: Long, enabled: Boolean = true, onSelect: (VariantUnitDto) -> Unit) {
     var open by remember { mutableStateOf(false) }
     val cur = units.firstOrNull { it.id == selectedId }
     Box {
@@ -619,7 +677,7 @@ private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scop
 
 // ===== Customer picker =====
 @Composable
-private fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
+internal fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val userId = container.tokenManager.user?.id?.toLong() ?: return
@@ -658,7 +716,7 @@ private fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
 
 // ===== Variant picker (search /v1/variants) =====
 @Composable
-private fun VariantPicker(
+internal fun VariantPicker(
     warehouseId: Long?,
     query: String,
     onQueryChange: (String) -> Unit,
@@ -810,6 +868,8 @@ private fun submit(
     shipCompany: Double,
     cod: Double,
     status: String,
+    nonDraft: Boolean,
+    originalItems: List<OrigItemSnap>,
     context: android.content.Context,
     onDone: () -> Unit,
     setSaving: (Boolean) -> Unit,
@@ -829,9 +889,28 @@ private fun submit(
                 notes = notes.ifBlank { null },
                 createdByUserId = userId,
             )
-            // Có orderId → cập nhật đơn (PUT); không → tạo mới (POST).
-            if (orderId != null) container.vapi.updateOrder(orderId, req) else container.vapi.createOrder(req)
-            Toast.makeText(context, if (status == "draft") "Đã lưu nháp" else if (orderId != null) "Đã cập nhật" else "Đã tạo đơn", Toast.LENGTH_SHORT).show()
+            if (nonDraft && orderId != null) {
+                // Đơn non-draft: bulk update BỎ QUA items → field cấp đơn qua updateOrder (giữ status),
+                // mặt hàng qua per-item endpoint (add/update/delete) theo diff với snapshot.
+                container.vapi.updateOrder(orderId, req)
+                val curIds = items.mapNotNull { it.id }.toSet()
+                originalItems.filter { it.id !in curIds }.forEach { container.vapi.deleteOrderItem(orderId, it.id) }
+                items.forEach { d ->
+                    val payload = CreateOrderItem(d.variantId, d.unitId, d.qty, d.price)
+                    val orig = originalItems.firstOrNull { it.id == d.id }
+                    if (d.id != null && orig != null) {
+                        if (orig.qty != d.qty || orig.price != d.price || orig.unitId != d.unitId || orig.variantId != d.variantId)
+                            container.vapi.updateOrderItem(orderId, d.id, payload)
+                    } else if (d.id == null) {
+                        container.vapi.addOrderItem(orderId, payload)
+                    }
+                }
+                Toast.makeText(context, "Đã lưu đơn", Toast.LENGTH_SHORT).show()
+            } else {
+                // Có orderId → cập nhật đơn (PUT); không → tạo mới (POST).
+                if (orderId != null) container.vapi.updateOrder(orderId, req) else container.vapi.createOrder(req)
+                Toast.makeText(context, if (status == "draft") "Đã lưu nháp" else if (orderId != null) "Đã cập nhật" else "Đã tạo đơn", Toast.LENGTH_SHORT).show()
+            }
             onDone()
         } catch (e: Exception) {
             Toast.makeText(context, "Lưu đơn thất bại: ${e.message}", Toast.LENGTH_LONG).show()
@@ -854,7 +933,7 @@ data class FocusCenterCtx(
  * delay 280ms chờ IME mở xong + layout resize. positionInWindow đọc y tuyệt đối.
  */
 @Composable
-private fun Modifier.centerOnFocus(ctx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, key: Any): Modifier {
+internal fun Modifier.centerOnFocus(ctx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, key: Any): Modifier {
     var y by remember(key) { mutableStateOf(0f) }
     var h by remember(key) { mutableStateOf(0f) }
     return this

@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.modules.warehouse
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,6 +55,7 @@ import vn.chat9.app.ui.explore.DPad
 import vn.chat9.app.ui.explore.DpadDir
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.google.gson.Gson
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.CategoryDto
 import vn.chat9.app.data.vapi.dto.ProductSearchDto
@@ -91,11 +93,30 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
     var categories by remember { mutableStateOf<List<CategoryDto>>(emptyList()) }
     var products by remember { mutableStateOf<List<ProductSearchDto>>(emptyList()) }
     val counts = remember { mutableStateMapOf<Long, String>() }   // variantId → text số đếm
+
+    // Cache số đếm/tích kiểm theo kho — giữ tới khi LƯU kiểm kho hoặc quá 24h (giống web).
+    val gson = remember { Gson() }
+    val prefs = remember(context) { context.getSharedPreferences("stocktake_cache", Context.MODE_PRIVATE) }
+    fun loadCounts(whId: Long?) {
+        counts.clear()
+        val raw = prefs.getString(stocktakeKey(whId), null) ?: return
+        val entry = runCatching { gson.fromJson(raw, StocktakeCacheEntry::class.java) }.getOrNull()
+        if (entry != null && System.currentTimeMillis() - entry.ts < STOCKTAKE_TTL) {
+            counts.putAll(entry.counts)
+        } else {
+            prefs.edit().remove(stocktakeKey(whId)).apply() // quá hạn → dọn
+        }
+    }
+    fun persistCounts(whId: Long?) {
+        if (counts.isEmpty()) prefs.edit().remove(stocktakeKey(whId)).apply()
+        else prefs.edit().putString(stocktakeKey(whId), gson.toJson(StocktakeCacheEntry(System.currentTimeMillis(), counts.toMap()))).apply()
+    }
     val listState = rememberLazyListState()
     var dpadX by remember { mutableStateOf(0f) }                  // dịch ngang nút D-pad
     var dpadY by remember { mutableStateOf(0f) }                  // dịch dọc nút D-pad (kéo lên)
     var focusedFilter by remember { mutableStateOf(-1) }          // D-pad focus: -1 none, 0 dòng SP, 1 SP
     var saving by remember { mutableStateOf(false) }
+    var historyVariant by remember { mutableStateOf<VariantSearchDto?>(null) }   // dialog lịch sử
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0      // ẩn D-pad khi bàn phím hiện
 
@@ -106,7 +127,7 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
             variants = (container.vapi.listAllVariants(
                 search = query.ifBlank { null }, productId = productId, categoryId = categoryId,
                 warehouseId = selectedWarehouseId, perPage = 50,
-            ).data ?: emptyList()).sortedByDescending { variantStockInUnit(it) }   // tồn cao → thấp
+            ).data ?: emptyList()).let { arrangeVariants(it, query.isNotBlank()) }   // nhóm theo SP, ẩn SL=0 (trừ khi search)
         } catch (_: Exception) {}
         loading = false
     }
@@ -148,6 +169,7 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
                 )
                 Toast.makeText(context, "Đã lưu kiểm kho: ${res.data?.count ?: 0} mặt hàng", Toast.LENGTH_SHORT).show()
                 counts.clear()
+                persistCounts(selectedWarehouseId) // lưu xong → xoá cache
                 load()
             } catch (e: Exception) {
                 Toast.makeText(context, "Lưu thất bại: ${e.message}", Toast.LENGTH_LONG).show()
@@ -171,6 +193,8 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
     // Reload variant khi filter đổi.
     LaunchedEffect(categoryId, productId, selectedWarehouseId) { load() }
     LaunchedEffect(query) { delay(280); load() }
+    // Khôi phục cache số đếm khi mở / đổi kho.
+    LaunchedEffect(selectedWarehouseId) { loadCounts(selectedWarehouseId) }
 
     val currentWh = warehouses.firstOrNull { it.id == selectedWarehouseId }
     val selectedCat = categories.firstOrNull { it.id == categoryId }
@@ -245,7 +269,13 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
             else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
             else LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(variants, key = { _, it -> it.id }) { idx, v ->
-                    StocktakeRow(v, counts[v.id] ?: "", onCountedChange = { counts[v.id] = it }, onFocus = { centerOnFocus(idx) })
+                    // Hết variant 1 SP → gạch ngang phân định (dài 50% căn giữa, trắng 50%, 1px).
+                    if (idx > 0 && variants[idx - 1].product?.id != v.product?.id) {
+                        Box(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(AdminColors.White.copy(alpha = 0.5f)))
+                        }
+                    }
+                    StocktakeRow(v, counts[v.id] ?: "", onCountedChange = { counts[v.id] = it; persistCounts(selectedWarehouseId) }, onFocus = { centerOnFocus(idx) }, onOpenHistory = { historyVariant = v })
                 }
             }
         }
@@ -284,8 +314,34 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
           },
           modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 64.dp).offset { IntOffset(dpadX.roundToInt(), dpadY.roundToInt()) },
       )
+      // Dialog lịch sử biến thể (mở khi click ảnh/tên).
+      historyVariant?.let { hv ->
+          VariantHistoryDialog(variant = hv, onDismiss = { historyVariant = null })
+      }
     }
 }
+
+/**
+ * Sắp xếp: gom theo sản phẩm, sản phẩm có TỔNG tồn (base) lớn hơn lên trước; trong mỗi SP
+ * variant tồn lớn hơn lên trước. Ẩn variant SL=0 (trừ khi đang search → keepZero).
+ * So bằng stock_base cho nhất quán đơn vị.
+ */
+private fun arrangeVariants(list: List<VariantSearchDto>, keepZero: Boolean): List<VariantSearchDto> {
+    val totalByProduct = list.groupBy { it.product?.id ?: 0L }
+        .mapValues { (_, vs) -> vs.sumOf { it.stockBase ?: 0.0 } }
+    return list
+        .filter { keepZero || (it.stockBase ?: 0.0) > 0.0 }
+        .sortedWith(
+            compareByDescending<VariantSearchDto> { totalByProduct[it.product?.id ?: 0L] ?: 0.0 }
+                .thenBy { it.product?.id ?: 0L }
+                .thenByDescending { it.stockBase ?: 0.0 },
+        )
+}
+
+// ===== Cache số đếm kiểm kho (per kho, TTL 24h) =====
+private const val STOCKTAKE_TTL = 24L * 60 * 60 * 1000
+private fun stocktakeKey(whId: Long?) = "counts_${whId ?: 0L}"
+private data class StocktakeCacheEntry(val ts: Long, val counts: Map<Long, String>)
 
 /** Tồn theo đơn vị mặc định (= stock_base / hệ số quy đổi) — dùng để hiển thị + sắp xếp. */
 private fun variantStockInUnit(v: VariantSearchDto): Double {
@@ -341,7 +397,7 @@ private fun FilterDropdown(
 }
 
 @Composable
-private fun StocktakeRow(v: VariantSearchDto, counted: String, onCountedChange: (String) -> Unit, onFocus: () -> Unit) {
+private fun StocktakeRow(v: VariantSearchDto, counted: String, onCountedChange: (String) -> Unit, onFocus: () -> Unit, onOpenHistory: () -> Unit) {
     val defUnit = v.units.firstOrNull { it.isDefaultSale } ?: v.units.firstOrNull { it.isBase } ?: v.units.firstOrNull()
     val stockInUnit = variantStockInUnit(v)
     val unit = defUnit?.name ?: ""
@@ -358,12 +414,12 @@ private fun StocktakeRow(v: VariantSearchDto, counted: String, onCountedChange: 
         // Khớp (đã tích) → tên xám, ảnh mờ, "Khớp" vẫn xanh nổi.
         val thumbAlpha = if (checked) 0.45f else 1f
         val img = v.image ?: v.product?.primaryImage?.url
-        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).alpha(thumbAlpha))
-        else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)).alpha(thumbAlpha), contentAlignment = Alignment.Center) {
+        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpenHistory() }.alpha(thumbAlpha))
+        else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)).clickable { onOpenHistory() }.alpha(thumbAlpha), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f).clickable { onOpenHistory() }) {
             Text(name, color = if (checked) AdminColors.TextMuted else AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
             Spacer(Modifier.height(2.dp))
             // Tồn: {sl} {đv}  |  Lệch {sl} {đv} (hiện khi đã nhập đếm)

@@ -13,6 +13,7 @@ data class OrderDto(
     val code: String = "",
     val party: PartyDto? = null,               // KH (sale) hoặc NCC (purchase)
     @SerializedName("ordered_at") val orderedAt: String? = null,
+    @SerializedName("created_at") val createdAt: String? = null,
     @SerializedName("confirmed_at") val confirmedAt: String? = null,
     @SerializedName("completed_at") val completedAt: String? = null,
     @SerializedName("updated_at") val updatedAt: String? = null,
@@ -27,6 +28,8 @@ data class OrderDto(
     // hoặc đơn bán bị chặn fulfill trực tiếp — phải đi qua đơn nhập).
     @SerializedName("linked_order_id") val linkedOrderId: Long? = null,
     @SerializedName("linked_order") val linkedOrder: LinkedOrderDto? = null,
+    @SerializedName("vat_output_invoice_id") val vatOutputInvoiceId: Long? = null, // HĐ VAT liên kết (null = đơn nháp chưa xuất)
+    @SerializedName("vat_include_phone") val vatIncludePhone: Boolean = false,      // SĐT khách hiển thị trên HĐ
     val meta: MetaDto? = null,
     val items: List<OrderItemDto> = emptyList(),
 ) {
@@ -68,6 +71,7 @@ data class OrderItemDto(
     @SerializedName("unit_price") val unitPrice: Double = 0.0,
     @SerializedName("stock_unit") val stockUnit: Double? = null,   // tồn quy đổi (BE @show)
     @SerializedName("image_url") val imageUrl: String? = null,     // thumb variant (BE resolve)
+    val variant: OrderItemVariantDto? = null,                      // eager-load: units cho đổi đơn vị
     val snapshot: SnapshotDto = SnapshotDto(),
 ) {
     val productName: String get() = snapshot.productName ?: "SP #$variantId"
@@ -85,6 +89,12 @@ data class OrderItemDto(
             ?.map { it.key to it.value } ?: emptyList()
 }
 
+/** Variant rút gọn trong order item — chỉ cần units cho dropdown đổi đơn vị. */
+data class OrderItemVariantDto(
+    val id: Long = 0,
+    val units: List<VariantUnitDto> = emptyList(),
+)
+
 data class SnapshotDto(
     @SerializedName("product_name") val productName: String? = null,
     @SerializedName("variant_name") val variantName: String? = null,
@@ -92,7 +102,10 @@ data class SnapshotDto(
     @SerializedName("unit_name") val unitName: String? = null,
 )
 
-data class MetaDto(val fulfillment: FulfillmentDto? = null)
+data class MetaDto(
+    val fulfillment: FulfillmentDto? = null,
+    @SerializedName("vat_price_type") val vatPriceType: String? = null, // inclusive|exclusive (hình thức giá HĐ đã lưu)
+)
 
 data class FulfillmentDto(
     @SerializedName("by_user_id") val byUserId: Long? = null,
@@ -144,11 +157,167 @@ data class AttachmentDto(
 // ----- cashers (quỹ thu tiền) -----
 data class CasherDto(
     val id: Long = 0,
+    val code: String = "",
     val name: String = "",
-    val type: String = "",                     // petty_cash|bank_account|main_cash|...
+    val type: String = "",                     // petty_cash|bank_account|main|safe|mobile
+    @SerializedName("current_balance") val currentBalance: Double = 0.0,   // số dư hiện tại (auto-sync)
     @SerializedName("is_active") val isActive: Boolean = true,
     @SerializedName("is_default") val isDefault: Boolean = false,
     @SerializedName("warehouse_id") val warehouseId: Long? = null,
+)
+
+// ----- Kế toán: dòng tiền (money-transactions) + chi phí (expense-categories) -----
+data class MoneyTransactionDto(
+    val id: Long = 0,
+    val type: String = "",                     // pending|cust_cash_in|cust_bank_in|...
+    val direction: String = "",                // in|out
+    val channel: String = "",                  // bank|cash|internal
+    @SerializedName("party_type") val partyType: String? = null,
+    @SerializedName("party_id") val partyId: Long? = null,
+    @SerializedName("casher_id") val casherId: Long? = null,
+    @SerializedName("bank_name") val bankName: String? = null,
+    @SerializedName("bank_account") val bankAccount: String? = null,
+    @SerializedName("purpose_detail") val purposeDetail: String? = null,
+    val amount: Double = 0.0,
+    val code: String = "",
+    val date: String = "",
+    val reference: String? = null,
+    val description: String? = null,
+    @SerializedName("debt_calc") val debtCalc: String? = null,
+    @SerializedName("money_calc") val moneyCalc: String? = null,
+    @SerializedName("auto_matched") val autoMatched: Boolean = false,
+)
+
+data class ExpenseCategoryDto(
+    val id: Long = 0,
+    val name: String = "",
+)
+
+/** Tạo GD tiền mặt (thu KH type=cust_cash_in; chi phí type=pending+direction=out+channel=cash). */
+data class CreateMoneyTxRequest(
+    val type: String,
+    val direction: String? = null,
+    val channel: String? = null,
+    @SerializedName("party_type") val partyType: String? = null,
+    @SerializedName("party_id") val partyId: Long? = null,
+    @SerializedName("casher_id") val casherId: Long? = null,
+    val amount: Double,
+    val date: String,
+    val description: String? = null,
+)
+
+/** Biến GD pending tiền ra → chi phí (tạo Expense + duyệt + mark-paid). */
+data class PayExpenseRequest(
+    @SerializedName("category_id") val categoryId: Long,
+    val description: String? = null,
+)
+
+// ----- Kế toán: Công nợ (debts) -----
+data class DebtOverviewRowDto(
+    @SerializedName("party_type") val partyType: String = "",
+    @SerializedName("party_id") val partyId: Long = 0,
+    val name: String = "",
+    val code: String? = null,
+    val posted: Double = 0.0,
+    val pending: Double = 0.0,
+    @SerializedName("pending_count") val pendingCount: Int = 0,
+    val balance: Double = 0.0,
+)
+
+data class DebtOverviewDto(
+    @SerializedName("party_type") val partyType: String = "",
+    val count: Int = 0,
+    @SerializedName("total_positive") val totalPositive: Double = 0.0,
+    @SerializedName("total_negative") val totalNegative: Double = 0.0,
+    val rows: List<DebtOverviewRowDto> = emptyList(),
+)
+
+data class DebtPeriodDto(val from: String = "", val to: String = "")
+
+data class DebtStatementRowDto(
+    val id: Long = 0,
+    @SerializedName("doc_no") val docNo: String? = null,
+    val date: String = "",
+    val origin: String? = null,
+    @SerializedName("origin_table") val originTable: String? = null,
+    @SerializedName("origin_id") val originId: Long? = null,
+    val description: String? = null,
+    val qty: Double? = null,
+    @SerializedName("unit_name") val unitName: String? = null,
+    @SerializedName("unit_price") val unitPrice: Double? = null,
+    val debit: Double = 0.0,
+    val credit: Double = 0.0,
+)
+
+data class DebtStatementDto(
+    @SerializedName("party_type") val partyType: String = "",
+    @SerializedName("party_id") val partyId: Long = 0,
+    val period: DebtPeriodDto = DebtPeriodDto(),
+    @SerializedName("opening_balance") val openingBalance: Double = 0.0,
+    @SerializedName("total_debit") val totalDebit: Double = 0.0,
+    @SerializedName("total_credit") val totalCredit: Double = 0.0,
+    @SerializedName("closing_balance") val closingBalance: Double = 0.0,
+    val rows: List<DebtStatementRowDto> = emptyList(),
+)
+
+data class DebtPendingRowDto(
+    val description: String? = null,
+    @SerializedName("born_debt") val bornDebt: Double = 0.0,
+    @SerializedName("born_credit") val bornCredit: Double = 0.0,
+    @SerializedName("unit_name") val unitName: String? = null,
+    val qty: Double? = null,
+    @SerializedName("unit_price") val unitPrice: Double? = null,
+)
+
+data class DebtPendingSourceDto(
+    val type: String = "",
+    @SerializedName("origin_table") val originTable: String = "",
+    @SerializedName("origin_id") val originId: Long = 0,
+    @SerializedName("origin_key") val originKey: String = "",
+    @SerializedName("doc_no") val docNo: String? = null,
+    @SerializedName("accounting_date") val accountingDate: String = "",
+    @SerializedName("is_backdated") val isBackdated: Boolean = false,
+    val rows: List<DebtPendingRowDto> = emptyList(),
+)
+
+data class DebtPendingAdvanceDto(
+    val id: Long = 0,
+    val code: String = "",
+    val amount: Double = 0.0,
+    val remaining: Double = 0.0,
+    val description: String? = null,
+    @SerializedName("order_code") val orderCode: String? = null,
+)
+
+data class DebtPendingDto(
+    @SerializedName("pending_count") val pendingCount: Int = 0,
+    @SerializedName("total_debit") val totalDebit: Double = 0.0,
+    @SerializedName("total_credit") val totalCredit: Double = 0.0,
+    val sources: List<DebtPendingSourceDto> = emptyList(),
+    @SerializedName("pending_advances") val pendingAdvances: List<DebtPendingAdvanceDto> = emptyList(),
+)
+
+data class DebtBackdatedSourceDto(
+    @SerializedName("origin_key") val originKey: String = "",
+    @SerializedName("accounting_date") val accountingDate: String = "",
+    @SerializedName("source_type") val sourceType: String = "",
+)
+
+data class DebtBackdatedPreviewDto(
+    @SerializedName("last_accounting_date_in_ledger") val lastAccountingDate: String? = null,
+    @SerializedName("backdated_count") val backdatedCount: Int = 0,
+    val sources: List<DebtBackdatedSourceDto> = emptyList(),
+)
+
+data class DebtPostRequest(
+    @SerializedName("party_type") val partyType: String,
+    @SerializedName("party_id") val partyId: Long,
+    @SerializedName("backdate_reasons") val backdateReasons: Map<String, String> = emptyMap(),
+)
+
+data class DebtPostResultDto(
+    @SerializedName("rows_created") val rowsCreated: Int = 0,
+    @SerializedName("current_balance") val currentBalance: Double = 0.0,
 )
 
 // ----- warehouses -----
@@ -235,6 +404,7 @@ data class VariantUnitDto(
     val price: Double? = null,
     @SerializedName("is_base") val isBase: Boolean = false,
     @SerializedName("is_default_sale") val isDefaultSale: Boolean = false,
+    @SerializedName("is_default_invoice") val isDefaultInvoice: Boolean = false,
 )
 
 /** Product rút gọn eager-load trong variant. */
@@ -245,6 +415,23 @@ data class ProductMiniDto(
 )
 
 data class PrimaryImageDto(val url: String? = null)
+
+/**
+ * Dòng lịch sử kho (product_history). actor_name/actor_type do BE enrich:
+ * đơn nhập/bán → đối tác (NCC/khách), kiểm kho → nhân viên.
+ */
+data class ProductHistoryDto(
+    val id: Long = 0,
+    val type: Int = 0,
+    @SerializedName("type_label") val typeLabel: String = "",
+    @SerializedName("qty_change") val qtyChange: Double? = null,
+    @SerializedName("stock_after") val stockAfter: Double? = null,
+    @SerializedName("created_at") val createdAt: String? = null,
+    @SerializedName("actor_name") val actorName: String? = null,
+    @SerializedName("actor_type") val actorType: String? = null,
+    @SerializedName("ref_type") val refType: String? = null,   // order|order_edit|orders → có thể có ảnh đơn
+    @SerializedName("ref_id") val refId: Long? = null,
+)
 
 /** SP hay mua của KH (chip gợi ý). */
 data class RecentProductDto(
@@ -261,8 +448,109 @@ data class LastPriceDto(
 )
 
 /** Payload tạo đơn từ app sale. Status quyết draft hay confirmed. */
+/** Đơn vị mua (vat_info) của khách — cho HĐ VAT. */
+data class VatInfoDto(
+    val id: Long = 0,
+    @SerializedName("tax_code") val taxCode: String? = null,
+    @SerializedName("legal_name") val legalName: String? = null,
+    @SerializedName("short_name") val shortName: String? = null,
+)
+
+data class VatBuyerNameReq(@SerializedName("buyer_name") val buyerName: String?)
+
+/** HĐ VAT đầu ra (vat_output_invoices) — nguồn list tab VAT (mirror SaleVatListView). */
+data class VatOutputInvoiceDto(
+    val id: Long = 0,
+    val number: String? = null,                                       // số HĐ (đã phát hành)
+    val series: String? = null,
+    @SerializedName("template_code") val templateCode: String? = null, // ký hiệu mẫu
+    val subtotal: Double = 0.0,                                        // tiền hàng chưa thuế
+    @SerializedName("vat_amount") val vatAmount: Double = 0.0,         // tổng VAT
+    val total: Double = 0.0,
+    val items: List<VatOutputItemDto> = emptyList(),                  // dòng HĐ → gộp VAT theo suất
+    @SerializedName("issue_date") val issueDate: String? = null,
+    @SerializedName("buyer_name") val buyerName: String? = null,      // tên đơn vị mua ghi trên HĐ
+    @SerializedName("seller_tax_code") val sellerTaxCode: String? = null, // MST bên bán → tra cứu EI
+    @SerializedName("cqt_code") val cqtCode: String? = null,          // mã CQT (đã ký)
+    @SerializedName("cqt_status") val cqtStatus: Int? = null,
+    @SerializedName("cqt_status_label") val cqtStatusLabel: String? = null,
+    @SerializedName("easyinvoice_lookup_code") val eiLookupCode: String? = null,
+    @SerializedName("order_id") val orderId: Long? = null,
+    @SerializedName("vat_info_id") val vatInfoId: Long? = null,       // đơn vị mua đã dùng xuất HĐ
+    @SerializedName("created_at") val createdAt: String? = null,      // thời gian tạo HĐ nháp EI
+    val order: OrderDto? = null,                                      // đơn gắn HĐ (lấy tên KH)
+) {
+    /** Đã phát hành = có mã CQT hoặc cqt_status ∈ {5,6,7}. */
+    val signed: Boolean get() = !cqtCode.isNullOrBlank() || cqtStatus in listOf(5, 6, 7)
+    /** Tên KH của đơn (khác tên đơn vị mua). */
+    val customerName: String get() = order?.party?.name?.takeIf { it.isNotBlank() } ?: "—"
+}
+
+/** Dòng HĐ VAT đầu ra — dùng để gộp VAT theo thuế suất (vat_breakdown BE để null). */
+data class VatOutputItemDto(
+    @SerializedName("vat_rate") val vatRate: Double = 0.0,
+    @SerializedName("vat_amount") val vatAmount: Double = 0.0,
+    val subtotal: Double = 0.0,
+)
+
+/** Kết quả Upload PO → AI tạo HĐ VAT nháp. */
+data class PoDraftResultDto(
+    val order: OrderDto? = null,
+    @SerializedName("matched_customer") val matchedCustomer: PartyDto? = null,
+    val unresolved: List<String> = emptyList(),
+)
+
+/** Ảnh HĐ nháp render từng trang (data URL base64). */
+data class VatDraftPageDto(
+    val page: Int = 0,
+    val image: String = "",                                          // "data:image/png;base64,..."
+    @SerializedName("size_bytes") val sizeBytes: Long = 0,
+)
+data class VatDraftImagesDto(
+    val pages: List<VatDraftPageDto> = emptyList(),
+    @SerializedName("total_pages") val totalPages: Int = 0,
+    val cached: Boolean = false,
+)
+
+/** Kiểm tra thiếu tồn XNT khi ký HĐ. */
+data class VatShortageDto(
+    @SerializedName("item_name") val itemName: String = "",
+    val unit: String? = null,
+    @SerializedName("requested_qty") val requestedQty: Double = 0.0,
+    @SerializedName("available_qty") val availableQty: Double = 0.0,
+    @SerializedName("shortage_qty") val shortageQty: Double = 0.0,
+)
+data class VatStockCheckDto(val shortages: List<VatShortageDto> = emptyList(), val ok: Boolean = true)
+
+/** Body cho create/update/issue VAT draft (price_type + vat_info_id + ignore_unit_warnings). */
+data class VatDraftReq(
+    @SerializedName("price_type") val priceType: String = "inclusive",
+    @SerializedName("ignore_unit_warnings") val ignoreUnitWarnings: Boolean = true,
+    @SerializedName("vat_info_id") val vatInfoId: Long? = null,
+)
+data class VatIncludePhoneReq(val include: Boolean)
+data class SyncEiReq(val from: String? = null, val to: String? = null)
+/** Thêm đơn vị mua (vat_info) cho khách. */
+data class AttachVatInfoReq(
+    val type: String = "business",                                   // business | personal
+    @SerializedName("tax_code") val taxCode: String,                 // MST hoặc CCCD
+    @SerializedName("legal_name") val legalName: String,
+    @SerializedName("short_name") val shortName: String? = null,
+    val address: String? = null,
+)
+
+/** Kết quả tra cứu MST (VietQR proxy) — chỉ áp dụng doanh nghiệp. */
+data class TaxLookupDto(
+    @SerializedName("tax_code") val taxCode: String? = null,
+    @SerializedName("legal_name") val legalName: String? = null,
+    @SerializedName("short_name") val shortName: String? = null,
+    val address: String? = null,
+    val status: String? = null,
+)
+
 data class CreateOrderRequest(
     val type: String = "sale",
+    @SerializedName("is_invoice_only") val isInvoiceOnly: Boolean? = null, // đơn ảo HĐ VAT (không trừ kho)
     @SerializedName("party_type") val partyType: String = "customer",
     @SerializedName("party_id") val partyId: Long,
     val status: String = "draft",                                          // draft | confirmed
