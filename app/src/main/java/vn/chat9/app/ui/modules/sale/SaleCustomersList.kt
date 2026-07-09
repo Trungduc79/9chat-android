@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -24,6 +25,7 @@ import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
+import vn.chat9.app.ui.explore.AdminScrollTopButton
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -41,6 +43,7 @@ fun SaleCustomersList() {
     var customers by remember { mutableStateOf<List<CustomerDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refreshTick by remember { mutableStateOf(0) }   // vuốt xuống reload
+    val listState = rememberLazyListState()
 
     LaunchedEffect(query, refreshTick) {
         loading = true
@@ -72,10 +75,11 @@ fun SaleCustomersList() {
             }
         }
 
-        AdminPullToRefresh(isRefreshing = loading, onRefresh = { refreshTick++ }, modifier = Modifier.weight(1f)) {
+        Box(Modifier.weight(1f)) {
+        AdminPullToRefresh(isRefreshing = loading, onRefresh = { refreshTick++ }, modifier = Modifier.fillMaxSize()) {
             if (loading && customers.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             else if (customers.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có khách hàng", color = AdminColors.TextMuted) }
-            else LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            else LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (query.isBlank()) item { Text("20 khách hàng gần nhất", color = AdminColors.TextMuted, fontSize = 11.sp) }
                 items(customers, key = { it.id }) { c ->
                     Row(
@@ -98,6 +102,8 @@ fun SaleCustomersList() {
                     }
                 }
             }
+        }
+            AdminScrollTopButton(listState)
         }
     }
 }

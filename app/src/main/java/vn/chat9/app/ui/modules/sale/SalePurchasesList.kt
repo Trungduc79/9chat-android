@@ -45,12 +45,13 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * List đơn bán của NV — header search tên KH (70%) + dropdown ngày giao (30%),
- * đồng nhất layout với tab Sản phẩm / Khách hàng (mirror web).
+ * List đơn nhập của NV — clone [SaleOrdersList] cho type=purchase: party = NCC,
+ * search theo tên NCC, badge trạng thái thêm "received" → "Đã nhận" (mirror web
+ * SalePurchasesListView). FAB tạo đơn nhập do [SaleScreen] quản lý.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
+fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -70,7 +71,8 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
         scope.launch {
             loading = true; error = null
             try {
-                val res = container.vapi.listOrders(status = "", createdByUserId = userId, type = "sale", perPage = 100)
+                // Đơn nhập: hiện TẤT CẢ (mọi NV), giống web — không lọc theo createdByUserId.
+                val res = container.vapi.listOrders(status = "", createdByUserId = null, type = "purchase", perPage = 100)
                 orders = res.data ?: emptyList()
             } catch (e: Exception) {
                 error = "Tải đơn thất bại: ${e.message}"
@@ -83,10 +85,9 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     val keyFmt = SimpleDateFormat("yyyyMMdd", Locale("vi"))
     fun dayKey(ms: Long): Int = keyFmt.format(Date(ms)).toInt()
     val filtered = orders.filter { o ->
-        // Khớp tên KH cả khi gõ không dấu (đa số NV search không dấu).
-        val q = vnNoAccent(query.trim())
-        val matchQ = q.isEmpty() || vnNoAccent(o.partyName).contains(q)
-        // Lọc theo KHOẢNG ngày (so theo ngày, bỏ giờ). Chỉ start = từ ngày đó; chỉ end = đến ngày đó.
+        // Khớp tên NCC cả khi gõ không dấu.
+        val q = vnNoAccentPurchase(query.trim())
+        val matchQ = q.isEmpty() || vnNoAccentPurchase(o.partyName).contains(q)
         val matchDate = if (startDateMs == null && endDateMs == null) true else {
             val d = o.completedAt ?: o.orderedAt
             val om = d?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
@@ -99,14 +100,14 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     }
 
     Column(Modifier.fillMaxSize().background(AdminColors.Bg)) {
-        // Header: search 70% + ngày giao 30%
+        // Header: search 70% + khoảng ngày 30%
         Row(Modifier.fillMaxWidth().background(AdminColors.Card).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(0.7f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 8.dp)) {
                 BasicTextField(
                     value = query, onValueChange = { query = it },
                     textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp),
                     cursorBrush = SolidColor(AdminColors.Primary), singleLine = true,
-                    decorationBox = { inner -> if (query.isEmpty()) Text("Tìm đơn theo tên KH", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
+                    decorationBox = { inner -> if (query.isEmpty()) Text("Tìm đơn theo tên NCC", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -130,8 +131,6 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
             }
         }
 
-        // Vuốt xuống = reload + reset lọc (khoảng ngày + tên KH). Empty/error state phải
-        // scrollable (verticalScroll) thì PullToRefreshBox mới nhận cử chỉ vuốt khi list rỗng.
         Box(Modifier.weight(1f)) {
             AdminPullToRefresh(
                 isRefreshing = loading,
@@ -148,7 +147,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
                         }
                     }
                     filtered.isEmpty() -> Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), Alignment.Center) {
-                        Text(if (orders.isEmpty()) "Chưa có đơn nào — nhấn + để tạo" else "Không có đơn khớp lọc", color = AdminColors.TextMuted, fontSize = 14.sp)
+                        Text(if (orders.isEmpty()) "Chưa có đơn nhập nào — nhấn + để tạo" else "Không có đơn khớp lọc", color = AdminColors.TextMuted, fontSize = 14.sp)
                     }
                     else -> LazyColumn(
                         Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp),
@@ -156,7 +155,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(filtered, key = { it.id }) { o ->
-                            OrderRow(o, onClick = { onTapOrder(o.id) })
+                            PurchaseOrderRow(o, onClick = { onTapOrder(o.id) })
                         }
                     }
                 }
@@ -175,7 +174,6 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
         MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
             DatePickerDialog(
                 onDismissRequest = { datePickerOpen = false },
-                // OK trải hết chiều ngang (nhấn đáy chỗ nào cũng OK), không có nút Xoá lọc.
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -191,9 +189,9 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
                 DateRangePicker(
                     state = rangeState,
                     modifier = Modifier.weight(1f),
-                    title = {},                  // bỏ chữ "Chọn ngày"
-                    showModeToggle = false,      // bỏ pen icon (toggle nhập tay)
-                    headline = {                 // 1 dòng, font nhỏ, no-wrap
+                    title = {},
+                    showModeToggle = false,
+                    headline = {
                         val s = rangeState.selectedStartDateMillis
                         val e = rangeState.selectedEndDateMillis
                         Text(
@@ -209,28 +207,25 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}) {
     }
 }
 
-/** Bỏ dấu tiếng Việt + lowercase để search không dấu khớp có dấu. NFD tách dấu thanh/mũ;
- *  đ/Đ KHÔNG bị NFD tách nên thay tay. */
-private fun vnNoAccent(s: String): String =
+private fun vnNoAccentPurchase(s: String): String =
     java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
         .replace(Regex("\\p{Mn}+"), "")
         .replace('đ', 'd').replace('Đ', 'D')
         .lowercase()
 
-/** Card đơn — layout port từ web SaleOrdersListView: hàng mã+badge, tên KH, dòng "N mặt
- *  hàng · ngày" + tổng tiền. */
+/** Card đơn nhập — layout giống OrderRow đơn bán, badge thêm "received" → "Đã nhận". */
 @Composable
-private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
+private fun PurchaseOrderRow(o: OrderDto, onClick: () -> Unit) {
     val statusColor = when (o.status) {
         "draft" -> AdminColors.TextMuted
         "confirmed" -> AdminColors.Info
-        "delivered", "completed" -> AdminColors.Success
+        "received", "completed" -> AdminColors.Success
         "cancelled" -> AdminColors.Danger
         else -> AdminColors.TextMuted
     }
     val statusLabel = when (o.status) {
         "draft" -> "Nháp"; "confirmed" -> "Đã xác nhận"
-        "delivered" -> "Đã giao"; "completed" -> "Hoàn thành"
+        "received" -> "Đã nhận"; "completed" -> "Hoàn thành"
         "cancelled" -> "Huỷ"; else -> o.status
     }
     Column(
@@ -241,7 +236,6 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(12.dp),
     ) {
-        // Hàng 1: mã đơn + badge trạng thái (góc phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(o.code, color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
@@ -249,22 +243,21 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
         }
         Spacer(Modifier.height(6.dp))
-        // Hàng 2: tên KH
+        // Tên NCC (OrderDto.partyName ưu tiên short_name cho đơn nhập)
         Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(6.dp))
-        // Hàng 3: N mặt hàng · ngày  +  tổng tiền
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("${o.items.size} mặt hàng · ${fmtOrderDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt)}",
+            Text("${o.items.size} mặt hàng · ${fmtPurchaseDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt)}",
                 color = AdminColors.TextMuted, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))
-            Text("${fmtMoney(o.totalAmount ?: 0.0)} đ", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text("${fmtPurchaseMoney(o.totalAmount ?: 0.0)} đ", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
 
-private val moneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))
-private fun fmtMoney(n: Double): String = moneyFmt.format(n.toLong())
+private val purchaseMoneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))
+private fun fmtPurchaseMoney(n: Double): String = purchaseMoneyFmt.format(n.toLong())
 
-private val orderDayFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
-private fun fmtOrderDate(iso: String?): String =
-    iso?.let { runCatching { orderDayFmt.format(Date(java.time.Instant.parse(it).toEpochMilli())) }.getOrNull() } ?: "—"
+private val purchaseDayFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
+private fun fmtPurchaseDate(iso: String?): String =
+    iso?.let { runCatching { purchaseDayFmt.format(Date(java.time.Instant.parse(it).toEpochMilli())) }.getOrNull() } ?: "—"

@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
@@ -16,6 +17,7 @@ import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import vn.chat9.app.ui.explore.AdminPullToRefresh
+import vn.chat9.app.ui.explore.AdminScrollTopButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.runtime.*
@@ -51,6 +53,7 @@ fun SaleProductsList() {
     var loading by remember { mutableStateOf(false) }
     var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
     var selectedWarehouseId by remember { mutableStateOf<Long?>(null) }
+    val listState = rememberLazyListState()
 
     suspend fun load() {
         loading = true
@@ -96,25 +99,28 @@ fun SaleProductsList() {
 
         // Vuốt xuống = reload.
         val scope = rememberCoroutineScope()
-        AdminPullToRefresh(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.weight(1f)) {
-            if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
-            else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
-            else {
-                // Màu số tồn theo KHO đang chọn (mỗi kho 1 màu nổi, dễ phân biệt).
-                val whIdx = warehouses.indexOfFirst { it.id == selectedWarehouseId }.coerceAtLeast(0)
-                val stockColor = WAREHOUSE_STOCK_COLORS[whIdx % WAREHOUSE_STOCK_COLORS.size]
-                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    itemsIndexed(variants, key = { _, v -> v.id }) { i, v ->
-                        // Hết variant của 1 SP → đường kẻ ngắn phân định (giống màn kiểm kho).
-                        if (i > 0 && variants[i - 1].product?.id != v.product?.id) {
-                            Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
-                                Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f)))
+        Box(Modifier.weight(1f)) {
+            AdminPullToRefresh(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.fillMaxSize()) {
+                if (loading && variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
+                else if (variants.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Không có biến thể", color = AdminColors.TextMuted) }
+                else {
+                    // Màu số tồn theo KHO đang chọn (mỗi kho 1 màu nổi, dễ phân biệt).
+                    val whIdx = warehouses.indexOfFirst { it.id == selectedWarehouseId }.coerceAtLeast(0)
+                    val stockColor = WAREHOUSE_STOCK_COLORS[whIdx % WAREHOUSE_STOCK_COLORS.size]
+                    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        itemsIndexed(variants, key = { _, v -> v.id }) { i, v ->
+                            // Hết variant của 1 SP → đường kẻ ngắn phân định (giống màn kiểm kho).
+                            if (i > 0 && variants[i - 1].product?.id != v.product?.id) {
+                                Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
+                                    Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f)))
+                                }
                             }
+                            VariantRow(v, stockColor)
                         }
-                        VariantRow(v, stockColor)
                     }
                 }
             }
+            AdminScrollTopButton(listState)
         }
     }
 }

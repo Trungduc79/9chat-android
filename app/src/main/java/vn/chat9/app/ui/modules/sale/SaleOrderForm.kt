@@ -920,10 +920,16 @@ internal fun CustomerPicker(isPurchase: Boolean = false, onPick: (CustomerDto) -
         loading = true
         try {
             results = if (isPurchase) {
-                if (!query.isBlank()) delay(280)
-                val list = container.vapi.listSuppliers(search = query.ifBlank { null }, active = true, perPage = 100).data ?: emptyList()
-                list.sortedWith(compareBy(viCollator) { it.display })
-                    .map { CustomerDto(id = it.id, name = it.display, phone = it.phone) }
+                if (query.isBlank()) {
+                    // Mặc định: NCC sắp theo SỐ ĐƠN NHẬP 15 ngày gần nhất (giữ nguyên thứ tự BE trả).
+                    (container.vapi.suppliersRecentByPurchases(limit = 100, days = 15).data ?: emptyList())
+                        .map { CustomerDto(id = it.id, name = it.display, phone = it.phone) }
+                } else {
+                    delay(280)
+                    (container.vapi.listSuppliers(search = query, active = true, perPage = 100).data ?: emptyList())
+                        .sortedWith(compareBy(viCollator) { it.display })
+                        .map { CustomerDto(id = it.id, name = it.display, phone = it.phone) }
+                }
             } else if (query.isBlank()) container.vapi.recentCustomers(userId, 20).data ?: emptyList()
             else { delay(280); container.vapi.searchCustomers(query, 20).data ?: emptyList() }
         } catch (_: Exception) {}

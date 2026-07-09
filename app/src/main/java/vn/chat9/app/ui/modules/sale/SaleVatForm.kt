@@ -620,18 +620,22 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                     }
                     HorizontalDivider(color = AdminColors.Border, modifier = Modifier.padding(top = 8.dp))
 
-                    // Map net theo dòng HĐ EI (khớp index; lệch số dòng → dùng tỉ lệ tổng subtotal/total).
+                    // Đã có HĐ → hiển thị đơn giá theo HĐ EI (net/gross), KHÔNG lấy giá lưu (đơn có thể lưu net
+                    // hoặc gross) để toggle luôn có tác dụng. Khớp index dòng; lệch số dòng → phân bổ theo tỉ trọng.
                     val invItems = linkedVat?.items ?: emptyList()
                     val sameCount = linkedVat != null && invItems.size == items.size
-                    val overallRatio = linkedVat?.let { if (it.total > 0) it.subtotal / it.total else 1.0 } ?: 1.0
+                    val sumStored = items.sumOf { it.qty * it.price }
 
                     if (items.isEmpty()) Text("Chưa có mặt hàng — chọn KH rồi Thêm SP hoặc Upload PO", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
                     else items.forEachIndexed { idx, it ->
                         if (idx > 0) HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.4f))
-                        // Chế độ "chưa VAT" + đã có HĐ → hiện đơn giá NET (đọc-only) để tổng khớp "Tổng tiền hàng chưa thuế".
-                        val displayPrice: Double? = if (linkedVat != null && !displayIncVat) {
-                            val netAmt = if (sameCount) invItems[idx].subtotal else (it.qty * it.price) * overallRatio
-                            if (it.qty != 0.0) netAmt / it.qty else it.price
+                        val displayPrice: Double? = if (linkedVat != null) {
+                            val lineAmt = if (sameCount) (if (displayIncVat) invItems[idx].total else invItems[idx].subtotal)
+                                else {
+                                    val invAmt = if (displayIncVat) linkedVat!!.total else linkedVat!!.subtotal
+                                    if (sumStored > 0) invAmt * (it.qty * it.price) / sumStored else it.qty * it.price
+                                }
+                            if (it.qty != 0.0) lineAmt / it.qty else it.price
                         } else null
                         VatItemRow(it, focusCtx, scope, canEdit, displayPrice = displayPrice,
                             onDelete = { items.removeAt(idx) },
@@ -646,13 +650,21 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                         )
                     }
                     // Footer: nút +Thêm SP; "Tổng cộng" live CHỈ khi chưa có HĐ (đã có HĐ → tổng ở breakdown dưới).
-                    if (canEdit || linkedVat == null) {
+                    if (canEdit || linkedVat != null) {
                         HorizontalDivider(color = AdminColors.Border, modifier = Modifier.padding(top = 8.dp))
                         Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (canEdit) OutlinedButton(
                                 onClick = { if (selectedCustomer == null) Toast.makeText(context, "Chọn khách hàng trước", Toast.LENGTH_SHORT).show() else { pickerProductId = null; productPickerOpen = true } },
                                 modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                             ) { Text("+ Thêm SP", color = AdminColors.Primary, fontSize = 13.sp) }
+                            // Chú thích chế độ đơn giá đang hiển thị (mờ, mảnh, nghiêng, căn phải) — chỉ khi đã có HĐ.
+                            if (linkedVat != null) {
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    if (displayIncVat) "Đơn giá đã bao gồm VAT" else "Đơn giá chưa bao gồm VAT",
+                                    color = AdminColors.TextMuted.copy(alpha = 0.7f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light,
+                                )
+                            }
                             if (linkedVat == null) {
                                 Spacer(Modifier.weight(1f))
                                 val total = items.sumOf { it.qty * it.price }
@@ -991,9 +1003,9 @@ private fun vatRateRows(items: List<VatOutputItemDto>): List<Pair<Double, Double
 private fun DetailMoneyRow(label: String, amount: Double, emphasize: Boolean = false) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        Text(nfVnd.format(Math.round(amount)), color = if (emphasize) AdminColors.Primary else AdminColors.Text,
-            fontSize = if (emphasize) 14.sp else 12.sp, fontWeight = if (emphasize) FontWeight.Medium else FontWeight.Normal)
-        Text(" đ", color = GOLD_VAT2, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, fontSize = if (emphasize) 12.sp else 11.sp)
+        Text(nfVnd.format(Math.round(amount)), color = if (emphasize) Color(0xFF2DD4BF) else AdminColors.Text,
+            fontSize = if (emphasize) 18.sp else 12.sp, fontWeight = if (emphasize) FontWeight.Medium else FontWeight.Normal)
+        Text(" đ", color = GOLD_VAT2, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, fontSize = if (emphasize) 13.sp else 11.sp)
     }
 }
 
