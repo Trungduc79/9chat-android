@@ -1,14 +1,24 @@
 package vn.chat9.app.ui.modules.sale
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Tab
@@ -22,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.ui.explore.AdminColors
 
@@ -31,20 +43,29 @@ import vn.chat9.app.ui.explore.AdminColors
  *
  * Permission gate ở [ModuleRegistry]: sale.create_order OR sale.view_orders.
  */
-private enum class SaleTab(val label: String) { ORDERS("Đơn hàng"), PRODUCTS("Sản phẩm"), CUSTOMERS("Khách hàng") }
+private enum class SaleTab(val label: String) { ORDERS("Đơn bán"), PURCHASES("Đơn nhập"), PRODUCTS("Sản phẩm"), CUSTOMERS("Khách hàng") }
 
 @Composable
 fun SaleScreen(onBack: () -> Unit) {
     var tab by remember { mutableStateOf(SaleTab.ORDERS) }
     var creating by remember { mutableStateOf(false) }
     var viewingOrderId by remember { mutableStateOf<Long?>(null) }   // tap đơn → chi tiết/edit
+    var viewingPurchase by remember { mutableStateOf(false) }        // đơn đang tạo/xem là đơn nhập?
+
+    val context = LocalContext.current
+    val container = (context.applicationContext as App).container
+    val scope = rememberCoroutineScope()
 
     // Quyền tạo đơn: ẩn nút nếu thiếu order.create (UX — server cũng chặn thật qua X-Staff-Phone).
-    val perms by (LocalContext.current.applicationContext as App).container.permissions.state.collectAsState()
+    val perms by container.permissions.state.collectAsState()
     val canCreate = perms.bypass_all || "order.create" in perms.permissions
 
+    // Menu 3 chấm header đơn nhập đã lưu
+    var headerMenuOpen by remember { mutableStateOf(false) }
+    var headerBusy by remember { mutableStateOf(false) }
+
     androidx.activity.compose.BackHandler(enabled = true) {
-        if (creating || viewingOrderId != null) { creating = false; viewingOrderId = null } else onBack()
+        if (creating || viewingOrderId != null) { creating = false; viewingOrderId = null; viewingPurchase = false } else onBack()
     }
 
     // Overlay tạo đơn / chi tiết đơn (full-screen) — dùng chung SaleOrderForm.
@@ -56,7 +77,7 @@ fun SaleScreen(onBack: () -> Unit) {
                 .pointerInput(Unit) {
                     var dragAccum = 0f
                     detectHorizontalDragGestures(
-                        onDragEnd = { if (dragAccum > 90f) { creating = false; viewingOrderId = null }; dragAccum = 0f },
+                        onDragEnd = { if (dragAccum > 90f) { creating = false; viewingOrderId = null; viewingPurchase = false }; dragAccum = 0f },
                         onDragCancel = { dragAccum = 0f },
                     ) { _, dx -> dragAccum += dx }
                 },
@@ -65,10 +86,81 @@ fun SaleScreen(onBack: () -> Unit) {
                 Modifier.fillMaxWidth().background(AdminColors.Card).height(48.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { creating = false; viewingOrderId = null }) { Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text) }
-                Text(if (creating) "Tạo đơn bán" else "Chi tiết đơn", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                IconButton(onClick = { creating = false; viewingOrderId = null; viewingPurchase = false }) { Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text) }
+                val headerTitle = when {
+                    creating && viewingPurchase -> "Tạo đơn nhập"
+                    creating -> "Tạo đơn bán"
+                    else -> "Chi tiết đơn"
+                }
+                Text(headerTitle, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                // Tùy chọn 3 chấm — chỉ đơn nhập ĐÃ LƯU (đang xem chi tiết): gửi nhóm / copy / chia sẻ.
+                val curId = viewingOrderId
+                if (viewingPurchase && !creating && curId != null) {
+                    Box {
+                        IconButton(onClick = { headerMenuOpen = true }, enabled = !headerBusy) {
+                            if (headerBusy) CircularProgressIndicator(Modifier.size(20.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
+                            else Icon(Icons.Default.MoreVert, "Tùy chọn", tint = AdminColors.Text)
+                        }
+                        DropdownMenu(
+                            expanded = headerMenuOpen,
+                            onDismissRequest = { headerMenuOpen = false },
+                            modifier = Modifier
+                                .background(AdminColors.Card)
+                                .border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp)),
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Gửi vào nhóm đặt hàng", color = AdminColors.Text) },
+                                leadingIcon = { Icon(Icons.Default.Send, null, tint = AdminColors.Text, modifier = Modifier.size(20.dp)) },
+                                onClick = {
+                                    headerMenuOpen = false
+                                    Toast.makeText(context, "Chức năng gửi vào nhóm đặt hàng sẽ được bổ sung sau", Toast.LENGTH_SHORT).show()
+                                },
+                            )
+                            HorizontalDivider(color = AdminColors.Border)
+                            DropdownMenuItem(
+                                text = { Text("Copy đơn nhập", color = AdminColors.Text) },
+                                leadingIcon = { Icon(Icons.Default.ContentCopy, null, tint = AdminColors.Text, modifier = Modifier.size(20.dp)) },
+                                onClick = {
+                                    headerMenuOpen = false
+                                    scope.launch {
+                                        headerBusy = true
+                                        try {
+                                            val nw = container.vapi.copyOrder(curId).data
+                                            if (nw != null) {
+                                                Toast.makeText(context, "Đã sao chép → ${nw.code}", Toast.LENGTH_SHORT).show()
+                                                viewingOrderId = nw.id   // mở đơn nhập mới (vẫn viewingPurchase=true)
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Sao chép đơn nhập thất bại: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        } finally { headerBusy = false }
+                                    }
+                                },
+                            )
+                            HorizontalDivider(color = AdminColors.Border)
+                            DropdownMenuItem(
+                                text = { Text("Chia sẻ", color = AdminColors.Text) },
+                                leadingIcon = { Icon(Icons.Default.Share, null, tint = AdminColors.Text, modifier = Modifier.size(20.dp)) },
+                                onClick = {
+                                    headerMenuOpen = false
+                                    scope.launch {
+                                        try {
+                                            val code = container.vapi.getOrder(curId).data?.code ?: ""
+                                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_TEXT, "Đơn nhập $code")
+                                            }
+                                            context.startActivity(android.content.Intent.createChooser(send, "Chia sẻ đơn nhập"))
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Chia sẻ thất bại: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
             }
-            SaleOrderForm(orderId = viewingOrderId, onDone = { creating = false; viewingOrderId = null })
+            SaleOrderForm(orderId = viewingOrderId, isPurchase = viewingPurchase, onDone = { creating = false; viewingOrderId = null; viewingPurchase = false })
         }
         return
     }
@@ -108,15 +200,27 @@ fun SaleScreen(onBack: () -> Unit) {
         ) {
             when (tab) {
                 SaleTab.ORDERS -> {
-                    SaleOrdersList(onTapOrder = { viewingOrderId = it })
+                    SaleOrdersList(onTapOrder = { viewingOrderId = it; viewingPurchase = false })
                     if (canCreate) {
                         FloatingActionButton(
-                            onClick = { creating = true },
+                            onClick = { creating = true; viewingPurchase = false },
                             containerColor = AdminColors.Primary,
                             contentColor = Color.White,
                             shape = CircleShape,
                             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
                         ) { Icon(Icons.Default.Add, "Tạo đơn bán") }
+                    }
+                }
+                SaleTab.PURCHASES -> {
+                    SalePurchasesList(onTapOrder = { viewingOrderId = it; viewingPurchase = true })
+                    if (canCreate) {
+                        FloatingActionButton(
+                            onClick = { creating = true; viewingPurchase = true },
+                            containerColor = Color(0xFFEC4899),   // hồng — phân biệt với đơn bán
+                            contentColor = Color.White,
+                            shape = CircleShape,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                        ) { Icon(Icons.Default.Add, "Tạo đơn nhập") }
                     }
                 }
                 SaleTab.PRODUCTS -> SaleProductsList()
