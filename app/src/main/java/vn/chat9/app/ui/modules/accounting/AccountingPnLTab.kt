@@ -24,13 +24,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.*
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import java.text.NumberFormat
 import java.time.LocalDate
@@ -404,7 +408,7 @@ private fun OrdersTab(orders: PnLOrdersReportDto?, onOrder: (Long) -> Unit) {
             Box(Modifier.fillMaxWidth().height(0.5.dp).background(AdminColors.Border))
             Row(Modifier.fillMaxWidth().clickable { onOrder(r.orderId) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(fmtDate(r.orderedAt), color = AdminColors.Text, fontSize = 12.sp, modifier = Modifier.width(84.dp))
-                Text(r.customer?.name ?: "Khách lẻ", color = AdminColors.Text, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                Text(r.customer?.name ?: "Khách lẻ", color = partyColor(r.customer?.id ?: 0, r.customer?.displayColor), fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Text("${fmtMoney(r.netProfit)} đ", color = profitColor(r.netProfit), fontSize = 12.sp)
             }
         }
@@ -437,7 +441,7 @@ private fun CustomersTab(customers: PnLCustomersReportDto?, onCustomer: (PnLCust
         customers.rows.forEach { r ->
             Box(Modifier.fillMaxWidth().height(0.5.dp).background(AdminColors.Border))
             Row(Modifier.fillMaxWidth().clickable { onCustomer(r) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(r.customerName ?: "Khách lẻ", color = AdminColors.Text, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                Text(r.customerName ?: "Khách lẻ", color = partyColor(r.customerId ?: 0, r.customerDisplayColor), fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Text("${r.orderCount}", color = AdminColors.Text, fontSize = 12.sp, modifier = Modifier.width(52.dp))
                 Text("${fmtMoney(r.netProfit)} đ", color = profitColor(r.netProfit), fontSize = 12.sp)
             }
@@ -482,7 +486,11 @@ private fun OrderDetailOverlay(o: PnLOrderDetailDto?, loading: Boolean, onClose:
                 o == null -> {}
                 !o.applicable -> Text("Đơn này không tính được lãi/lỗ (${o.reason ?: "—"}).", color = AdminColors.TextMuted, fontSize = 13.sp)
                 else -> {
-                    Text("Khách: ${o.customer?.name ?: "Khách lẻ"}  ·  ${fmtDate(o.orderedAt)}", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    Text(buildAnnotatedString {
+                        append("Khách: ")
+                        withStyle(SpanStyle(color = partyColor(o.customer?.id ?: 0, o.customer?.displayColor))) { append(o.customer?.name ?: "Khách lẻ") }
+                        append("  ·  ${fmtDate(o.orderedAt)}")
+                    }, color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.height(2.dp))
                     Text("DT thuần ${fmtMoney(o.revenue.net)} đ  ·  Giá vốn ${fmtMoney(o.cogs)} đ  ·  Lãi gộp ${fmtMoney(o.grossProfit)} đ (${pct(o.grossMarginPercent)})",
                         color = AdminColors.Text, fontSize = 12.sp)
@@ -564,7 +572,10 @@ private fun CustomerDetailOverlay(row: PnLCustomerRowDto, orders: List<PnLOrderR
                 .pointerInput(Unit) { detectTapGestures {} }.padding(14.dp).verticalScroll(rememberScrollState()),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Khách: ${row.customerName ?: "Khách lẻ"}", color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                Text(buildAnnotatedString {
+                    append("Khách: ")
+                    withStyle(SpanStyle(color = partyColor(row.customerId ?: 0, row.customerDisplayColor))) { append(row.customerName ?: "Khách lẻ") }
+                }, color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 Text("Đóng", color = AdminColors.Primary, fontSize = 13.sp, modifier = Modifier.clickable { onClose() }.padding(6.dp))
             }
             Spacer(Modifier.height(6.dp))

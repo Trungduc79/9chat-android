@@ -1,6 +1,8 @@
 package vn.chat9.app.ui.modules.accounting
 
+import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,7 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
@@ -38,15 +42,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.*
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.modules.sale.SaleOrderForm
+import vn.chat9.app.ui.modules.sale.saveBitmapToGallery
 import java.text.NumberFormat
 import java.text.Normalizer
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 private val nf = NumberFormat.getNumberInstance(Locale("vi"))
@@ -145,7 +154,7 @@ fun AccountingDebtsTab() {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(r.name, color = AdminColors.Text, fontSize = 14.sp, maxLines = 1)
+                                Text(r.name, color = partyColor(r.partyId, r.displayColor), fontSize = 14.sp, maxLines = 1)
                                 if (r.pendingCount > 0) Text(
                                     "${r.pendingCount} chưa chốt", color = Color(0xFFE2A03F), fontSize = 9.sp,
                                     lineHeight = 9.sp,
@@ -202,10 +211,17 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
     var backdateSources by remember { mutableStateOf<List<DebtBackdatedSourceDto>>(emptyList()) }
     var showReasons by remember { mutableStateOf(false) }
 
-    LaunchedEffect(reloadTick) {
+    // Lọc sổ chi tiết theo khoảng ngày (null = BE tự áp 15 ngày gần nhất).
+    var stmtFrom by remember { mutableStateOf<Long?>(null) }
+    var stmtTo by remember { mutableStateOf<Long?>(null) }
+
+    LaunchedEffect(reloadTick, stmtFrom, stmtTo) {
         loading = true
         try {
-            statement = container.vapi.debtStatement(party.partyType, party.partyId).data
+            val ymd = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val f = if (stmtFrom != null && stmtTo != null) ymd.format(Date(stmtFrom!!)) else null
+            val t = if (stmtFrom != null && stmtTo != null) ymd.format(Date(stmtTo!!)) else null
+            statement = container.vapi.debtStatement(party.partyType, party.partyId, f, t).data
             pending = container.vapi.debtPending(party.partyType, party.partyId).data
         } catch (_: Exception) {}
         loading = false
@@ -277,7 +293,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.ArrowBack, "Quay lại", tint = AdminColors.Text, modifier = Modifier.clickable { onBack() }.padding(8.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(party.name, color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(party.name, color = partyColor(party.partyId, party.displayColor), fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                         Text(if (party.partyType == "customer") "Khách hàng" else "Nhà cung cấp", color = AdminColors.TextMuted, fontSize = 11.sp)
                     }
                     Column(horizontalAlignment = Alignment.End) {
@@ -306,7 +322,9 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
             } else if (showUnpaid) {
                 UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() })
             } else {
-                SettledTab(statement, stmtRows, closing)
+                SettledTab(statement, stmtRows, closing, party.partyType, party.partyId, party.name,
+                    rangeStart = stmtFrom, rangeEnd = stmtTo,
+                    onPickRange = { s, e -> stmtFrom = s; stmtTo = e })
             }
         }
 
@@ -368,15 +386,47 @@ private fun ColumnScope.UnpaidTab(
 }
 
 @Composable
-private fun ColumnScope.SettledTab(statement: DebtStatementDto?, rows: List<StmtRowView>, closing: Double) {
+private fun ColumnScope.SettledTab(
+    statement: DebtStatementDto?, rows: List<StmtRowView>, closing: Double,
+    partyType: String, partyId: Long, partyName: String,
+    rangeStart: Long?, rangeEnd: Long?, onPickRange: (Long?, Long?) -> Unit,
+) {
     if (statement == null) { Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) { Text("—", color = AdminColors.TextMuted) }; return }
+    val context = LocalContext.current
+    val container = (context.applicationContext as App).container
+    val scope = rememberCoroutineScope()
+    var excelBusy by remember { mutableStateOf(false) }
+    var imgBusy by remember { mutableStateOf(false) }
+    var imgBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var imgUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var datePickerOpen by remember { mutableStateOf(false) }
+    val fileBase = "CN-" + partyName.replace(Regex("[^\\p{L}\\p{N} ]"), "").trim().ifBlank { "khach" }
+
     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
         item {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            // Bộ lọc khoảng ngày — mặc định null = BE tự áp 15 ngày gần nhất.
+            Row(
+                Modifier.fillMaxWidth().padding(top = 12.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp))
+                    .clickable { datePickerOpen = true }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val hasRange = rangeStart != null && rangeEnd != null
+                Text(
+                    if (hasRange) "${fmtDate(statement.period.from)} – ${fmtDate(statement.period.to)}" else "15 ngày gần nhất",
+                    color = if (hasRange) AdminColors.Text else AdminColors.TextMuted, fontSize = 13.sp,
+                )
+                if (hasRange) Text("Xoá lọc", color = AdminColors.Primary, fontSize = 12.sp,
+                    modifier = Modifier.clickable { onPickRange(null, null) })
+                else Text("Lọc ngày", color = AdminColors.Primary, fontSize = 12.sp)
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp).padding(bottom = 6.dp)
+                .drawBottomBorder(AdminColors.Border), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Đầu kỳ", color = AdminColors.TextMuted, fontSize = 13.sp)
                 Text(money(statement.openingBalance), color = AdminColors.Text, fontSize = 13.sp)
             }
-            Text("${fmtDate(statement.period.from)} – ${fmtDate(statement.period.to)}", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 4.dp))
         }
         if (rows.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) { Text("Chưa có phát sinh trong kỳ.", color = AdminColors.TextMuted, fontSize = 13.sp) } }
         itemsIndexed(rows) { idx, sr ->
@@ -388,8 +438,112 @@ private fun ColumnScope.SettledTab(statement: DebtStatementDto?, rows: List<Stmt
                 Text("Số dư cuối kỳ", color = AdminColors.TextMuted, fontSize = 14.sp)
                 Text(moneyD(money(closing), AdminColors.Text), fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
+            // 3 tác vụ (mirror web): Gửi khách · Xuất Excel · Copy ảnh.
+            Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DebtActionBtn("Gửi khách", Modifier.weight(1f), busy = false) {
+                    Toast.makeText(context, "Gửi khách tự động (Email/Zalo/Tele) — đang phát triển.", Toast.LENGTH_SHORT).show()
+                }
+                DebtActionBtn("Xuất Excel", Modifier.weight(1f), busy = excelBusy) {
+                    if (excelBusy) return@DebtActionBtn
+                    scope.launch {
+                        excelBusy = true
+                        try {
+                            val uri = withContext(Dispatchers.IO) {
+                                val body = container.vapi.debtStatementExcel(partyType, partyId)
+                                val dir = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
+                                val file = java.io.File(dir, "$fileBase.xlsx")
+                                file.outputStream().use { out -> body.byteStream().use { it.copyTo(out) } }
+                                androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                            }
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(send, "Xuất Excel").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Không tải được Excel: ${e.message}", Toast.LENGTH_SHORT).show()
+                        } finally { excelBusy = false }
+                    }
+                }
+                DebtActionBtn("Copy ảnh", Modifier.weight(1f), busy = imgBusy) {
+                    if (imgBusy) return@DebtActionBtn
+                    scope.launch {
+                        imgBusy = true
+                        try {
+                            val exportedAt = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("vi")).format(Date())
+                            val (b, u) = withContext(Dispatchers.Default) {
+                                val bmp = renderDebtStatementBitmap(partyName, statement, exportedAt)
+                                val dir = java.io.File(context.cacheDir, "shared").apply { mkdirs() }
+                                val file = java.io.File(dir, "$fileBase.png")
+                                java.io.FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                                bmp to androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                            }
+                            imgBitmap = b; imgUri = u
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Không tạo được ảnh: ${e.message}", Toast.LENGTH_SHORT).show()
+                        } finally { imgBusy = false }
+                    }
+                }
+            }
             Spacer(Modifier.height(48.dp))
         }
+    }
+
+    // Dialog preview ảnh công nợ — Copy / Chia sẻ / Tải.
+    val bmp = imgBitmap; val uri = imgUri
+    if (bmp != null && uri != null) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { imgBitmap = null; imgUri = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Column(Modifier.fillMaxWidth(0.96f).clip(RoundedCornerShape(12.dp)).background(AdminColors.Card).padding(12.dp)) {
+                Text("Bảng công nợ — $partyName", color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                Spacer(Modifier.height(10.dp))
+                Image(
+                    bitmap = bmp.asImageBitmap(), contentDescription = null,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).clip(RoundedCornerShape(6.dp)),
+                    contentScale = ContentScale.Fit,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                    DebtActionBtn("Copy", Modifier.weight(1f), busy = false) {
+                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newUri(context.contentResolver, "Bảng công nợ", uri))
+                        Toast.makeText(context, "Đã copy ảnh — dán vào Zalo/chat", Toast.LENGTH_SHORT).show()
+                    }
+                    DebtActionBtn("Chia sẻ", Modifier.weight(1f), busy = false) {
+                        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "image/png"
+                            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(android.content.Intent.createChooser(send, "Chia sẻ công nợ").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    DebtActionBtn("Tải ảnh", Modifier.weight(1f), busy = false) {
+                        val ok = saveBitmapToGallery(context, bmp, fileBase)
+                        Toast.makeText(context, if (ok) "Đã lưu ảnh vào thư viện" else "Lưu ảnh thất bại", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Nút tác vụ công nợ — viền primary, chữ nhỏ, có trạng thái bận (spinner). */
+@Composable
+private fun DebtActionBtn(label: String, modifier: Modifier = Modifier, busy: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp))
+            .clickable(enabled = !busy, onClick = onClick)
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (busy) CircularProgressIndicator(Modifier.size(14.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
+        else Text(label, color = AdminColors.Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 

@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.VatOutputInvoiceDto
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.modules.sale.SaleVatForm
@@ -182,7 +183,7 @@ fun AccountingVatTab() {
                                             lineHeight = 10.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
                                             modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(AdminColors.TextMuted.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 0.dp))
                                     }
-                                    Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                                    Text(o.partyName, color = partyColor(o.party), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                                     Text("${o.items.size} mặt hàng · ${fmtDateVat(o.orderedAt)}", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 1.dp))
                                 }
                                 Icon(
@@ -238,7 +239,7 @@ private fun VatInvoiceCard(i: VatOutputInvoiceDto, onClick: () -> Unit) {
     ) {
         // Dòng 1: tên KH · ngày
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(i.customerName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
+            Text(i.customerName, color = partyColor(i.order?.party), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
             Text(fmtDateVat(i.issueDate), color = AdminColors.TextMuted, fontSize = 11.sp)
         }
         // Dòng 2: tên đơn vị mua — hiển thị ĐẦY ĐỦ (wrap nhiều dòng, không cắt).

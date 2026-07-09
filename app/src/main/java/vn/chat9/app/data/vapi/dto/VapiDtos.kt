@@ -242,6 +242,7 @@ data class DebtOverviewRowDto(
     @SerializedName("party_id") val partyId: Long = 0,
     val name: String = "",
     val code: String? = null,
+    @SerializedName("display_color") val displayColor: String? = null,
     val posted: Double = 0.0,
     val pending: Double = 0.0,
     @SerializedName("pending_count") val pendingCount: Int = 0,
@@ -680,6 +681,7 @@ data class PnLTopProductDto(
 data class PnLPartyRefDto(
     val id: Long = 0,
     val name: String? = null,
+    @SerializedName("display_color") val displayColor: String? = null,
 )
 data class PnLTotalsDto(
     @SerializedName("net_profit") val netProfit: Double = 0.0,
@@ -701,6 +703,7 @@ data class PnLOrdersReportDto(
 data class PnLCustomerRowDto(
     @SerializedName("customer_id") val customerId: Long? = null,
     @SerializedName("customer_name") val customerName: String? = null,
+    @SerializedName("customer_display_color") val customerDisplayColor: String? = null,
     @SerializedName("order_count") val orderCount: Int = 0,
     @SerializedName("estimated_count") val estimatedCount: Int = 0,
     @SerializedName("net_profit") val netProfit: Double = 0.0,

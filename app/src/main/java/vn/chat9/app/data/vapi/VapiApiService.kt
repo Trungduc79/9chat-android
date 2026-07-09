@@ -428,6 +428,16 @@ interface VapiApiService {
         @Query("to") to: String? = null,
     ): VapiResponse<DebtStatementDto>
 
+    /** Sổ chi tiết công nợ ra Excel (blob) để gửi khách. */
+    @retrofit2.http.Streaming
+    @GET("v1/debts/statement-excel")
+    suspend fun debtStatementExcel(
+        @Query("party_type") partyType: String,
+        @Query("party_id") partyId: Long,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+    ): okhttp3.ResponseBody
+
     /** Nguồn công nợ CHƯA CHỐT + ứng ship chờ hoàn. */
     @GET("v1/debts/pending")
     suspend fun debtPending(
