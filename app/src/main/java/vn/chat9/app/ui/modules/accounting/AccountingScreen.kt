@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -28,6 +29,7 @@ import vn.chat9.app.ui.explore.AdminColors
  * Công nợ; Phase 3 = VAT. Permission gate ở [ModuleRegistry].
  */
 private enum class AccTab(val label: String, val icon: ImageVector) {
+    PNL("Lãi Lỗ", Icons.Default.ShowChart),
     VAT("VAT", Icons.Default.ReceiptLong),
     DEBTS("Công nợ", Icons.Default.AccountBalanceWallet),
     CASHFLOW("Dòng tiền", Icons.Default.Payments),
@@ -35,7 +37,7 @@ private enum class AccTab(val label: String, val icon: ImageVector) {
 
 @Composable
 fun AccountingScreen(onBack: () -> Unit) {
-    var tab by remember { mutableStateOf(AccTab.CASHFLOW) }   // mặc định tab đã làm
+    var tab by remember { mutableStateOf(AccTab.PNL) }   // mặc định Lãi Lỗ (mirror web)
 
     androidx.activity.compose.BackHandler(enabled = true) { onBack() }
 
@@ -77,6 +79,7 @@ fun AccountingScreen(onBack: () -> Unit) {
             },
         ) {
             when (tab) {
+                AccTab.PNL -> AccountingPnLTab()
                 AccTab.CASHFLOW -> AccountingCashflowTab()
                 AccTab.DEBTS -> AccountingDebtsTab()
                 AccTab.VAT -> AccountingVatTab()

@@ -46,9 +46,17 @@ import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.LastPriceDto
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.OrderItemMutationDto
+import vn.chat9.app.data.vapi.dto.PnLCategoryRowDto
+import vn.chat9.app.data.vapi.dto.PnLCustomersReportDto
+import vn.chat9.app.data.vapi.dto.PnLOrderDetailDto
+import vn.chat9.app.data.vapi.dto.PnLOrdersReportDto
+import vn.chat9.app.data.vapi.dto.PnLStatementDto
+import vn.chat9.app.data.vapi.dto.PnLTimelineRowDto
+import vn.chat9.app.data.vapi.dto.PnLTopProductDto
 import vn.chat9.app.data.vapi.dto.ProductSearchDto
 import vn.chat9.app.data.vapi.dto.RecentProductDto
 import vn.chat9.app.data.vapi.dto.SupplierDto
+import vn.chat9.app.data.vapi.dto.SupplierImageDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 
@@ -72,6 +80,51 @@ interface VapiApiService {
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<OrderDto>>
 
+    // ===== Báo cáo Lãi/Lỗ (P&L) — scope reports:read =====
+    @GET("v1/reports/pnl")
+    suspend fun pnlStatement(
+        @Query("from") from: String,
+        @Query("to") to: String,
+        @Query("basis") basis: String? = null,
+    ): VapiResponse<PnLStatementDto>
+
+    @GET("v1/reports/pnl/timeline")
+    suspend fun pnlTimeline(
+        @Query("from") from: String,
+        @Query("to") to: String,
+        @Query("bucket") bucket: String = "month",
+        @Query("basis") basis: String? = null,
+    ): VapiResponse<List<PnLTimelineRowDto>>
+
+    @GET("v1/reports/pnl/by-category")
+    suspend fun pnlByCategory(
+        @Query("from") from: String,
+        @Query("to") to: String,
+        @Query("basis") basis: String? = null,
+    ): VapiResponse<List<PnLCategoryRowDto>>
+
+    @GET("v1/reports/pnl/top-products")
+    suspend fun pnlTopProducts(
+        @Query("from") from: String,
+        @Query("to") to: String,
+        @Query("limit") limit: Int = 10,
+    ): VapiResponse<List<PnLTopProductDto>>
+
+    @GET("v1/reports/pnl/orders")
+    suspend fun pnlOrders(
+        @Query("from") from: String,
+        @Query("to") to: String,
+    ): VapiResponse<PnLOrdersReportDto>
+
+    @GET("v1/reports/pnl/customers")
+    suspend fun pnlCustomers(
+        @Query("from") from: String,
+        @Query("to") to: String,
+    ): VapiResponse<PnLCustomersReportDto>
+
+    @GET("v1/reports/pnl/order/{id}")
+    suspend fun pnlOrder(@Path("id") id: Long): VapiResponse<PnLOrderDetailDto>
+
     // ===== HĐ VAT =====
     @GET("v1/customers/{id}/vat-info")
     suspend fun listCustomerVatInfo(@Path("id") customerId: Long): VapiResponse<List<VatInfoDto>>
@@ -81,6 +134,10 @@ interface VapiApiService {
 
     @GET("v1/orders/{id}")
     suspend fun getOrder(@Path("id") id: Long): VapiResponse<OrderDto>
+
+    /** Mặt hàng đơn (ảnh data-URI + SL) để render ảnh gửi NCC. */
+    @GET("v1/orders/{id}/supplier-image-items")
+    suspend fun supplierImageItems(@Path("id") id: Long): VapiResponse<SupplierImageDto>
 
     @POST("v1/orders/{id}/fulfill")
     suspend fun fulfill(@Path("id") id: Long, @Body body: FulfillRequest): VapiResponse<FulfillResult>
@@ -209,6 +266,13 @@ interface VapiApiService {
         @Query("search") search: String? = null,
         @Query("active") active: Boolean? = null,
         @Query("per_page") perPage: Int = 100,
+    ): VapiResponse<List<SupplierDto>>
+
+    /** NCC sắp theo số đơn nhập N ngày gần nhất (mặc định 15) — dropdown chọn NCC tạo đơn nhập. */
+    @GET("v1/suppliers/recent-by-purchases")
+    suspend fun suppliersRecentByPurchases(
+        @Query("limit") limit: Int = 100,
+        @Query("days") days: Int = 15,
     ): VapiResponse<List<SupplierDto>>
 
     /** Last price NCC đã bán variant này (auto-fill giá khi add item đơn nhập). */

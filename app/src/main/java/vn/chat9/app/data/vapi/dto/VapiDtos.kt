@@ -6,6 +6,21 @@ import com.google.gson.annotations.SerializedName
  * DTO map JSON vapi. KHÔNG dùng `by lazy` — Gson dùng Unsafe bỏ qua constructor
  * nên lazy-field sẽ null → NPE. Dùng `val` mặc định, hoặc `get()` computed.
  */
+/** Mặt hàng để render ảnh gửi NCC (ảnh data-URI + SL, không giá). */
+data class SupplierImageDto(
+    val title: String = "",
+    @SerializedName("order_code") val orderCode: String = "",
+    @SerializedName("supplier_short_name") val supplierShortName: String = "",
+    val items: List<SupplierImageItemDto> = emptyList(),
+)
+
+data class SupplierImageItemDto(
+    val name: String = "",
+    val qty: Double = 0.0,
+    val unit: String = "",
+    val image: String? = null,   // data:image/...;base64,...
+)
+
 data class OrderDto(
     val id: Long = 0,
     val type: String = "sale",                 // sale|customer_return|purchase|supplier_return
@@ -592,4 +607,143 @@ data class CreateOrderItem(
     @SerializedName("unit_id") val unitId: Long,
     @SerializedName("qty_unit") val qtyUnit: Double,
     @SerializedName("unit_price") val unitPrice: Double,
+)
+
+// ===== Báo cáo Lãi/Lỗ (P&L) — GET /v1/reports/pnl* (mirror @/types/models/pnl.ts) =====
+data class PnLRevenueDto(
+    @SerializedName("gross_revenue") val grossRevenue: Double = 0.0,
+    @SerializedName("customer_returns") val customerReturns: Double = 0.0,
+    @SerializedName("revenue_deduction") val revenueDeduction: Double = 0.0,
+    @SerializedName("net_revenue") val netRevenue: Double = 0.0,
+)
+data class PnLCogsDto(
+    @SerializedName("net_cogs") val netCogs: Double = 0.0,
+)
+data class PnLOpexBreakdownDto(
+    @SerializedName("category_id") val categoryId: Long = 0,
+    val name: String = "",
+    val entries: Int = 0,
+    val amount: Double = 0.0,
+)
+data class PnLOpexDto(
+    @SerializedName("operating_base") val operatingBase: Double = 0.0,
+    @SerializedName("marketing_discount") val marketingDiscount: Double = 0.0,
+    @SerializedName("loyalty_discount") val loyaltyDiscount: Double = 0.0,
+    @SerializedName("returns_writeoff") val returnsWriteoff: Double = 0.0,
+    @SerializedName("total_opex") val totalOpex: Double = 0.0,
+    val breakdown: List<PnLOpexBreakdownDto> = emptyList(),
+)
+data class PnLFinancialDto(
+    @SerializedName("loan_interest") val loanInterest: Double = 0.0,
+)
+data class PnLTaxInvoiceCostsDto(
+    @SerializedName("invoice_fee") val invoiceFee: Double = 0.0,
+    @SerializedName("vat_payable") val vatPayable: Double = 0.0,
+    val cit: Double = 0.0,
+    val total: Double = 0.0,
+)
+data class PnLStatementDto(
+    val revenue: PnLRevenueDto = PnLRevenueDto(),
+    val cogs: PnLCogsDto = PnLCogsDto(),
+    @SerializedName("gross_profit") val grossProfit: Double = 0.0,
+    @SerializedName("gross_margin_percent") val grossMarginPercent: Double = 0.0,
+    @SerializedName("operating_expenses") val operatingExpenses: PnLOpexDto = PnLOpexDto(),
+    @SerializedName("operating_profit") val operatingProfit: Double = 0.0,
+    @SerializedName("operating_margin_percent") val operatingMarginPercent: Double = 0.0,
+    @SerializedName("financial_expenses") val financialExpenses: PnLFinancialDto = PnLFinancialDto(),
+    @SerializedName("tax_invoice_costs") val taxInvoiceCosts: PnLTaxInvoiceCostsDto = PnLTaxInvoiceCostsDto(),
+    @SerializedName("net_profit") val netProfit: Double = 0.0,
+    @SerializedName("net_margin_percent") val netMarginPercent: Double = 0.0,
+)
+data class PnLTimelineRowDto(
+    val label: String = "",
+    @SerializedName("net_profit") val netProfit: Double = 0.0,
+)
+data class PnLCategoryRowDto(
+    @SerializedName("category_id") val categoryId: Long = 0,
+    val name: String = "",
+    @SerializedName("total_amount") val totalAmount: Double = 0.0,
+)
+data class PnLTopProductDto(
+    @SerializedName("product_id") val productId: Long = 0,
+    @SerializedName("product_name") val productName: String = "",
+    val sku: String? = null,
+    @SerializedName("qty_sold") val qtySold: Double = 0.0,
+    val revenue: Double = 0.0,
+    val cogs: Double = 0.0,
+    @SerializedName("gross_profit") val grossProfit: Double = 0.0,
+    @SerializedName("gross_margin_percent") val grossMarginPercent: Double = 0.0,
+)
+data class PnLPartyRefDto(
+    val id: Long = 0,
+    val name: String? = null,
+)
+data class PnLTotalsDto(
+    @SerializedName("net_profit") val netProfit: Double = 0.0,
+)
+data class PnLOrderRowDto(
+    @SerializedName("order_id") val orderId: Long = 0,
+    val code: String = "",
+    @SerializedName("ordered_at") val orderedAt: String? = null,
+    val estimated: Boolean = false,
+    val customer: PnLPartyRefDto? = null,
+    @SerializedName("net_profit") val netProfit: Double = 0.0,
+)
+data class PnLOrdersReportDto(
+    val count: Int = 0,
+    @SerializedName("estimated_count") val estimatedCount: Int = 0,
+    val totals: PnLTotalsDto = PnLTotalsDto(),
+    val rows: List<PnLOrderRowDto> = emptyList(),
+)
+data class PnLCustomerRowDto(
+    @SerializedName("customer_id") val customerId: Long? = null,
+    @SerializedName("customer_name") val customerName: String? = null,
+    @SerializedName("order_count") val orderCount: Int = 0,
+    @SerializedName("estimated_count") val estimatedCount: Int = 0,
+    @SerializedName("net_profit") val netProfit: Double = 0.0,
+)
+data class PnLCustomersReportDto(
+    val count: Int = 0,
+    @SerializedName("estimated_count") val estimatedCount: Int = 0,
+    val totals: PnLTotalsDto = PnLTotalsDto(),
+    val rows: List<PnLCustomerRowDto> = emptyList(),
+)
+data class PnLOrderItemDto(
+    @SerializedName("order_item_id") val orderItemId: Long = 0,
+    val name: String? = null,
+    @SerializedName("unit_name") val unitName: String? = null,
+    @SerializedName("qty_unit") val qtyUnit: Double = 0.0,
+    @SerializedName("unit_price") val unitPrice: Double = 0.0,
+    @SerializedName("line_revenue") val lineRevenue: Double = 0.0,
+    @SerializedName("cost_each") val costEach: Double = 0.0,
+    @SerializedName("line_cogs") val lineCogs: Double = 0.0,
+    @SerializedName("line_profit") val lineProfit: Double = 0.0,
+    @SerializedName("margin_percent") val marginPercent: Double = 0.0,
+    val estimated: Boolean = false,
+)
+data class PnLOrderShipDto(
+    val actual: Double = 0.0,
+    @SerializedName("reimbursed_advance") val reimbursedAdvance: Double = 0.0,
+    @SerializedName("open_advance") val openAdvance: Double = 0.0,
+    val margin: Double = 0.0,
+)
+data class PnLOrderRevenueDto(
+    val net: Double = 0.0,
+)
+data class PnLOrderDetailDto(
+    val applicable: Boolean = false,
+    val reason: String? = null,
+    @SerializedName("order_id") val orderId: Long = 0,
+    val code: String = "",
+    @SerializedName("ordered_at") val orderedAt: String? = null,
+    val customer: PnLPartyRefDto? = null,
+    val revenue: PnLOrderRevenueDto = PnLOrderRevenueDto(),
+    val cogs: Double = 0.0,
+    @SerializedName("gross_profit") val grossProfit: Double = 0.0,
+    @SerializedName("gross_margin_percent") val grossMarginPercent: Double = 0.0,
+    val ship: PnLOrderShipDto = PnLOrderShipDto(),
+    @SerializedName("other_discount") val otherDiscount: Double = 0.0,
+    @SerializedName("net_profit") val netProfit: Double = 0.0,
+    @SerializedName("net_margin_percent") val netMarginPercent: Double = 0.0,
+    val items: List<PnLOrderItemDto> = emptyList(),
 )
