@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -241,29 +242,46 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(12.dp),
     ) {
-        // Hàng 1: mã đơn + badge trạng thái (góc phải)
+        // Hàng 1: ngày + mã đơn (trái) — badge trạng thái (phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(fmtOrderDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt), color = AdminColors.TextMuted, fontSize = 12.sp)
+            Spacer(Modifier.width(8.dp))
             Text(o.code, color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
             Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Medium,
                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
         }
         Spacer(Modifier.height(6.dp))
-        // Hàng 2: tên KH
+        // Hàng 2: tên khách hàng/đối tác
         Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(6.dp))
-        // Hàng 3: N mặt hàng · ngày  +  tổng tiền
+        // Hàng 3: N mặt hàng · tổng SL theo đơn vị (trái) — số tiền vàng gold, mảnh, nghiêng (phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("${o.items.size} mặt hàng · ${fmtOrderDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt)}",
-                color = AdminColors.TextMuted, fontSize = 12.sp)
-            Spacer(Modifier.weight(1f))
-            Text("${fmtMoney(o.totalAmount ?: 0.0)} đ", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text("${o.items.size} mặt hàng · ${qtySummary(o)}",
+                color = AdminColors.TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            Text("${fmtMoney(o.totalAmount ?: 0.0)} đ", color = Color(0xFFD4AF37), fontSize = 14.sp,
+                fontWeight = FontWeight.Light, fontStyle = FontStyle.Italic)
         }
     }
 }
 
 private val moneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))
 private fun fmtMoney(n: Double): String = moneyFmt.format(n.toLong())
+
+/** Tổng SL gộp theo đơn vị: "5 Thùng + 3 Gói" (đơn vị 2 nếu có). */
+private fun qtySummary(o: OrderDto): String {
+    val map = LinkedHashMap<String, Double>()
+    for (it in o.items) {
+        val unit = it.unitName.ifBlank { "đv" }
+        map[unit] = (map[unit] ?: 0.0) + it.qtyUnit
+    }
+    val parts = map.entries.map { "${trimZeros(it.value)} ${it.key}" }
+    return if (parts.isNotEmpty()) parts.joinToString(" + ") else "—"
+}
+private fun trimZeros(n: Double): String =
+    if (n == kotlin.math.floor(n) && !n.isInfinite()) n.toLong().toString() else n.toString()
 
 private val orderDayFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
 private fun fmtOrderDate(iso: String?): String =
