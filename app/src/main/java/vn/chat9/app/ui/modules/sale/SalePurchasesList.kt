@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,7 +52,7 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}) {
+fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = rememberLazyListState()) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -64,7 +65,6 @@ fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}) {
     var startDateMs by remember { mutableStateOf<Long?>(null) }
     var endDateMs by remember { mutableStateOf<Long?>(null) }
     var datePickerOpen by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
 
     fun load() {
         if (userId == null) { error = "Chưa đăng nhập"; loading = false; return }

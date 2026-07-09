@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
@@ -61,6 +62,12 @@ private enum class SaleTab(val label: String) { ORDERS("Đơn bán"), PURCHASES(
 fun SaleScreen(onBack: () -> Unit) {
     var tab by remember { mutableStateOf(SaleTab.ORDERS) }
     var creating by remember { mutableStateOf(false) }
+    // Hoist scroll-state 4 tab ở SaleScreen (sống suốt khi đổi tab / vào chi tiết) → giữ vị trí
+    // cuộn từng tab, chỉ reset khi rời module. Mirror scroll-memory của web.
+    val ordersListState = rememberLazyListState()
+    val purchasesListState = rememberLazyListState()
+    val productsListState = rememberLazyListState()
+    val customersListState = rememberLazyListState()
     var viewingOrderId by remember { mutableStateOf<Long?>(null) }   // tap đơn → chi tiết/edit
     var viewingPurchase by remember { mutableStateOf(false) }        // đơn đang tạo/xem là đơn nhập?
 
@@ -333,7 +340,7 @@ fun SaleScreen(onBack: () -> Unit) {
         ) {
             when (tab) {
                 SaleTab.ORDERS -> {
-                    SaleOrdersList(onTapOrder = { viewingOrderId = it; viewingPurchase = false })
+                    SaleOrdersList(onTapOrder = { viewingOrderId = it; viewingPurchase = false }, listState = ordersListState)
                     if (canCreate) {
                         FloatingActionButton(
                             onClick = { creating = true; viewingPurchase = false },
@@ -345,7 +352,7 @@ fun SaleScreen(onBack: () -> Unit) {
                     }
                 }
                 SaleTab.PURCHASES -> {
-                    SalePurchasesList(onTapOrder = { viewingOrderId = it; viewingPurchase = true })
+                    SalePurchasesList(onTapOrder = { viewingOrderId = it; viewingPurchase = true }, listState = purchasesListState)
                     if (canCreate) {
                         FloatingActionButton(
                             onClick = { creating = true; viewingPurchase = true },
@@ -356,8 +363,8 @@ fun SaleScreen(onBack: () -> Unit) {
                         ) { Icon(Icons.Default.Add, "Tạo đơn nhập") }
                     }
                 }
-                SaleTab.PRODUCTS -> SaleProductsList()
-                SaleTab.CUSTOMERS -> SaleCustomersList()
+                SaleTab.PRODUCTS -> SaleProductsList(listState = productsListState)
+                SaleTab.CUSTOMERS -> SaleCustomersList(listState = customersListState)
             }
         }
     }

@@ -3,6 +3,7 @@ package vn.chat9.app.ui.modules.sale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,7 +35,7 @@ import java.util.Locale
  * 20 KH gần nhất theo đơn của NV. Row: avatar + tên + phone + công nợ.
  */
 @Composable
-fun SaleCustomersList() {
+fun SaleCustomersList(listState: LazyListState = rememberLazyListState()) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val userId = container.tokenManager.user?.id?.toLong()
@@ -43,7 +44,6 @@ fun SaleCustomersList() {
     var customers by remember { mutableStateOf<List<CustomerDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refreshTick by remember { mutableStateOf(0) }   // vuốt xuống reload
-    val listState = rememberLazyListState()
 
     LaunchedEffect(query, refreshTick) {
         loading = true

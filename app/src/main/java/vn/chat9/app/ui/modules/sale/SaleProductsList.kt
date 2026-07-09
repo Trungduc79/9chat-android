@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,7 +45,7 @@ import vn.chat9.app.ui.explore.AdminColors
  * dropdown kho (30%). Tồn theo đơn vị mặc định, 3 dòng (Kho / số / tên đơn vị).
  */
 @Composable
-fun SaleProductsList() {
+fun SaleProductsList(listState: LazyListState = rememberLazyListState()) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
 
@@ -53,7 +54,6 @@ fun SaleProductsList() {
     var loading by remember { mutableStateOf(false) }
     var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
     var selectedWarehouseId by remember { mutableStateOf<Long?>(null) }
-    val listState = rememberLazyListState()
 
     suspend fun load() {
         loading = true
