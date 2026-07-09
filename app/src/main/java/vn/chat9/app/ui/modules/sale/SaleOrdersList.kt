@@ -12,11 +12,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.OrderDto
@@ -68,6 +73,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
     var startDateMs by remember { mutableStateOf<Long?>(null) }
     var endDateMs by remember { mutableStateOf<Long?>(null) }
     var datePickerOpen by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<OrderDto?>(null) }   // đơn chờ xác nhận xoá
 
     fun load() {
         if (userId == null) { error = "Chưa đăng nhập"; loading = false; return }
@@ -160,7 +166,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(filtered, key = { it.id }) { o ->
-                            OrderRow(o, onClick = { onTapOrder(o.id) })
+                            OrderRow(o, onClick = { onTapOrder(o.id) }, onDelete = { pendingDelete = o })
                         }
                     }
                 }
@@ -211,6 +217,31 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
             }
         }
     }
+
+    // Dialog xác nhận xoá đơn (chỉ nháp/đã duyệt).
+    pendingDelete?.let { del ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Xoá đơn", color = AdminColors.Text) },
+            text = { Text("Xoá đơn ${del.code} (${del.partyName})? Không hoàn tác được.", color = AdminColors.TextMuted) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    scope.launch {
+                        try {
+                            container.vapi.deleteOrder(del.id)
+                            orders = orders.filter { it.id != del.id }
+                            Toast.makeText(context, "Đã xoá đơn ${del.code}", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Xoá đơn thất bại: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) { Text("Xoá", color = AdminColors.Danger) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Huỷ", color = AdminColors.TextMuted) } },
+            containerColor = AdminColors.Card,
+        )
+    }
 }
 
 /** Bỏ dấu tiếng Việt + lowercase để search không dấu khớp có dấu. NFD tách dấu thanh/mũ;
@@ -224,7 +255,8 @@ private fun vnNoAccent(s: String): String =
 /** Card đơn — layout port từ web SaleOrdersListView: hàng mã+badge, tên KH, dòng "N mặt
  *  hàng · ngày" + tổng tiền. */
 @Composable
-private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
+private fun OrderRow(o: OrderDto, onClick: () -> Unit, onDelete: () -> Unit) {
+    val canDelete = o.status == "draft" || o.status == "confirmed"
     val statusColor = when (o.status) {
         "draft" -> AdminColors.TextMuted
         "confirmed" -> AdminColors.Info
@@ -253,6 +285,12 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit) {
             Spacer(Modifier.weight(1f))
             Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Medium,
                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
+            // Xoá đơn (chỉ nháp/đã duyệt) — icon cạnh phải badge trạng thái
+            if (canDelete) {
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Default.Delete, contentDescription = "Xoá đơn", tint = AdminColors.TextMuted,
+                    modifier = Modifier.size(18.dp).clip(RoundedCornerShape(4.dp)).clickable { onDelete() })
+            }
         }
         Spacer(Modifier.height(2.dp))
         // Hàng 2: tên khách hàng/đối tác
