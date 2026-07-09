@@ -45,8 +45,10 @@ import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.FulfillResult
 import vn.chat9.app.data.vapi.dto.LastPriceDto
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.data.vapi.dto.OrderItemMutationDto
 import vn.chat9.app.data.vapi.dto.ProductSearchDto
 import vn.chat9.app.data.vapi.dto.RecentProductDto
+import vn.chat9.app.data.vapi.dto.SupplierDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 
@@ -63,7 +65,10 @@ interface VapiApiService {
         @Query("warehouse_id") warehouseId: Long? = null,
         @Query("created_by_user_id") createdByUserId: Long? = null,  // app sale: chỉ đơn của NV
         @Query("type") type: String? = null,                          // sale|purchase|...
-        @Query("invoice_only") invoiceOnly: String? = null,           // '1' = chỉ HĐ VAT (is_invoice_only)
+        @Query("invoice_only") invoiceOnly: String? = null,           // '1' = chỉ HĐ VAT (is_invoice_only); 'all' = mọi đơn
+        @Query("party_id") partyId: Long? = null,                     // lọc theo KH (dialog đơn của khách)
+        @Query("date_from") dateFrom: String? = null,                 // YYYY-MM-DD
+        @Query("date_to") dateTo: String? = null,                     // YYYY-MM-DD
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<OrderDto>>
 
@@ -196,6 +201,31 @@ interface VapiApiService {
         @Query("unit_id") unitId: Long? = null,
     ): VapiResponse<LastPriceDto>
 
+    // ===== Đơn nhập (NCC) — port từ web supplierApi =====
+
+    /** Danh sách/search NCC (đơn nhập). active=true → chỉ NCC đang hoạt động. */
+    @GET("v1/suppliers")
+    suspend fun listSuppliers(
+        @Query("search") search: String? = null,
+        @Query("active") active: Boolean? = null,
+        @Query("per_page") perPage: Int = 100,
+    ): VapiResponse<List<SupplierDto>>
+
+    /** Last price NCC đã bán variant này (auto-fill giá khi add item đơn nhập). */
+    @GET("v1/suppliers/{id}/last-price")
+    suspend fun supplierLastPrice(
+        @Path("id") id: Long,
+        @Query("variant_id") variantId: Long,
+        @Query("unit_id") unitId: Long,
+    ): VapiResponse<LastPriceDto?>
+
+    /** 5 SP hay nhập từ NCC (chip gợi ý đơn nhập). */
+    @GET("v1/suppliers/{id}/recent-products")
+    suspend fun supplierRecentProducts(
+        @Path("id") id: Long,
+        @Query("limit") limit: Int = 5,
+    ): VapiResponse<List<RecentProductDto>>
+
     /** Tạo đơn nháp / xác nhận (status quyết payload). */
     @POST("v1/orders")
     suspend fun createOrder(@Body body: CreateOrderRequest): VapiResponse<OrderDto>
@@ -205,8 +235,9 @@ interface VapiApiService {
     suspend fun updateOrder(@Path("id") id: Long, @Body body: CreateOrderRequest): VapiResponse<OrderDto>
 
     // Sửa item đơn NON-DRAFT (bulk update bỏ qua items với đơn non-draft) → per-item endpoint.
+    // Trả { item, order } để autosave lấy item.id (thêm dòng thứ 2+ vào đơn nháp).
     @POST("v1/orders/{id}/items")
-    suspend fun addOrderItem(@Path("id") id: Long, @Body body: CreateOrderItem): VapiResponse<Unit>
+    suspend fun addOrderItem(@Path("id") id: Long, @Body body: CreateOrderItem): VapiResponse<OrderItemMutationDto>
 
     @retrofit2.http.PUT("v1/orders/{id}/items/{itemId}")
     suspend fun updateOrderItem(@Path("id") id: Long, @Path("itemId") itemId: Long, @Body body: CreateOrderItem): VapiResponse<Unit>

@@ -28,9 +28,11 @@ data class OrderDto(
     // hoặc đơn bán bị chặn fulfill trực tiếp — phải đi qua đơn nhập).
     @SerializedName("linked_order_id") val linkedOrderId: Long? = null,
     @SerializedName("linked_order") val linkedOrder: LinkedOrderDto? = null,
+    @SerializedName("dropship_customer_id") val dropshipCustomerId: Long? = null,   // đơn nhập giao thẳng → KH nhận
     @SerializedName("vat_output_invoice_id") val vatOutputInvoiceId: Long? = null, // HĐ VAT liên kết (null = đơn nháp chưa xuất)
     @SerializedName("vat_include_phone") val vatIncludePhone: Boolean = false,      // SĐT khách hiển thị trên HĐ
     val meta: MetaDto? = null,
+    @SerializedName("thumb_url") val thumbUrl: String? = null,       // ảnh đính kèm đầu tiên (BE resolve ở list)
     val items: List<OrderItemDto> = emptyList(),
 ) {
     val isPurchase: Boolean get() = type == "purchase" || type == "supplier_return"
@@ -88,6 +90,12 @@ data class OrderItemDto(
             ?.entries?.filter { it.value.isNotBlank() }
             ?.map { it.key to it.value } ?: emptyList()
 }
+
+/** Response của add/update 1 item ({ item, order }) — cần item.id sau autosave thêm dòng. */
+data class OrderItemMutationDto(
+    val item: OrderItemDto? = null,
+    val order: OrderDto? = null,
+)
 
 /** Variant rút gọn trong order item — chỉ cần units cho dropdown đổi đơn vị. */
 data class OrderItemVariantDto(
@@ -369,6 +377,19 @@ data class CustomerDto(
     @SerializedName("debt_balance") val debtBalance: Double? = null,
 )
 
+/** NCC cho picker đơn nhập + search. BE trả full Supplier; chỉ dùng cột nhẹ ở UI. */
+data class SupplierDto(
+    val id: Long = 0,
+    val code: String = "",
+    val name: String = "",
+    @SerializedName("short_name") val shortName: String? = null,
+    val phone: String? = null,
+    @SerializedName("is_active") val isActive: Boolean = true,
+) {
+    /** Tên hiển thị: ưu tiên short_name (đơn nhập sắp xếp + hiển thị theo tên rút gọn). */
+    val display: String get() = shortName?.takeIf { it.isNotBlank() } ?: name
+}
+
 /** Product + variant flat cho list search (BE eager-load variants nhẹ). */
 data class ProductSearchDto(
     val id: Long = 0,
@@ -490,7 +511,8 @@ data class VatOutputInvoiceDto(
 data class VatOutputItemDto(
     @SerializedName("vat_rate") val vatRate: Double = 0.0,
     @SerializedName("vat_amount") val vatAmount: Double = 0.0,
-    val subtotal: Double = 0.0,
+    val subtotal: Double = 0.0,           // tiền hàng chưa thuế (net) dòng
+    val total: Double = 0.0,              // thành tiền đã gồm VAT (gross) dòng
 )
 
 /** Kết quả Upload PO → AI tạo HĐ VAT nháp. */
@@ -559,6 +581,7 @@ data class CreateOrderRequest(
     @SerializedName("shipping_fee") val shippingFee: Double? = null,       // phí ship KH
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // phí ship kho
     @SerializedName("cod_collected") val codCollected: Double? = null,     // thu hộ
+    @SerializedName("dropship_customer_id") val dropshipCustomerId: Long? = null, // đơn nhập giao thẳng → KH nhận
     val items: List<CreateOrderItem>,
     val notes: String? = null,
     @SerializedName("created_by_user_id") val createdByUserId: Long? = null, // 9chat user id

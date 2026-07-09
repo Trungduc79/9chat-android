@@ -1,6 +1,7 @@
 package vn.chat9.app.ui.modules.sale
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -29,6 +32,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,12 +51,21 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import kotlinx.coroutines.sync.withLock
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -67,6 +81,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,6 +93,7 @@ import vn.chat9.app.di.AppContainer
 import vn.chat9.app.data.vapi.dto.CreateOrderItem
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
 import vn.chat9.app.data.vapi.dto.CustomerDto
+import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.RecentProductDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.VariantUnitDto
@@ -85,7 +101,12 @@ import vn.chat9.app.data.vapi.dto.WarehouseDto
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.modules.warehouse.PhotoZoomViewer
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+
+/** Sentinel kho = "Giao cho khách (giao thẳng)" trong dropdown kho đơn nhập (mirror web DROPSHIP_WH). */
+private const val DROPSHIP_WH = -999L
 
 private val moneyFmt: NumberFormat = NumberFormat.getNumberInstance(Locale("vi"))
 private fun fmtMoney(n: Double): String = moneyFmt.format(Math.round(n))
@@ -108,14 +129,21 @@ internal fun variantDisplay(v: VariantSearchDto, productName: String): String {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, onDone: () -> Unit) {
+fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditAnyStatus: Boolean = false, onDone: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
     val userId = container.tokenManager.user?.id?.toLong()
 
+    // Nhãn đối tác: đơn nhập = NCC, đơn bán = KH.
+    val partyWord = if (isPurchase) "NCC" else "KH"
+    val partyWordFull = if (isPurchase) "nhà cung cấp" else "khách hàng"
+
     // ===== state =====
     var selectedCustomer by remember { mutableStateOf<CustomerDto?>(null) }
+    // Drop-ship (đơn nhập giao thẳng): khách nhận hàng + picker riêng.
+    var dropshipCustomer by remember { mutableStateOf<CustomerDto?>(null) }
+    var dropshipPickerOpen by remember { mutableStateOf(false) }
     val items = remember { mutableStateListOf<OrderItemDraft>() }
     var notes by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
@@ -124,11 +152,18 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
     var codAmount by remember { mutableStateOf("") }
     var orderDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var datePickerOpen by remember { mutableStateOf(false) }
+    // Đơn đang xem — đổi khi tap thumb 1 đơn khác trong dialog "đơn của khách" (mirror web router.push
+    // + watcher: reload state khi id đổi). Khởi tạo = param, không đổi call site.
+    var currentOrderId by remember { mutableStateOf(orderId) }
+    // Chặn reload 1 lần khi autosave vừa tạo đơn nháp (currentOrderId đổi nhưng form đã đúng).
+    var suppressReload by remember { mutableStateOf(false) }
+    // Dialog "đơn hàng của khách" (tap tên KH) + dòng đang phóng thumb.
+    var custOrdersOpen by remember { mutableStateOf(false) }
 
     // Edit/view existing order: load khi có orderId. canEdit = tạo mới HOẶC draft; allowEditAnyStatus
     // (dialog công nợ) → cho sửa mọi tình trạng trừ đã huỷ.
     var existingStatus by remember { mutableStateOf<String?>(null) }
-    val canEdit = orderId == null || existingStatus == "draft" ||
+    val canEdit = currentOrderId == null || existingStatus == "draft" ||
         (allowEditAnyStatus && existingStatus != null && existingStatus != "cancelled")
     // Sửa đơn ĐÃ non-draft → lưu qua per-item endpoint (giữ nguyên tình trạng).
     val editingNonDraft = allowEditAnyStatus && existingStatus != null && existingStatus != "draft" && existingStatus != "cancelled"
@@ -137,6 +172,13 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
     var viewerUrl by remember { mutableStateOf<String?>(null) }   // ảnh đang preview (zoom/pan)
     var deliveryDate by remember { mutableStateOf<String?>(null) }   // ngày giao (completed_at) — caption preview
     val originalItems = remember { mutableStateListOf<OrigItemSnap>() }
+
+    // Lưu nháp → Ở LẠI form (không thoát). Vừa TẠO mới → chuyển sang chế độ sửa đơn vừa tạo
+    // (đổi currentOrderId + chặn reload 1 lần để không wipe form).
+    val onDraftSaved: (Long) -> Unit = { id ->
+        if (currentOrderId != id) { suppressReload = true; currentOrderId = id }
+        existingStatus = "draft"
+    }
 
     // ===== Keyboard handling: tap ngoài tắt bàn phím + scroll input vào giữa view
     // còn lại (= screen - keyboard). Công thức port từ WarehouseOrderDetail. =====
@@ -163,16 +205,31 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
             if (orderId == null) selectedWarehouseId = ws.firstOrNull { it.isDefault }?.id ?: ws.firstOrNull()?.id
         } catch (_: Exception) {}
     }
+    // Đơn nhập chọn "Giao cho khách" → giao thẳng cho KH nhận (không nhập kho).
+    val isDropship = isPurchase && selectedWarehouseId == DROPSHIP_WH
 
-    // Load đơn existing (edit/view) → populate state.
-    LaunchedEffect(orderId) {
-        val oid = orderId ?: return@LaunchedEffect
+    // Load đơn existing (edit/view) → populate state. Key theo currentOrderId → tap thumb đơn khác
+    // trong dialog "đơn của khách" sẽ nạp lại toàn bộ state (mirror web watcher route.params.id).
+    LaunchedEffect(currentOrderId) {
+        val oid = currentOrderId ?: return@LaunchedEffect
+        // Bỏ qua lần reload do autosave vừa tạo đơn (giữ state đang nhập, không wipe).
+        if (suppressReload) { suppressReload = false; return@LaunchedEffect }
         try {
             val o = container.vapi.getOrder(oid).data ?: return@LaunchedEffect
             existingStatus = o.status
             deliveryDate = o.completedAt
-            o.party?.let { selectedCustomer = CustomerDto(id = it.id, name = it.name ?: "", phone = it.phone) }
+            o.party?.let { p ->
+                // Đơn nhập: hiển thị tên rút gọn NCC; đơn bán: tên KH.
+                val nm = if (isPurchase) (p.shortName?.takeIf { it.isNotBlank() } ?: p.name ?: "") else (p.name ?: "")
+                selectedCustomer = CustomerDto(id = p.id, name = nm, phone = p.phone)
+            }
             o.warehouseId?.let { selectedWarehouseId = it }
+            // Đơn nhập giao thẳng → chọn "Giao cho khách" + khôi phục KH nhận (từ đơn bán liên kết).
+            if (isPurchase && o.dropshipCustomerId != null) {
+                selectedWarehouseId = DROPSHIP_WH
+                val lp = o.linkedOrder?.party
+                dropshipCustomer = CustomerDto(id = o.dropshipCustomerId, name = lp?.name?.takeIf { it.isNotBlank() } ?: "Khách nhận hàng", phone = lp?.phone)
+            }
             o.orderedAt?.let { runCatching { orderDateMs = java.time.Instant.parse(it).toEpochMilli() } }
             notes = o.notes ?: ""
             shipCustomer = o.shippingFee?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
@@ -201,11 +258,19 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
         } catch (_: Exception) {}
     }
 
-    // SP hay mua của KH
+    // SP gợi ý ở thẻ mặt hàng:
+    // - Đơn nhập giao thẳng: SP KHÁCH NHẬN hay mua (recentProducts của KH nhận).
+    // - Đơn nhập thường: SP hay nhập từ NCC (supplierRecentProducts).
+    // - Đơn bán: SP KH hay mua (recentProducts).
     var suggested by remember { mutableStateOf<List<RecentProductDto>>(emptyList()) }
-    LaunchedEffect(selectedCustomer?.id) {
-        val c = selectedCustomer ?: return@LaunchedEffect
-        suggested = try { container.vapi.recentProducts(c.id, 5).data ?: emptyList() } catch (_: Exception) { emptyList() }
+    LaunchedEffect(selectedCustomer?.id, isDropship, dropshipCustomer?.id) {
+        suggested = try {
+            when {
+                isDropship -> dropshipCustomer?.let { container.vapi.recentProducts(it.id, 5).data } ?: emptyList()
+                isPurchase -> selectedCustomer?.let { container.vapi.supplierRecentProducts(it.id, 5).data } ?: emptyList()
+                else -> selectedCustomer?.let { container.vapi.recentProducts(it.id, 5).data } ?: emptyList()
+            }
+        } catch (_: Exception) { emptyList() }
     }
 
     // Pickers — tạo mới mở KH luôn; edit/view không auto mở.
@@ -213,6 +278,63 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
     var productPickerOpen by remember { mutableStateOf(false) }
     var pickerInitQuery by remember { mutableStateOf("") }
     var pickerProductId by remember { mutableStateOf<Long?>(null) }
+
+    // ===== Autosave nháp (mirror web SaleOrderFormView) =====
+    // Chọn SP đầu tiên → tạo đơn nháp ngay; đổi giá/SL/đơn vị → PUT item khi blur; xoá → DELETE.
+    // Chỉ khi tạo mới / sửa đơn nháp; dialog công nợ (allowEditAnyStatus) → giữ lưu tay.
+    val autosaveEnabled = !allowEditAnyStatus
+    // Serialize autosave (create/add/update) → tránh tạo TRÙNG đơn khi chọn 2 SP liên tiếp.
+    val autosaveMutex = remember { kotlinx.coroutines.sync.Mutex() }
+    suspend fun autosaveDraft(vId: Long) {
+        if (!autosaveEnabled) return
+        autosaveMutex.withLock {
+        val cust = selectedCustomer ?: return@withLock
+        val idx = items.indexOfFirst { it.variantId == vId }
+        if (idx < 0) return@withLock
+        val d = items[idx]
+        if (d.unitId == 0L || d.qty <= 0.0 || d.price < 0.0) return@withLock
+        if (isDropship && dropshipCustomer == null) return@withLock   // giao thẳng cần khách nhận trước
+        val line = CreateOrderItem(d.variantId, d.unitId, d.qty, d.price)
+        try {
+            val oid = currentOrderId
+            if (oid != null && d.id != null) {
+                container.vapi.updateOrderItem(oid, d.id!!, line)
+            } else if (oid != null && d.id == null) {
+                val newId = container.vapi.addOrderItem(oid, line).data?.item?.id
+                val i2 = items.indexOfFirst { it.variantId == vId }
+                if (i2 >= 0 && newId != null) items[i2] = items[i2].copy(id = newId)
+            } else {
+                // Tạo đơn nháp với chính SP này (SP đầu tiên).
+                val req = CreateOrderRequest(
+                    type = if (isPurchase) "purchase" else "sale",
+                    partyType = if (isPurchase) "supplier" else "customer",
+                    partyId = cust.id, status = "draft",
+                    orderedAt = java.time.Instant.ofEpochMilli(orderDateMs).toString(),
+                    warehouseId = if (isDropship) null else selectedWarehouseId,
+                    dropshipCustomerId = if (isDropship) dropshipCustomer?.id else null,
+                    shippingFee = if (isPurchase) null else parseMoney(shipCustomer).takeIf { it > 0 },
+                    actualShippingFee = if (isPurchase) null else parseMoney(shipCompany).takeIf { it > 0 },
+                    codCollected = if (isPurchase) null else parseMoney(codAmount).takeIf { it > 0 },
+                    items = listOf(line),
+                    notes = notes.ifBlank { null },
+                    createdByUserId = userId,
+                )
+                val created = container.vapi.createOrder(req).data ?: return@withLock
+                existingStatus = "draft"
+                val newId = created.items.firstOrNull()?.id
+                val i2 = items.indexOfFirst { it.variantId == vId }
+                if (i2 >= 0 && newId != null) items[i2] = items[i2].copy(id = newId)
+                // Set currentOrderId SAU khi map item; chặn reload để không wipe form.
+                suppressReload = true
+                currentOrderId = created.id
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Lưu tự động thất bại: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+        }   // /autosaveMutex.withLock
+    }
+    // Trigger autosave (non-suspend) từ callback item.
+    fun autosave(vId: Long) { scope.launch { autosaveDraft(vId) } }
 
     fun addVariant(v: VariantSearchDto) {
         if (items.any { it.variantId == v.id }) {
@@ -224,7 +346,9 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
         scope.launch {
             var price = defUnit?.price ?: v.price ?: 0.0
             try {
-                val lp = container.vapi.lastPrice(selectedCustomer!!.id, v.id, defUnit?.id).data
+                val lp = if (isPurchase) {
+                    if (defUnit != null) container.vapi.supplierLastPrice(selectedCustomer!!.id, v.id, defUnit.id).data else null
+                } else container.vapi.lastPrice(selectedCustomer!!.id, v.id, defUnit?.id).data
                 if (lp?.unitPrice != null) price = lp.unitPrice
             } catch (_: Exception) {}
             items.add(OrderItemDraft(
@@ -239,6 +363,8 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
             ))
             // Picker giữ mở → cần xác nhận đã thêm (form bị sheet che).
             Toast.makeText(context, "Đã thêm \"${variantDisplay(v, v.product?.name ?: "")}\"", Toast.LENGTH_SHORT).show()
+            // Chọn SP → tự lưu nháp ngay (SP đầu tiên tạo đơn; SP sau thêm item).
+            autosaveDraft(v.id)
         }
     }
 
@@ -256,24 +382,56 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card)
                     .padding(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 6.dp),
             ) {
-                Row(Modifier.fillMaxWidth().clickable(enabled = canEdit) { customerPickerOpen = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        if (selectedCustomer == null) Text("Chưa chọn khách hàng", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic)
-                        else Text(selectedCustomer!!.name, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        if (selectedCustomer == null) Text("Chưa chọn $partyWordFull", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic,
+                            modifier = Modifier.clickable(enabled = canEdit) { customerPickerOpen = true })
+                        // Tap tên đối tác → xem đơn hàng của đối tác đó (mirror web).
+                        // Đơn nhập: tên NCC to hơn 2sp (16) + chiều cao dòng giảm ~15% (18sp).
+                        else Text(selectedCustomer!!.name, color = AdminColors.Text,
+                            fontSize = if (isPurchase) 16.sp else 14.sp,
+                            lineHeight = if (isPurchase) 18.sp else androidx.compose.ui.unit.TextUnit.Unspecified,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.clickable { custOrdersOpen = true })
                     }
-                    if (canEdit) Text(if (selectedCustomer == null) "Chọn KH" else "Đổi KH", color = AdminColors.Primary, fontSize = 12.sp)
+                    if (canEdit) Text(if (selectedCustomer == null) "Chọn $partyWord" else "Đổi $partyWord", color = AdminColors.Primary, fontSize = 12.sp,
+                        modifier = Modifier.clickable { customerPickerOpen = true }.padding(4.dp))
                 }
                 HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.5f), modifier = Modifier.padding(vertical = 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Kho bán", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
-                    WarehouseDropdown(warehouses, selectedWarehouseId, canEdit) { selectedWarehouseId = it }
-                    Spacer(Modifier.weight(1f))
+                    // Đơn bán: nhãn "Kho bán" + dropdown wrap-content. Đơn nhập: dropdown full-width
+                    // căn giữa (nhãn "Giao về {kho}" + option "Giao cho khách"), ngày ở cuối hàng.
+                    if (!isPurchase) {
+                        Text("Kho bán", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
+                        WarehouseDropdown(warehouses, selectedWarehouseId, canEdit) { selectedWarehouseId = it }
+                        Spacer(Modifier.weight(1f))
+                    } else {
+                        WarehouseDropdown(warehouses, selectedWarehouseId, canEdit, isPurchase = true, modifier = Modifier.weight(1f)) { selectedWarehouseId = it }
+                        Spacer(Modifier.width(8.dp))
+                    }
                     // Ngày đơn — tap mở DatePicker (chỉ canEdit).
                     val dateLabel = java.text.SimpleDateFormat("dd/MM/yyyy", Locale("vi")).format(java.util.Date(orderDateMs))
                     Text(dateLabel, color = if (canEdit) AdminColors.Primary else AdminColors.TextMuted, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                         modifier = Modifier.clickable(enabled = canEdit) { datePickerOpen = true }
                             .background(AdminColors.Primary.copy(alpha = if (canEdit) 0.08f else 0f), RoundedCornerShape(6.dp))
                             .padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+            }
+
+            // ===== Thẻ khách nhận hàng (giao thẳng) — chỉ khi đơn nhập chọn "Giao cho khách" =====
+            if (isDropship) {
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(12.dp),
+                ) {
+                    Text("Khách nhận hàng (giao thẳng)", color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (dropshipCustomer == null) Text("Chưa chọn khách nhận", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, modifier = Modifier.weight(1f))
+                        else Text(dropshipCustomer!!.name, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                        if (canEdit) Text(if (dropshipCustomer == null) "Chọn khách" else "Đổi khách", color = AdminColors.Primary, fontSize = 12.sp,
+                            modifier = Modifier.clickable { dropshipPickerOpen = true }.padding(4.dp))
+                    }
                 }
             }
 
@@ -312,10 +470,21 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
                                 focusCtx = focusCtx,
                                 scope = scope,
                                 canEdit = canEdit,
-                                onDelete = { items.removeAt(idx) },
+                                onDelete = {
+                                    val removed = it
+                                    items.removeAt(idx)
+                                    // Xoá item đã lưu khỏi đơn nháp (đơn non-draft dùng diff ở submit → bỏ qua).
+                                    val oid = currentOrderId
+                                    if (autosaveEnabled && oid != null && removed.id != null) scope.launch {
+                                        try { container.vapi.deleteOrderItem(oid, removed.id!!) }
+                                        catch (e: Exception) { Toast.makeText(context, "Xoá item thất bại: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                    }
+                                },
                                 onQtyChange = { q -> items[idx] = it.copy(qty = q) },
                                 onPriceChange = { p -> items[idx] = it.copy(price = p) },
-                                onUnitChange = { u -> items[idx] = it.copy(unitId = u.id, price = u.price ?: it.price) },
+                                onUnitChange = { u -> items[idx] = it.copy(unitId = u.id, price = u.price ?: it.price); autosave(it.variantId) },
+                                onQtyCommit = { autosave(it.variantId) },
+                                onPriceCommit = { autosave(it.variantId) },
                             )
                             if (idx < items.size - 1) HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.4f))
                         }
@@ -343,9 +512,9 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
                 }
             }
 
+            // ===== Card phí ship + COD (bỏ title, pt/pb gọn) — ẩn với đơn nhập =====
+            if (!isPurchase) {
             Spacer(Modifier.height(12.dp))
-
-            // ===== Card phí ship + COD (bỏ title, pt/pb gọn) =====
             Card("", vPadding = 6.dp) {
                 ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit, marker = "(2)") { shipCustomer = it }
                 ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit) { shipCompany = it }
@@ -365,6 +534,7 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
                     }
                 }
             }
+            }   // /if (!isPurchase) — card ship/COD
 
             Spacer(Modifier.height(12.dp))
 
@@ -404,7 +574,7 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
             // Tạo mới / draft → Lưu nháp | Xác nhận.
             if (canEdit && editingNonDraft) {
                 Button(
-                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone, onDraftSaved) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
                     modifier = Modifier.fillMaxWidth(),
@@ -414,12 +584,12 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
                 }
             } else if (canEdit) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", false, emptyList(), context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", false, emptyList(), context, onDone, onDraftSaved) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     modifier = Modifier.weight(1f),
                 ) { Text("Lưu nháp") }
                 Button(
-                    onClick = { submit(scope, container, orderId, userId, selectedCustomer, selectedWarehouseId, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", false, emptyList(), context, onDone) { saving = it } },
+                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", false, emptyList(), context, onDone, onDraftSaved) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
                     modifier = Modifier.weight(1f),
@@ -433,8 +603,25 @@ fun SaleOrderForm(orderId: Long? = null, allowEditAnyStatus: Boolean = false, on
     }
 
     // ===== Pickers =====
+    // Party picker: đơn nhập → chọn NCC (listSuppliers); đơn bán → chọn KH.
     if (customerPickerOpen) {
-        CustomerPicker(onPick = { c -> selectedCustomer = c; customerPickerOpen = false }, onClose = { customerPickerOpen = false })
+        CustomerPicker(isPurchase = isPurchase, onPick = { c -> selectedCustomer = c; customerPickerOpen = false }, onClose = { customerPickerOpen = false })
+    }
+    // Dropship picker: khách nhận hàng (giao thẳng) — LUÔN là KH, kể cả đang ở đơn nhập.
+    if (dropshipPickerOpen) {
+        CustomerPicker(isPurchase = false, onPick = { c -> dropshipCustomer = c; dropshipPickerOpen = false }, onClose = { dropshipPickerOpen = false })
+    }
+    // Dialog đơn hàng của đối tác (tap tên) — mirror web: lọc ngày (mặc định 15 ngày), thumb phóng, tap thumb mở đơn.
+    selectedCustomer?.let { c ->
+        if (custOrdersOpen) {
+            CustomerOrdersDialog(
+                customerId = c.id,
+                customerName = c.name,
+                isPurchase = isPurchase,
+                onOpenOrder = { id -> custOrdersOpen = false; currentOrderId = id },
+                onClose = { custOrdersOpen = false },
+            )
+        }
     }
     if (productPickerOpen && selectedCustomer != null) {
         VariantPicker(
@@ -513,25 +700,51 @@ internal fun Card(title: String, vPadding: Dp = 12.dp, content: @Composable Colu
     }
 }
 
-/** Dropdown chọn kho — dark mode. enabled=false → chỉ hiển thị (readonly). */
+/**
+ * Dropdown chọn kho — dark mode. enabled=false → chỉ hiển thị (readonly).
+ * isPurchase: đổi nhãn kho thành "Giao về {kho}", thêm option "Giao cho khách (giao thẳng)"
+ * (sentinel [DROPSHIP_WH]), trigger full-width + căn giữa (mirror web NSelect wh-center).
+ */
 @Composable
-private fun WarehouseDropdown(warehouses: List<WarehouseDto>, selectedId: Long?, enabled: Boolean = true, onSelect: (Long) -> Unit) {
+private fun WarehouseDropdown(
+    warehouses: List<WarehouseDto>,
+    selectedId: Long?,
+    enabled: Boolean = true,
+    isPurchase: Boolean = false,
+    modifier: Modifier = Modifier,
+    onSelect: (Long) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     val current = warehouses.firstOrNull { it.id == selectedId }
-    Box {
-        Row(Modifier.clickable(enabled = enabled) { open = true }, verticalAlignment = Alignment.CenterVertically) {
-            Text(current?.name ?: "Chọn kho", color = AdminColors.Text, fontSize = 14.sp)
+    val triggerText = when {
+        isPurchase && selectedId == DROPSHIP_WH -> "Giao cho khách (giao thẳng)"
+        isPurchase && current != null -> "Giao về ${current.name}"
+        current != null -> current.name
+        else -> "Chọn kho"
+    }
+    Box(modifier) {
+        Row(
+            (if (isPurchase) Modifier.fillMaxWidth() else Modifier).clickable(enabled = enabled) { open = true },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (isPurchase) Arrangement.Center else Arrangement.Start,
+        ) {
+            Text(triggerText, color = AdminColors.Text, fontSize = 14.sp)
             if (enabled) Text(" ▾", color = AdminColors.TextMuted, fontSize = 12.sp)
         }
         MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text)) {
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 warehouses.forEach { w ->
                     DropdownMenuItem(
-                        text = { Text(w.name, color = if (w.id == selectedId) AdminColors.Primary else AdminColors.Text) },
+                        text = { Text(if (isPurchase) "Giao về ${w.name}" else w.name, color = if (w.id == selectedId) AdminColors.Primary else AdminColors.Text) },
                         onClick = { onSelect(w.id); open = false },
                         colors = MenuDefaults.itemColors(textColor = AdminColors.Text),
                     )
                 }
+                if (isPurchase) DropdownMenuItem(
+                    text = { Text("Giao cho khách (giao thẳng)", color = if (selectedId == DROPSHIP_WH) AdminColors.Primary else AdminColors.Text) },
+                    onClick = { onSelect(DROPSHIP_WH); open = false },
+                    colors = MenuDefaults.itemColors(textColor = AdminColors.Text),
+                )
             }
         }
     }
@@ -547,6 +760,8 @@ private fun ItemRow(
     onQtyChange: (Double) -> Unit,
     onPriceChange: (Double) -> Unit,
     onUnitChange: (VariantUnitDto) -> Unit,
+    onQtyCommit: () -> Unit = {},
+    onPriceCommit: () -> Unit = {},
 ) {
     // Swipe trái > 1/3 width → xoá (chỉ canEdit).
     var offsetX by remember(draft.variantId) { mutableStateOf(0f) }
@@ -580,6 +795,7 @@ private fun ItemRow(
                 // Total + đ cố định phải (không weight).
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     var qtyText by remember(draft.variantId) { mutableStateOf(trimZeros(draft.qty)) }
+                    var qtyAtFocus by remember(draft.variantId) { mutableStateOf<String?>(null) }
                     BasicTextField(
                         value = qtyText,
                         onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
@@ -588,7 +804,12 @@ private fun ItemRow(
                         singleLine = true,
                         textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
                         cursorBrush = SolidColor(AdminColors.Primary),
-                        modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}"),
+                        // Snapshot lúc focus, blur → autosave nếu đổi (tránh PUT thừa).
+                        modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}")
+                            .onFocusChanged { st ->
+                                if (st.isFocused) qtyAtFocus = qtyText
+                                else if (qtyAtFocus != null) { if (qtyAtFocus != qtyText) onQtyCommit(); qtyAtFocus = null }
+                            },
                     )
                     Spacer(Modifier.weight(1f))
                     UnitDropdown(draft.units, draft.unitId, canEdit, onUnitChange)
@@ -596,6 +817,7 @@ private fun ItemRow(
                     Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.weight(1f))
                     var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
+                    var priceAtFocus by remember(draft.variantId) { mutableStateOf<String?>(null) }
                     BasicTextField(
                         value = priceText,
                         onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
@@ -604,13 +826,18 @@ private fun ItemRow(
                         singleLine = true,
                         textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
                         cursorBrush = SolidColor(AdminColors.Primary),
-                        modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}"),
+                        // Snapshot lúc focus, blur → autosave nếu đổi (tránh PUT thừa).
+                        modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}")
+                            .onFocusChanged { st ->
+                                if (st.isFocused) priceAtFocus = priceText
+                                else if (priceAtFocus != null) { if (priceAtFocus != priceText) onPriceCommit(); priceAtFocus = null }
+                            },
                     )
                     Spacer(Modifier.weight(1f))
                     Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.width(6.dp))
+                    // Bỏ "đ" sau thành tiền mỗi dòng — chỉ giữ "đ" ở dòng Tổng tiền hàng.
                     Text(fmtMoney(draft.qty * draft.price), color = AdminColors.Primary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                    Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                 }
             }
         }
@@ -675,9 +902,11 @@ private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scop
     }
 }
 
-// ===== Customer picker =====
+// ===== Customer/Supplier picker =====
+// isPurchase=true → chọn NCC (listSuppliers, sort theo tên rút gọn), map SupplierDto→CustomerDto
+// (id/name=display/phone) để dùng chung state. isPurchase=false → chọn KH như cũ.
 @Composable
-internal fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
+internal fun CustomerPicker(isPurchase: Boolean = false, onPick: (CustomerDto) -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val userId = container.tokenManager.user?.id?.toLong() ?: return
@@ -685,18 +914,24 @@ internal fun CustomerPicker(onPick: (CustomerDto) -> Unit, onClose: () -> Unit) 
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<CustomerDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    val viCollator = remember { java.text.Collator.getInstance(Locale("vi")) }
 
     LaunchedEffect(query) {
         loading = true
         try {
-            results = if (query.isBlank()) container.vapi.recentCustomers(userId, 20).data ?: emptyList()
+            results = if (isPurchase) {
+                if (!query.isBlank()) delay(280)
+                val list = container.vapi.listSuppliers(search = query.ifBlank { null }, active = true, perPage = 100).data ?: emptyList()
+                list.sortedWith(compareBy(viCollator) { it.display })
+                    .map { CustomerDto(id = it.id, name = it.display, phone = it.phone) }
+            } else if (query.isBlank()) container.vapi.recentCustomers(userId, 20).data ?: emptyList()
             else { delay(280); container.vapi.searchCustomers(query, 20).data ?: emptyList() }
         } catch (_: Exception) {}
         loading = false
     }
 
-    PickerSheet(title = "Chọn khách hàng", onClose = onClose) {
-        SearchField(query, "Tìm KH theo tên, SĐT...", autoFocus = true) { query = it }
+    PickerSheet(title = if (isPurchase) "Chọn nhà cung cấp" else "Chọn khách hàng", onClose = onClose) {
+        SearchField(query, if (isPurchase) "Tìm NCC theo tên..." else "Tìm KH theo tên, SĐT...", autoFocus = true) { query = it }
         Spacer(Modifier.height(8.dp))
         if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
             CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp))
@@ -827,6 +1062,216 @@ private fun PickerSheet(title: String, onClose: () -> Unit, fillHeight: Boolean 
     }
 }
 
+// ===== Dialog "đơn hàng của khách" (tap tên KH) — mirror web SaleOrderFormView =====
+// Lọc theo khoảng ngày (mặc định 15 ngày gần nhất), mỗi dòng có thumb ảnh đính kèm; tap dòng
+// → phóng thumb 3x (tâm cạnh phải) + mờ các dòng khác 65% + viền/quầng sáng trắng; tap thumb → mở đơn đó.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomerOrdersDialog(
+    customerId: Long,
+    customerName: String,
+    isPurchase: Boolean = false,
+    onOpenOrder: (Long) -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val container = (context.applicationContext as App).container
+    val scope = rememberCoroutineScope()
+
+    val now = System.currentTimeMillis()
+    var startMs by remember { mutableStateOf<Long?>(now - 15L * 86_400_000L) } // mặc định 15 ngày gần nhất
+    var endMs by remember { mutableStateOf<Long?>(now) }
+    var orders by remember { mutableStateOf<List<OrderDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var zoomedId by remember { mutableStateOf<Long?>(null) }
+    var datePickerOpen by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+
+    val ymdFmt = remember { SimpleDateFormat("yyyy-MM-dd", Locale("vi")) }
+    val labelFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale("vi")) }
+
+    LaunchedEffect(startMs, endMs) {
+        loading = true
+        orders = try {
+            container.vapi.listOrders(
+                type = if (isPurchase) "purchase" else "sale", partyId = customerId, invoiceOnly = "all", perPage = 100,
+                dateFrom = startMs?.let { ymdFmt.format(Date(it)) },
+                dateTo = endMs?.let { ymdFmt.format(Date(it)) },
+            ).data ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+        loading = false
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onClose)) {
+        Column(
+            Modifier.fillMaxWidth().fillMaxHeight(0.85f)
+                .align(Alignment.Center).padding(12.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(AdminColors.Card)
+                .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .padding(16.dp)
+                .clickable(enabled = false, onClick = {}),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Đơn hàng — $customerName", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Đóng", color = AdminColors.Primary, fontSize = 13.sp, modifier = Modifier.clickable { onClose() }.padding(8.dp))
+            }
+            Spacer(Modifier.height(10.dp))
+            // Khoảng ngày — tap mở DateRangePicker (chọn 1 lần).
+            val rangeLabel = "${startMs?.let { labelFmt.format(Date(it)) } ?: "…"}  →  ${endMs?.let { labelFmt.format(Date(it)) } ?: "…"}"
+            Box(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg)
+                    .clickable { datePickerOpen = true }.padding(horizontal = 12.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(rangeLabel, color = AdminColors.Text, fontSize = 13.sp) }
+            Spacer(Modifier.height(10.dp))
+
+            when {
+                loading -> Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
+                orders.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center) { Text("Không có đơn hàng trong khoảng ngày này", color = AdminColors.TextMuted, fontSize = 13.sp) }
+                else -> LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    // Chừa khoảng trên/dưới để thumb phóng của đơn đầu/cuối không bị khung cắt.
+                    contentPadding = PaddingValues(vertical = 56.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    itemsIndexed(orders, key = { _, o -> o.id }) { idx, o ->
+                        CustomerOrderRow(
+                            o = o,
+                            zoomed = zoomedId == o.id,
+                            dim = zoomedId != null && zoomedId != o.id,
+                            onToggleZoom = {
+                                zoomedId = if (zoomedId == o.id) null else o.id
+                                if (zoomedId != null) scope.launch { listState.animateScrollToItem(idx) }
+                            },
+                            onOpenOrder = { onOpenOrder(o.id) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (datePickerOpen) {
+        val rangeState = rememberDateRangePickerState(initialSelectedStartDateMillis = startMs, initialSelectedEndDateMillis = endMs)
+        MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
+            DatePickerDialog(
+                onDismissRequest = { datePickerOpen = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = { startMs = rangeState.selectedStartDateMillis; endMs = rangeState.selectedEndDateMillis; datePickerOpen = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("OK", color = AdminColors.Primary) }
+                },
+                colors = DatePickerDefaults.colors(containerColor = AdminColors.Card),
+            ) {
+                DateRangePicker(
+                    state = rangeState,
+                    modifier = Modifier.weight(1f),
+                    title = {},
+                    showModeToggle = false,
+                    headline = {
+                        val s = rangeState.selectedStartDateMillis; val e = rangeState.selectedEndDateMillis
+                        Text(
+                            text = (s?.let { labelFmt.format(Date(it)) } ?: "Bắt đầu") + "  –  " + (e?.let { labelFmt.format(Date(it)) } ?: "Kết thúc"),
+                            color = AdminColors.Text, fontSize = 16.sp, maxLines = 1, softWrap = false, textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CustomerOrderRow(
+    o: OrderDto,
+    zoomed: Boolean,
+    dim: Boolean,
+    onToggleZoom: () -> Unit,
+    onOpenOrder: () -> Unit,
+) {
+    val statusColor = when (o.status) {
+        "confirmed" -> AdminColors.Info
+        "delivered", "completed" -> AdminColors.Success
+        "cancelled" -> AdminColors.Danger
+        else -> AdminColors.TextMuted
+    }
+    val statusText = when (o.status) {
+        "draft" -> "Nháp"; "confirmed" -> "Đã xác nhận"
+        "delivered" -> "Đã giao"; "completed" -> "Hoàn thành"
+        "cancelled" -> "Huỷ"; else -> o.status
+    }
+    val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale("vi")) }
+    val dateText = (o.orderedAt ?: o.createdAt)?.let { runCatching { dateFmt.format(Date(java.time.Instant.parse(it).toEpochMilli())) }.getOrNull() } ?: "—"
+
+    Row(
+        Modifier.fillMaxWidth()
+            .alpha(if (dim) 0.65f else 1f)                // mờ nền các dòng khác 65%
+            .background(AdminColors.Card, RoundedCornerShape(10.dp))
+            .border(1.dp, AdminColors.Border, RoundedCornerShape(10.dp))
+            .clickable { onToggleZoom() }
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(o.code, color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(8.dp))
+                Text(statusText, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("$dateText · ${o.items.size} mặt hàng", color = AdminColors.TextMuted, fontSize = 12.sp)
+        }
+        // Thumb ảnh đính kèm — tap dòng phóng; tap thumb mở chi tiết đơn.
+        Box(Modifier.size(48.dp), contentAlignment = Alignment.CenterEnd) {
+            val thumb = o.thumbUrl
+            if (thumb != null) {
+                AsyncImage(
+                    model = thumb, contentDescription = null,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).size(48.dp).clickable { onOpenOrder() },
+                )
+                // Ảnh phóng dựng trong Popup (cửa sổ riêng) → LUÔN nổi trên cùng, không bị dòng khác đè,
+                // không bị LazyColumn cắt. Kích thước tự nhiên → viền 1px sắc nét (không bị scale nhân lên).
+                // Vị trí: cạnh phải ảnh phóng trùng cạnh phải thumb (nở về trái), căn giữa dọc theo thumb.
+                if (zoomed) {
+                    val positionProvider = remember {
+                        object : PopupPositionProvider {
+                            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+                                val x = (anchorBounds.right - popupContentSize.width).coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                                val y = (anchorBounds.top + anchorBounds.height / 2 - popupContentSize.height / 2).coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
+                                return IntOffset(x, y)
+                            }
+                        }
+                    }
+                    Popup(
+                        popupPositionProvider = positionProvider,
+                        properties = PopupProperties(focusable = false),
+                        onDismissRequest = onToggleZoom,
+                    ) {
+                        AsyncImage(
+                            model = thumb, contentDescription = null,
+                            modifier = Modifier
+                                .shadow(10.dp, RoundedCornerShape(8.dp), spotColor = Color.White, ambientColor = Color.White) // quầng sáng trắng
+                                .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(8.dp))                        // viền trắng 1px
+                                .clip(RoundedCornerShape(8.dp))
+                                .size(158.dp)   // 48dp × 3.3
+                                .clickable { onOpenOrder() },
+                        )
+                    }
+                }
+            } else {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+                    Text("—", color = AdminColors.TextMuted, fontSize = 16.sp)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SearchField(value: String, placeholder: String, autoFocus: Boolean = false, onChange: (String) -> Unit) {
     val focusRequester = remember { FocusRequester() }
@@ -861,6 +1306,9 @@ private fun submit(
     userId: Long?,
     customer: CustomerDto?,
     warehouseId: Long?,
+    isPurchase: Boolean,
+    isDropship: Boolean,
+    dropshipCustomerId: Long?,
     orderDateMs: Long,
     items: List<OrderItemDraft>,
     notes: String,
@@ -872,19 +1320,26 @@ private fun submit(
     originalItems: List<OrigItemSnap>,
     context: android.content.Context,
     onDone: () -> Unit,
+    onDraftSaved: (Long) -> Unit,
     setSaving: (Boolean) -> Unit,
 ) {
     if (customer == null || items.isEmpty()) return
+    if (isDropship && dropshipCustomerId == null) { Toast.makeText(context, "Chọn khách nhận hàng", Toast.LENGTH_SHORT).show(); return }
     setSaving(true)
     scope.launch {
         try {
             val req = CreateOrderRequest(
-                type = "sale", partyType = "customer", partyId = customer.id, status = status,
+                type = if (isPurchase) "purchase" else "sale",
+                partyType = if (isPurchase) "supplier" else "customer",
+                partyId = customer.id, status = status,
                 orderedAt = java.time.Instant.ofEpochMilli(orderDateMs).toString(),
-                warehouseId = warehouseId,
-                shippingFee = shipCustomer.takeIf { it > 0 },
-                actualShippingFee = shipCompany.takeIf { it > 0 },
-                codCollected = cod.takeIf { it > 0 },
+                // Giao thẳng → warehouse_id null (BE dùng kho mặc định) + dropship_customer_id.
+                warehouseId = if (isDropship) null else warehouseId,
+                dropshipCustomerId = if (isDropship) dropshipCustomerId else null,
+                // Đơn nhập không có phí ship KH / thu hộ COD.
+                shippingFee = if (isPurchase) null else shipCustomer.takeIf { it > 0 },
+                actualShippingFee = if (isPurchase) null else shipCompany.takeIf { it > 0 },
+                codCollected = if (isPurchase) null else cod.takeIf { it > 0 },
                 items = items.map { CreateOrderItem(it.variantId, it.unitId, it.qty, it.price) },
                 notes = notes.ifBlank { null },
                 createdByUserId = userId,
@@ -908,8 +1363,11 @@ private fun submit(
                 Toast.makeText(context, "Đã lưu đơn", Toast.LENGTH_SHORT).show()
             } else {
                 // Có orderId → cập nhật đơn (PUT); không → tạo mới (POST).
-                if (orderId != null) container.vapi.updateOrder(orderId, req) else container.vapi.createOrder(req)
+                val savedId = if (orderId != null) { container.vapi.updateOrder(orderId, req); orderId }
+                              else container.vapi.createOrder(req).data?.id
                 Toast.makeText(context, if (status == "draft") "Đã lưu nháp" else if (orderId != null) "Đã cập nhật" else "Đã tạo đơn", Toast.LENGTH_SHORT).show()
+                // Lưu nháp → Ở LẠI form (không thoát). return@launch để bỏ qua onDone; finally vẫn setSaving(false).
+                if (status == "draft" && savedId != null) { onDraftSaved(savedId); return@launch }
             }
             onDone()
         } catch (e: Exception) {
