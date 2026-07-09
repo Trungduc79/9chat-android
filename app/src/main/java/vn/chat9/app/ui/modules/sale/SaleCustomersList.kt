@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.CustomerDto
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.explore.AdminScrollTopButton
@@ -91,7 +92,7 @@ fun SaleCustomersList(listState: LazyListState = rememberLazyListState()) {
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(c.name, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text(c.name, color = partyColor(c.id, c.displayColor), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                             c.phone?.let { Text(it, color = AdminColors.TextMuted, fontSize = 12.sp) }
                         }
                         val debt = c.debtBalance ?: 0.0

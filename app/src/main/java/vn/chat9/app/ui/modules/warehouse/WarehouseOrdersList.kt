@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 
 /**
@@ -115,7 +116,7 @@ private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(o.partyName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = AdminColors.Text, modifier = Modifier.weight(1f))
+                Text(o.partyName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = partyColor(o.party), modifier = Modifier.weight(1f))
                 Text(dateStr, fontSize = 11.sp, color = AdminColors.TextMuted)
                 Spacer(Modifier.width(8.dp))
                 Text(o.code, fontSize = 11.sp, color = AdminColors.Primary, fontWeight = FontWeight.Medium)

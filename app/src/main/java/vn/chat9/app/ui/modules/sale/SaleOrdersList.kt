@@ -47,6 +47,7 @@ import android.widget.Toast
 import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.explore.AdminScrollTopButton
@@ -297,7 +298,7 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit, onDelete: () -> Unit) {
         }
         Spacer(Modifier.height(2.dp))
         // Hàng 2: tên khách hàng/đối tác
-        Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(o.partyName, color = partyColor(o.party), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(2.dp))
         // Hàng 3: N mặt hàng · tổng SL (trái) — số tiền TRẮNG, chỉ "đ" vàng gold nghiêng mảnh (phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

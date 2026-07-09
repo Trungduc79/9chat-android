@@ -91,6 +91,7 @@ import vn.chat9.app.data.vapi.dto.DeliveredItem
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.OrderItemDto
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors as C
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -587,7 +588,7 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, conf
     Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(12.dp)) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(o.partyName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = C.Text, modifier = Modifier.weight(1f))
+                Text(o.partyName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = partyColor(o.party), modifier = Modifier.weight(1f))
                 // Thay mã đơn = ngày xác nhận giao/nhận (NV chọn). canFulfill = tap → mở picker.
                 val dateLabel = confirmDateMs?.let {
                     java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale("vi")).format(java.util.Date(it))

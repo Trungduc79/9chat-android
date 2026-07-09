@@ -98,6 +98,7 @@ import vn.chat9.app.data.vapi.dto.RecentProductDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.VariantUnitDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
+import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.modules.warehouse.PhotoZoomViewer
 import java.text.NumberFormat
@@ -388,7 +389,7 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                             modifier = Modifier.clickable(enabled = canEdit) { customerPickerOpen = true })
                         // Tap tên đối tác → xem đơn hàng của đối tác đó (mirror web).
                         // Đơn nhập: tên NCC to hơn 2sp (16) + chiều cao dòng giảm ~15% (18sp).
-                        else Text(selectedCustomer!!.name, color = AdminColors.Text,
+                        else Text(selectedCustomer!!.name, color = partyColor(selectedCustomer!!.id, selectedCustomer!!.displayColor),
                             fontSize = if (isPurchase) 16.sp else 14.sp,
                             lineHeight = if (isPurchase) 18.sp else androidx.compose.ui.unit.TextUnit.Unspecified,
                             fontWeight = FontWeight.Medium,
@@ -428,7 +429,7 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                     Spacer(Modifier.height(6.dp))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         if (dropshipCustomer == null) Text("Chưa chọn khách nhận", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, modifier = Modifier.weight(1f))
-                        else Text(dropshipCustomer!!.name, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                        else Text(dropshipCustomer!!.name, color = partyColor(dropshipCustomer!!.id, dropshipCustomer!!.displayColor), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                         if (canEdit) Text(if (dropshipCustomer == null) "Chọn khách" else "Đổi khách", color = AdminColors.Primary, fontSize = 12.sp,
                             modifier = Modifier.clickable { dropshipPickerOpen = true }.padding(4.dp))
                     }
@@ -923,12 +924,12 @@ internal fun CustomerPicker(isPurchase: Boolean = false, onPick: (CustomerDto) -
                 if (query.isBlank()) {
                     // Mặc định: NCC sắp theo SỐ ĐƠN NHẬP 15 ngày gần nhất (giữ nguyên thứ tự BE trả).
                     (container.vapi.suppliersRecentByPurchases(limit = 100, days = 15).data ?: emptyList())
-                        .map { CustomerDto(id = it.id, name = it.display, phone = it.phone) }
+                        .map { CustomerDto(id = it.id, name = it.display, phone = it.phone, displayColor = it.displayColor) }
                 } else {
                     delay(280)
                     (container.vapi.listSuppliers(search = query, active = true, perPage = 100).data ?: emptyList())
                         .sortedWith(compareBy(viCollator) { it.display })
-                        .map { CustomerDto(id = it.id, name = it.display, phone = it.phone) }
+                        .map { CustomerDto(id = it.id, name = it.display, phone = it.phone, displayColor = it.displayColor) }
                 }
             } else if (query.isBlank()) container.vapi.recentCustomers(userId, 20).data ?: emptyList()
             else { delay(280); container.vapi.searchCustomers(query, 20).data ?: emptyList() }

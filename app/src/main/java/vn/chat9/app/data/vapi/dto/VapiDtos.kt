@@ -78,6 +78,7 @@ data class PartyDto(
     val name: String? = null,
     val phone: String? = null,
     @SerializedName("short_name") val shortName: String? = null,
+    @SerializedName("display_color") val displayColor: String? = null,  // màu định danh (BE trả)
 )
 
 data class OrderItemDto(
@@ -390,6 +391,7 @@ data class CustomerDto(
     val phone: String? = null,
     val code: String? = null,
     @SerializedName("debt_balance") val debtBalance: Double? = null,
+    @SerializedName("display_color") val displayColor: String? = null,
 )
 
 /** NCC cho picker đơn nhập + search. BE trả full Supplier; chỉ dùng cột nhẹ ở UI. */
@@ -400,6 +402,7 @@ data class SupplierDto(
     @SerializedName("short_name") val shortName: String? = null,
     val phone: String? = null,
     @SerializedName("is_active") val isActive: Boolean = true,
+    @SerializedName("display_color") val displayColor: String? = null,
 ) {
     /** Tên hiển thị: ưu tiên short_name (đơn nhập sắp xếp + hiển thị theo tên rút gọn). */
     val display: String get() = shortName?.takeIf { it.isNotBlank() } ?: name
