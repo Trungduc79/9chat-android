@@ -81,7 +81,9 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
         scope.launch {
             loading = true; error = null
             try {
-                val res = container.vapi.listOrders(status = "", createdByUserId = userId, type = "sale", perPage = 100)
+                // Admin/full quyền (bypass_all): xem MỌI đơn bán, không lọc theo người tạo.
+                val scopeUserId = if (container.permissions.isBypass) null else userId
+                val res = container.vapi.listOrders(status = "", createdByUserId = scopeUserId, type = "sale", perPage = 100)
                 orders = res.data ?: emptyList()
             } catch (e: Exception) {
                 error = "Tải đơn thất bại: ${e.message}"
