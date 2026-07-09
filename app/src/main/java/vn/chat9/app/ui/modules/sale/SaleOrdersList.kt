@@ -106,7 +106,10 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
             }
         }
         matchQ && matchDate
-    }
+    }.sortedWith(
+        // Nháp trên cùng → đã duyệt → đã giao; trong mỗi nhóm theo thời gian giao GIẢM DẦN.
+        compareBy<OrderDto> { statusRank(it.status) }.thenByDescending { deliveryTimeMs(it) },
+    )
 
     Column(Modifier.fillMaxSize().background(AdminColors.Bg)) {
         // Header: search 70% + ngày giao 30%
@@ -305,6 +308,19 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit, onDelete: () -> Unit) {
             Text(moneyGoldDong(o.totalAmount ?: 0.0), color = AdminColors.Text, fontSize = 14.sp)
         }
     }
+}
+
+/** Thứ tự nhóm trạng thái: nháp → đã duyệt → đã giao/hoàn thành → (huỷ/khác). */
+private fun statusRank(s: String): Int = when (s) {
+    "draft" -> 0
+    "confirmed" -> 1
+    "delivered", "completed", "received" -> 2
+    else -> 3
+}
+/** Thời gian giao (proxy): hoàn tất → ngày đặt → ngày tạo → 0. */
+private fun deliveryTimeMs(o: OrderDto): Long {
+    val d = o.completedAt ?: o.orderedAt ?: o.createdAt ?: return 0L
+    return runCatching { java.time.Instant.parse(d).toEpochMilli() }.getOrNull() ?: 0L
 }
 
 private val moneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))

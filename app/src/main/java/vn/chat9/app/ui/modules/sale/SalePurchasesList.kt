@@ -107,7 +107,10 @@ fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState 
             }
         }
         matchQ && matchDate
-    }
+    }.sortedWith(
+        // Nháp trên cùng → đã duyệt → đã nhận; trong mỗi nhóm theo thời gian giao GIẢM DẦN.
+        compareBy<OrderDto> { purchaseStatusRank(it.status) }.thenByDescending { purchaseDeliveryTimeMs(it) },
+    )
 
     Column(Modifier.fillMaxSize().background(AdminColors.Bg)) {
         // Header: search 70% + khoảng ngày 30%
@@ -300,6 +303,19 @@ private fun PurchaseOrderRow(o: OrderDto, onClick: () -> Unit, onDelete: () -> U
             Text(purchaseMoneyGoldDong(o.totalAmount ?: 0.0), color = AdminColors.Text, fontSize = 14.sp)
         }
     }
+}
+
+/** Thứ tự nhóm trạng thái: nháp → đã duyệt → đã nhận/hoàn thành → (huỷ/khác). */
+private fun purchaseStatusRank(s: String): Int = when (s) {
+    "draft" -> 0
+    "confirmed" -> 1
+    "delivered", "completed", "received" -> 2
+    else -> 3
+}
+/** Thời gian giao (proxy): hoàn tất → ngày đặt → ngày tạo → 0. */
+private fun purchaseDeliveryTimeMs(o: OrderDto): Long {
+    val d = o.completedAt ?: o.orderedAt ?: o.createdAt ?: return 0L
+    return runCatching { java.time.Instant.parse(d).toEpochMilli() }.getOrNull() ?: 0L
 }
 
 private val purchaseMoneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))
