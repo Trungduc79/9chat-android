@@ -607,33 +607,29 @@ private fun InfoCard(o: OrderDto, isPurchase: Boolean, canFulfill: Boolean, conf
                 }
             }
             Spacer(Modifier.height(6.dp))
-            // Đơn nhập: mô tả "Nhập hàng {kho}" / "Giao hàng từ {NCC} → {KH}" (drop-ship),
-            // Tổng xuống dòng riêng. Đơn bán giữ badge "Xuất kho" cùng dòng Tổng.
-            if (isPurchase) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (o.isDropship) {
-                        Text("Giao hàng từ ", fontSize = 14.sp, color = C.TextMuted)
-                        Text(o.dropshipSupplier, fontSize = 14.sp, color = C.Info, fontWeight = FontWeight.Medium)
-                        Text(" → ", fontSize = 14.sp, color = C.Warning)
-                        Text(o.dropshipCustomer, fontSize = 14.sp, color = C.Success, fontWeight = FontWeight.Medium, maxLines = 1)
+            // Nhãn (trái) + Tổng (phải, float right) — đồng bộ đơn bán & đơn nhập.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    if (isPurchase) {
+                        if (o.isDropship) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Giao hàng từ ", fontSize = 14.sp, color = C.TextMuted)
+                                Text(o.dropshipSupplier, fontSize = 14.sp, color = C.Info, fontWeight = FontWeight.Medium)
+                                Text(" → ", fontSize = 14.sp, color = C.Warning)
+                                Text(o.dropshipCustomer, fontSize = 14.sp, color = C.Success, fontWeight = FontWeight.Medium, maxLines = 1)
+                            }
+                        } else {
+                            Text("Nhập hàng ${warehouseName ?: "—"}", fontSize = 14.sp, color = C.TextSecondary)
+                        }
                     } else {
-                        Text("Nhập hàng ${warehouseName ?: "—"}", fontSize = 14.sp, color = C.TextSecondary)
+                        WhBadge("Xuất kho", C.Warning)
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tổng:", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
-                    Spacer(Modifier.width(4.dp))
-                    Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    WhBadge("Xuất kho", C.Warning)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Tổng:", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
-                    Spacer(Modifier.width(4.dp))
-                    Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
-                }
+                Spacer(Modifier.width(8.dp))
+                // Tổng: "Tổng" viết hoa + SL theo đơn vị (đã nối bằng "+")
+                Text("Tổng", fontSize = 13.sp, color = C.TextMuted, fontStyle = FontStyle.Italic)
+                Spacer(Modifier.width(4.dp))
+                Text(qtySummary(o), fontSize = 13.sp, color = C.TextSecondary)
             }
             // Truy vết: ai xác nhận / lúc nào (chỉ hiện khi đơn đã fulfill).
             o.meta?.fulfillment?.takeIf { it.byName != null || it.at != null }?.let { f ->
