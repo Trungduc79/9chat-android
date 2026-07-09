@@ -29,10 +29,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -152,7 +156,7 @@ fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState 
                     else -> LazyColumn(
                         Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp),
                         state = listState,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(filtered, key = { it.id }) { o ->
                             PurchaseOrderRow(o, onClick = { onTapOrder(o.id) })
@@ -234,29 +238,55 @@ private fun PurchaseOrderRow(o: OrderDto, onClick: () -> Unit) {
             .background(AdminColors.Card)
             .border(1.dp, AdminColors.Border, RoundedCornerShape(12.dp))
             .clickable { onClick() }
-            .padding(12.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        // Hàng 1: ngày (trắng nổi) + mã đơn (xám mờ) — badge trạng thái (phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(o.code, color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(fmtPurchaseDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt), color = AdminColors.Text, fontSize = 12.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(o.code, color = AdminColors.TextMuted, fontSize = 13.sp)
             Spacer(Modifier.weight(1f))
             Text(statusLabel, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Medium,
                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 2.dp))
         }
-        Spacer(Modifier.height(6.dp))
-        // Tên NCC (OrderDto.partyName ưu tiên short_name cho đơn nhập)
+        Spacer(Modifier.height(2.dp))
+        // Hàng 2: tên NCC (OrderDto.partyName ưu tiên short_name cho đơn nhập)
         Text(o.partyName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
+        // Hàng 3: N mặt hàng · tổng SL (trái) — số tiền TRẮNG, chỉ "đ" vàng gold nghiêng mảnh (phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("${o.items.size} mặt hàng · ${fmtPurchaseDate(o.orderedAt ?: o.confirmedAt ?: o.completedAt)}",
-                color = AdminColors.TextMuted, fontSize = 12.sp)
-            Spacer(Modifier.weight(1f))
-            Text("${fmtPurchaseMoney(o.totalAmount ?: 0.0)} đ", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text("${o.items.size} mặt hàng · ${purchaseQtySummary(o)}",
+                color = AdminColors.TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            Text(purchaseMoneyGoldDong(o.totalAmount ?: 0.0), color = AdminColors.Text, fontSize = 14.sp)
         }
     }
 }
 
 private val purchaseMoneyFmt = java.text.NumberFormat.getInstance(Locale("vi"))
 private fun fmtPurchaseMoney(n: Double): String = purchaseMoneyFmt.format(n.toLong())
+
+/** Tổng SL gộp theo đơn vị: "5 Thùng + 3 Gói" (đơn vị 2 nếu có). */
+private fun purchaseQtySummary(o: OrderDto): String {
+    val map = LinkedHashMap<String, Double>()
+    for (it in o.items) {
+        val unit = it.unitName.ifBlank { "đv" }
+        map[unit] = (map[unit] ?: 0.0) + it.qtyUnit
+    }
+    val parts = map.entries.map { "${purchaseTrimZeros(it.value)} ${it.key}" }
+    return if (parts.isNotEmpty()) parts.joinToString(" + ") else "—"
+}
+private fun purchaseTrimZeros(n: Double): String =
+    if (n == kotlin.math.floor(n) && !n.isInfinite()) n.toLong().toString() else n.toString()
+
+/** Số tiền màu trắng (mặc định) + chữ "đ" vàng gold, in nghiêng, nét mảnh. */
+private fun purchaseMoneyGoldDong(n: Double) = buildAnnotatedString {
+    append(fmtPurchaseMoney(n))
+    withStyle(SpanStyle(color = Color(0xFFD4AF37), fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)) {
+        append(" đ")
+    }
+}
 
 private val purchaseDayFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
 private fun fmtPurchaseDate(iso: String?): String =
