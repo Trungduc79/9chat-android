@@ -44,6 +44,7 @@ data class OrderDto(
     @SerializedName("linked_order_id") val linkedOrderId: Long? = null,
     @SerializedName("linked_order") val linkedOrder: LinkedOrderDto? = null,
     @SerializedName("dropship_customer_id") val dropshipCustomerId: Long? = null,   // đơn nhập giao thẳng → KH nhận
+    @SerializedName("dropship_customer") val dropshipCustomerObj: DropshipCustomerDto? = null, // KH nhận (tên+màu+tỉnh)
     @SerializedName("vat_output_invoice_id") val vatOutputInvoiceId: Long? = null, // HĐ VAT liên kết (null = đơn nháp chưa xuất)
     @SerializedName("vat_include_phone") val vatIncludePhone: Boolean = false,      // SĐT khách hiển thị trên HĐ
     val meta: MetaDto? = null,
@@ -60,13 +61,20 @@ data class OrderDto(
     }
 
     // ===== Drop-ship (đơn nhập tạo đơn bán giao thẳng cho KH) — dùng get() để Gson không NPE.
-    val isDropship: Boolean get() = isPurchase && linkedOrderId != null
+    val isDropship: Boolean get() = isPurchase && (linkedOrderId != null || dropshipCustomerId != null)
     /** Tên ngắn NCC (party đơn nhập). */
     val dropshipSupplier: String get() =
         party?.shortName?.takeIf { it.isNotBlank() } ?: party?.name?.takeIf { it.isNotBlank() } ?: "#${party?.id ?: ""}"
-    /** Tên KH của đơn bán giao thẳng liên kết. */
-    val dropshipCustomer: String get() =
-        linkedOrder?.party?.name?.takeIf { it.isNotBlank() } ?: "khách hàng"
+    /** Tên KH nhận — tên thường đã kèm tỉnh; nếu có province riêng mà tên chưa chứa thì thêm "(Tỉnh)". */
+    val dropshipCustomer: String get() {
+        val name = dropshipCustomerObj?.name?.takeIf { it.isNotBlank() }
+            ?: linkedOrder?.party?.name?.takeIf { it.isNotBlank() } ?: "khách hàng"
+        val prov = dropshipCustomerObj?.primaryAddress?.province?.takeIf { it.isNotBlank() }
+        return if (prov != null && !name.contains(prov)) "$name ($prov)" else name
+    }
+    /** id + màu định danh KH nhận (fallback linkedOrder.party). */
+    val dropshipCustomerColorId: Long get() = dropshipCustomerObj?.id ?: linkedOrder?.party?.id ?: 0
+    val dropshipCustomerColor: String? get() = dropshipCustomerObj?.displayColor ?: linkedOrder?.party?.displayColor
 
     /** Thời điểm BẤM xác nhận thật (giờ VN). Đơn cũ chưa có → fallback updated_at.
      *  KHÔNG dùng completed_at (= ngày giao NV tự chọn, có thể backdate). */
@@ -80,6 +88,15 @@ data class PartyDto(
     @SerializedName("short_name") val shortName: String? = null,
     @SerializedName("display_color") val displayColor: String? = null,  // màu định danh (BE trả)
 )
+
+/** KH nhận hàng giao thẳng (đơn nhập drop-ship) — tên + màu định danh + tỉnh. */
+data class DropshipCustomerDto(
+    val id: Long = 0,
+    val name: String? = null,
+    @SerializedName("display_color") val displayColor: String? = null,
+    @SerializedName("primary_address") val primaryAddress: DropshipAddressDto? = null,
+)
+data class DropshipAddressDto(val province: String? = null)
 
 data class OrderItemDto(
     val id: Long = 0,

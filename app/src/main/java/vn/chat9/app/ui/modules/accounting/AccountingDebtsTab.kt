@@ -26,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -75,6 +76,26 @@ private val GOLD = Color(0xFFD4AF37)
 private fun moneyD(amount: String, numColor: Color): AnnotatedString = buildAnnotatedString {
     withStyle(SpanStyle(color = numColor)) { append(amount) }
     withStyle(SpanStyle(color = GOLD, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)) { append(" đ") }
+}
+
+/**
+ * Số tiền căn phải với ô "đ" rộng cố định → mép phải của SỐ giữa các dòng (đầu kỳ,
+ * cuối kỳ) luôn thẳng hàng, không lệch theo bề rộng chữ "đ". showDong=false: ẩn đ
+ * nhưng vẫn giữ chỗ để căn.
+ */
+@Composable
+private fun MoneyAmount(
+    amount: String, numColor: Color, numSize: androidx.compose.ui.unit.TextUnit,
+    showDong: Boolean, modifier: Modifier = Modifier,
+) {
+    Row(modifier, verticalAlignment = Alignment.Bottom) {
+        Text(amount, color = numColor, fontSize = numSize, fontWeight = FontWeight.Medium)
+        Text(
+            "đ", color = if (showDong) GOLD else Color.Transparent, fontSize = 13.sp,
+            fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light,
+            modifier = Modifier.width(15.dp).padding(start = 3.dp),
+        )
+    }
 }
 
 /**
@@ -402,30 +423,36 @@ private fun ColumnScope.SettledTab(
     var datePickerOpen by remember { mutableStateOf(false) }
     val fileBase = "CN-" + partyName.replace(Regex("[^\\p{L}\\p{N} ]"), "").trim().ifBlank { "khach" }
 
+    // Chip lọc kỳ — CỐ ĐỊNH ngay dưới header (không nằm trong LazyColumn) để khi
+    // cuộn danh sách vẫn thấy đang xem kỳ công nợ nào. Mặc định null = BE áp 15 ngày.
+    val hasRange = rangeStart != null && rangeEnd != null
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 10.dp, bottom = 6.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(AdminColors.Card)
+            .border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp))
+            .clickable { datePickerOpen = true }
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (hasRange) "${fmtDate(statement.period.from)} – ${fmtDate(statement.period.to)}" else "15 ngày gần nhất",
+            color = if (hasRange) AdminColors.Text else AdminColors.TextMuted, fontSize = 13.sp,
+        )
+        if (hasRange) Text("Xoá lọc", color = AdminColors.Primary, fontSize = 12.sp,
+            modifier = Modifier.clickable { onPickRange(null, null) })
+        else Text("Lọc ngày", color = AdminColors.Primary, fontSize = 12.sp)
+    }
+
     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
         item {
-            // Bộ lọc khoảng ngày — mặc định null = BE tự áp 15 ngày gần nhất.
-            Row(
-                Modifier.fillMaxWidth().padding(top = 12.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp))
-                    .clickable { datePickerOpen = true }
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val hasRange = rangeStart != null && rangeEnd != null
-                Text(
-                    if (hasRange) "${fmtDate(statement.period.from)} – ${fmtDate(statement.period.to)}" else "15 ngày gần nhất",
-                    color = if (hasRange) AdminColors.Text else AdminColors.TextMuted, fontSize = 13.sp,
-                )
-                if (hasRange) Text("Xoá lọc", color = AdminColors.Primary, fontSize = 12.sp,
-                    modifier = Modifier.clickable { onPickRange(null, null) })
-                else Text("Lọc ngày", color = AdminColors.Primary, fontSize = 12.sp)
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp).padding(bottom = 6.dp)
-                .drawBottomBorder(AdminColors.Border), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Đầu kỳ", color = AdminColors.TextMuted, fontSize = 13.sp)
-                Text(money(statement.openingBalance), color = AdminColors.Text, fontSize = 13.sp)
+            // Số dư đầu kỳ — border-bottom vàng; số căn theo số dư cuối kỳ (đ ẩn giữ chỗ).
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp).padding(bottom = 6.dp)
+                .drawBottomBorder(GoldLine), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("Số dư đầu kỳ:", color = AdminColors.TextMuted, fontSize = 13.sp)
+                MoneyAmount(money(statement.openingBalance), AdminColors.Text, 13.sp, showDong = false,
+                    modifier = Modifier.padding(end = 8.dp))
             }
         }
         if (rows.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) { Text("Chưa có phát sinh trong kỳ.", color = AdminColors.TextMuted, fontSize = 13.sp) } }
@@ -434,12 +461,14 @@ private fun ColumnScope.SettledTab(
             LedgerRow(idx, sr.showHeader, r.date, r.docNo ?: "", r.description ?: r.origin, r.qty, r.unitName, r.unitPrice, r.debit, r.credit, clickableDoc = false, onDocClick = {})
         }
         item {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth().padding(top = 16.dp).drawTopBorder(GreenLine, 2.dp).padding(top = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Số dư cuối kỳ", color = AdminColors.TextMuted, fontSize = 14.sp)
-                Text(moneyD(money(closing), AdminColors.Text), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                MoneyAmount(money(closing), AdminColors.Text, 16.sp, showDong = true,
+                    modifier = Modifier.padding(end = 8.dp))
             }
             // 3 tác vụ (mirror web): Gửi khách · Xuất Excel · Copy ảnh.
-            Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top = 28.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DebtActionBtn("Gửi khách", Modifier.weight(1f), busy = false) {
                     Toast.makeText(context, "Gửi khách tự động (Email/Zalo/Tele) — đang phát triển.", Toast.LENGTH_SHORT).show()
                 }
@@ -486,7 +515,51 @@ private fun ColumnScope.SettledTab(
                     }
                 }
             }
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(200.dp))
+        }
+    }
+
+    // Dialog chọn khoảng ngày — dùng lại pattern đã fix lỗi hiển thị (title rỗng,
+    // headline 1 dòng, tắt mode-toggle, bọc dark theme) như SaleOrdersList.
+    if (datePickerOpen) {
+        val rangeState = androidx.compose.material3.rememberDateRangePickerState(
+            initialSelectedStartDateMillis = rangeStart, initialSelectedEndDateMillis = rangeEnd,
+        )
+        val headFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
+        androidx.compose.material3.MaterialTheme(
+            colorScheme = androidx.compose.material3.darkColorScheme(
+                surface = AdminColors.Card, onSurface = AdminColors.Text,
+                surfaceVariant = AdminColors.Card, onSurfaceVariant = AdminColors.TextMuted,
+                primary = AdminColors.Primary, onPrimary = Color.White,
+            ),
+        ) {
+            androidx.compose.material3.DatePickerDialog(
+                onDismissRequest = { datePickerOpen = false },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            onPickRange(rangeState.selectedStartDateMillis, rangeState.selectedEndDateMillis)
+                            datePickerOpen = false
+                        },
+                        enabled = rangeState.selectedStartDateMillis != null && rangeState.selectedEndDateMillis != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Áp dụng", color = AdminColors.Primary) }
+                },
+                colors = androidx.compose.material3.DatePickerDefaults.colors(containerColor = AdminColors.Card),
+            ) {
+                androidx.compose.material3.DateRangePicker(
+                    state = rangeState, modifier = Modifier.weight(1f),
+                    title = {},
+                    showModeToggle = false,
+                    headline = {
+                        val s = rangeState.selectedStartDateMillis?.let { headFmt.format(Date(it)) } ?: "Bắt đầu"
+                        val e = rangeState.selectedEndDateMillis?.let { headFmt.format(Date(it)) } ?: "Kết thúc"
+                        Text("$s – $e", color = AdminColors.Text, fontSize = 15.sp, maxLines = 1, softWrap = false,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
+                    },
+                )
+            }
         }
     }
 
@@ -546,6 +619,28 @@ private fun DebtActionBtn(label: String, modifier: Modifier = Modifier, busy: Bo
         else Text(label, color = AdminColors.Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
+
+/** Màu vàng gold cho viền dưới "Số dư đầu kỳ" (khớp gold trong ảnh render). */
+private val GoldLine = Color(0xFFD4AF37)
+
+/** Màu xanh cho viền trên "Số dư cuối kỳ". */
+private val GreenLine = Color(0xFF22C55E)
+
+/** Vẽ 1 đường viền dưới (border-bottom) cho hàng "Số dư đầu kỳ". */
+private fun Modifier.drawBottomBorder(color: Color, width: androidx.compose.ui.unit.Dp = 0.7.dp): Modifier =
+    this.drawBehind {
+        val h = width.toPx()
+        drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height - h / 2f),
+            androidx.compose.ui.geometry.Offset(size.width, size.height - h / 2f), h)
+    }
+
+/** Vẽ 1 đường viền trên (border-top) cho hàng "Số dư cuối kỳ". */
+private fun Modifier.drawTopBorder(color: Color, width: androidx.compose.ui.unit.Dp = 2.dp): Modifier =
+    this.drawBehind {
+        val h = width.toPx()
+        drawLine(color, androidx.compose.ui.geometry.Offset(0f, h / 2f),
+            androidx.compose.ui.geometry.Offset(size.width, h / 2f), h)
+    }
 
 /** 1 dòng sổ (dùng chung Chưa chốt / Đã chốt): viền trên vàng ở đầu chứng từ, mờ ở dòng
  *  cùng chứng từ; header ngày+số CT, tên variant, SL×đơn giá, tiền (+nợ đỏ / −trả xanh). */

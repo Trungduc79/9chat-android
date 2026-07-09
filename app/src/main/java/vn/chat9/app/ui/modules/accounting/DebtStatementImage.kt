@@ -100,6 +100,9 @@ fun renderDebtStatementBitmap(partyName: String, st: DebtStatementDto, exportedA
     val obVal = p(16.5f, if (ob < 0) negColor else ink, bold).apply { textAlign = Paint.Align.RIGHT }
     c.drawText(if (ob < 0) "(${num(-ob)})" else num(ob), cBalR - obDW - 5f, 105f, obVal)
 
+    // border-bottom dưới dòng số dư đầu kỳ
+    c.drawLine(padX - 8, 115.5f, w - padX + 8, 115.5f, Paint().apply { color = Color.parseColor("#e5e7eb"); strokeWidth = 1f })
+
     // ===== ĐẦU BẢNG =====
     var y = headerH
     val headBg = Paint().apply { color = Color.parseColor("#f3f4f6") }

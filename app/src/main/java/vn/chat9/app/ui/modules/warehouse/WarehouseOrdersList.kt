@@ -135,9 +135,9 @@ private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Giao thẳng: ", fontSize = 12.sp, color = AdminColors.TextMuted)
-                    Text(o.dropshipSupplier, fontSize = 12.sp, color = AdminColors.Info, fontWeight = FontWeight.Medium)
-                    Text(" → ", fontSize = 12.sp, color = AdminColors.Warning)
-                    Text(o.dropshipCustomer, fontSize = 12.sp, color = AdminColors.Success, fontWeight = FontWeight.Medium, maxLines = 1)
+                    Text(o.dropshipSupplier, fontSize = 12.sp, color = partyColor(o.party), fontWeight = FontWeight.Medium)
+                    Text(" → ", fontSize = 12.sp, color = AdminColors.TextMuted)
+                    Text(o.dropshipCustomer, fontSize = 12.sp, color = partyColor(o.dropshipCustomerColorId, o.dropshipCustomerColor), fontWeight = FontWeight.Medium, maxLines = 1)
                 }
             }
             if (!o.notes.isNullOrBlank()) {
