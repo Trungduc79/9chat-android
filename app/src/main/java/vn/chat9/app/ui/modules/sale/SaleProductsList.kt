@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,7 +55,8 @@ fun SaleProductsList() {
     suspend fun load() {
         loading = true
         try {
-            variants = container.vapi.listAllVariants(search = query.ifBlank { null }, warehouseId = selectedWarehouseId, perPage = 50).data ?: emptyList()
+            val raw = container.vapi.listAllVariants(search = query.ifBlank { null }, warehouseId = selectedWarehouseId, perPage = 50).data ?: emptyList()
+            variants = arrangeVariants(raw)
         } catch (_: Exception) {}
         loading = false
     }
@@ -103,7 +104,15 @@ fun SaleProductsList() {
                 val whIdx = warehouses.indexOfFirst { it.id == selectedWarehouseId }.coerceAtLeast(0)
                 val stockColor = WAREHOUSE_STOCK_COLORS[whIdx % WAREHOUSE_STOCK_COLORS.size]
                 LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(variants, key = { it.id }) { v -> VariantRow(v, stockColor) }
+                    itemsIndexed(variants, key = { _, v -> v.id }) { i, v ->
+                        // Hết variant của 1 SP → đường kẻ ngắn phân định (giống màn kiểm kho).
+                        if (i > 0 && variants[i - 1].product?.id != v.product?.id) {
+                            Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
+                                Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f)))
+                            }
+                        }
+                        VariantRow(v, stockColor)
+                    }
                 }
             }
         }
@@ -175,6 +184,23 @@ private fun WarehouseDropdownInline(warehouses: List<WarehouseDto>, selectedId: 
             }
         }
     }
+}
+
+/**
+ * Sắp xếp giống màn kiểm kho của kho: gom theo sản phẩm, SP có TỔNG tồn (base) lớn hơn lên
+ * trước; trong mỗi SP variant tồn lớn hơn lên trước. Giữ variant tồn 0 (màn tra cứu).
+ */
+private fun arrangeVariants(list: List<VariantSearchDto>): List<VariantSearchDto> {
+    val totalByProduct = HashMap<Long, Double>()
+    for (v in list) {
+        val pid = v.product?.id ?: 0L
+        totalByProduct[pid] = (totalByProduct[pid] ?: 0.0) + (v.stockBase ?: 0.0)
+    }
+    return list.sortedWith(
+        compareByDescending<VariantSearchDto> { totalByProduct[it.product?.id ?: 0L] ?: 0.0 }
+            .thenBy { it.product?.id ?: 0L }
+            .thenByDescending { it.stockBase ?: 0.0 },
+    )
 }
 
 private fun trimZeros(n: Double): String {
