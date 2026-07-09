@@ -135,6 +135,12 @@ fun HomeScreen(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = false, radius = 56.dp, color = Color(0x403E1F91))
                                 ) {
+                                    // Nhấn lại tab Khám phá khi đang ở đó + đang trong module → đóng
+                                    // module, về hub (trang chủ màn công việc). Chuyển từ tab khác sang
+                                    // vẫn GIỮ module đang mở (rememberSaveable) như thiết kế cũ.
+                                    if (index == 2 && selectedTab == 2 && openModuleId != null) {
+                                        openModuleId = null
+                                    }
                                     onTabChange(index)
                                 }
                                 .padding(top = 4.dp, bottom = 2.dp),
