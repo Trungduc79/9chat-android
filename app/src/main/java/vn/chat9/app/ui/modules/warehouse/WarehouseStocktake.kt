@@ -408,14 +408,15 @@ private fun StocktakeRow(v: VariantSearchDto, counted: String, onCountedChange: 
     val checked = countedNum != null && countedNum == stockInUnit
 
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 6.dp, vertical = 6.dp),
+        // Giảm padding dọc (6→3) để ảnh to hơn mà KHÔNG tăng chiều cao dòng.
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Khớp (đã tích) → tên xám, ảnh mờ, "Khớp" vẫn xanh nổi.
         val thumbAlpha = if (checked) 0.45f else 1f
         val img = v.image ?: v.product?.primaryImage?.url
-        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpenHistory() }.alpha(thumbAlpha))
-        else Box(Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)).clickable { onOpenHistory() }.alpha(thumbAlpha), contentAlignment = Alignment.Center) {
+        if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.size(66.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpenHistory() }.alpha(thumbAlpha))
+        else Box(Modifier.size(66.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)).clickable { onOpenHistory() }.alpha(thumbAlpha), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.width(8.dp))
@@ -424,7 +425,12 @@ private fun StocktakeRow(v: VariantSearchDto, counted: String, onCountedChange: 
             Spacer(Modifier.height(2.dp))
             // Tồn: {sl} {đv}  |  Lệch {sl} {đv} (hiện khi đã nhập đếm)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Tồn: ${trimZeros(stockInUnit)} $unit", color = AdminColors.TextMuted, fontSize = 12.sp)
+                // "Tồn:" xám — SỐ trắng 100% + to hơn 2sp — đơn vị xám; nới khoảng cách 2 bên số.
+                Text("Tồn:", color = AdminColors.TextMuted, fontSize = 12.sp)
+                Spacer(Modifier.width(6.dp))
+                Text(trimZeros(stockInUnit), color = AdminColors.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(6.dp))
+                Text(unit, color = AdminColors.TextMuted, fontSize = 12.sp)
                 if (countedNum != null) {
                     val diff = countedNum - stockInUnit
                     if (diff == 0.0) Text("  |  Khớp", color = AdminColors.Success, fontSize = 12.sp, fontWeight = FontWeight.Medium)
