@@ -76,6 +76,14 @@ data class OrderDto(
     val dropshipCustomerColorId: Long get() = dropshipCustomerObj?.id ?: linkedOrder?.party?.id ?: 0
     val dropshipCustomerColor: String? get() = dropshipCustomerObj?.displayColor ?: linkedOrder?.party?.displayColor
 
+    // ===== Chiều ngược: đơn BÁN giao thẳng TỪ NCC (linkedOrder = đơn nhập) → hiện "KH ← NCC".
+    val isDropshipSale: Boolean get() = type == "sale" && linkedOrderId != null
+    val dropshipFromSupplier: String get() =
+        linkedOrder?.party?.shortName?.takeIf { it.isNotBlank() }
+            ?: linkedOrder?.party?.name?.takeIf { it.isNotBlank() } ?: "NCC"
+    val dropshipSupplierColorId: Long get() = linkedOrder?.party?.id ?: 0
+    val dropshipSupplierColor: String? get() = linkedOrder?.party?.displayColor
+
     /** Thời điểm BẤM xác nhận thật (giờ VN). Đơn cũ chưa có → fallback updated_at.
      *  KHÔNG dùng completed_at (= ngày giao NV tự chọn, có thể backdate). */
     val fulfilledRealTime: String? get() = meta?.fulfillment?.atServer ?: updatedAt

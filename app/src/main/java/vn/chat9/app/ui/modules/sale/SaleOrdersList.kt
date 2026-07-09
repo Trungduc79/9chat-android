@@ -297,8 +297,16 @@ private fun OrderRow(o: OrderDto, onClick: () -> Unit, onDelete: () -> Unit) {
             }
         }
         Spacer(Modifier.height(2.dp))
-        // Hàng 2: tên khách hàng/đối tác
-        Text(o.partyName, color = partyColor(o.party), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // Hàng 2: tên KH — đơn giao thẳng TỪ NCC thêm "← NCC" (mỗi bên 1 màu định danh)
+        if (o.isDropshipSale) {
+            Text(buildAnnotatedString {
+                withStyle(SpanStyle(color = partyColor(o.party))) { append(o.partyName) }
+                withStyle(SpanStyle(color = AdminColors.TextMuted)) { append(" ← ") }
+                withStyle(SpanStyle(color = partyColor(o.dropshipSupplierColorId, o.dropshipSupplierColor))) { append(o.dropshipFromSupplier) }
+            }, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            Text(o.partyName, color = partyColor(o.party), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Spacer(Modifier.height(2.dp))
         // Hàng 3: N mặt hàng · tổng SL (trái) — số tiền TRẮNG, chỉ "đ" vàng gold nghiêng mảnh (phải)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
