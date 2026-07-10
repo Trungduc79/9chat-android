@@ -43,6 +43,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,6 +70,23 @@ private val nf = NumberFormat.getNumberInstance(Locale("vi"))
 private fun money(n: Double): String = nf.format(n.toLong())
 private fun trimZeros(n: Double): String =
     if (n == n.toLong().toDouble()) n.toLong().toString() else n.toString().trimEnd('0').trimEnd('.')
+
+/** Nhập tiền "theo nghìn": có thập phân/số <1000 → ×1000; ≥4 chữ số giữ số thật; nhiều dấu = phân cách nghìn. */
+private fun expandMoneyShorthand(raw: String): Double? {
+    val cleaned = raw.filter { it.isDigit() || it == '.' || it == ',' }
+    if (cleaned.isEmpty()) return null
+    val sepCount = cleaned.count { it == '.' || it == ',' }
+    val value: Double = when {
+        sepCount >= 2 -> cleaned.filter { it.isDigit() }.toDoubleOrNull() ?: return null
+        sepCount == 1 -> (cleaned.replace(',', '.').toDoubleOrNull() ?: return null) * 1000
+        else -> {
+            val n = cleaned.toDoubleOrNull() ?: return null
+            if (n < 1000) n * 1000 else n
+        }
+    }
+    if (value.isNaN() || value.isInfinite()) return null
+    return Math.round(value).toDouble()
+}
 private fun fmtDate(s: String): String = try {
     val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(s.take(10))
     SimpleDateFormat("dd/MM/yyyy", Locale.US).format(d!!)
@@ -210,6 +234,8 @@ fun AccountingDebtsTab() {
 private data class PendingRowView(
     val showHeader: Boolean, val date: String, val docNo: String, val originTable: String, val originId: Long,
     val description: String?, val qty: Double?, val unitName: String?, val unitPrice: Double?, val debit: Double, val credit: Double,
+    // Sửa inline (chỉ dòng item đơn hàng): itemId>0 + variant/unit để gửi updateOrderItem.
+    val itemId: Long = 0, val variantId: Long = 0, val unitId: Long = 0,
 )
 private data class StmtRowView(val showHeader: Boolean, val row: DebtStatementRowDto)
 
@@ -262,7 +288,9 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
     val pendingRows = remember(pending) {
         buildList {
             for (src in pending?.sources ?: emptyList()) src.rows.forEachIndexed { ri, r ->
-                add(PendingRowView(ri == 0, src.accountingDate, src.docNo ?: "", src.originTable, src.originId, r.description, r.qty, r.unitName, r.unitPrice, r.bornDebt, r.bornCredit))
+                val itemId = if (src.originTable == "orders") (r.meta?.orderItemId ?: 0L) else 0L
+                add(PendingRowView(ri == 0, src.accountingDate, src.docNo ?: "", src.originTable, src.originId, r.description, r.qty, r.unitName, r.unitPrice, r.bornDebt, r.bornCredit,
+                    itemId = itemId, variantId = r.variantId ?: 0L, unitId = r.unitId ?: 0L))
             }
         }
     }
@@ -341,7 +369,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
             if (loading && statement == null) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             } else if (showUnpaid) {
-                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() })
+                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
             } else {
                 SettledTab(statement, stmtRows, closing, party.partyType, party.partyId, party.name,
                     rangeStart = stmtFrom, rangeEnd = stmtTo,
@@ -372,36 +400,170 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
 private fun ColumnScope.UnpaidTab(
     rows: List<PendingRowView>, advances: List<DebtPendingAdvanceDto>, hasBlockingAdvance: Boolean,
     pendingNet: Double, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
+    onReload: () -> Unit,
 ) {
-    LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)) {
-        if (hasBlockingAdvance) item {
-            Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(6.dp)).border(0.5.dp, Color(0xFFE2A03F), RoundedCornerShape(6.dp)).background(Color(0xFFE2A03F).copy(alpha = 0.08f)).padding(10.dp)) {
-                Text("⚠️ Có ${advances.size} khoản ứng ship CHỜ HOÀN ỨNG — không thể chốt tới khi hoàn đủ.", color = Color(0xFFE2A03F), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                advances.forEach { a ->
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(a.orderCode ?: a.code, color = AdminColors.TextMuted, fontSize = 11.sp)
-                        Text(a.description ?: "", color = AdminColors.Text, fontSize = 11.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                        Text("còn ${money(a.remaining)}", color = Color(0xFFE2A03F), fontSize = 11.sp)
+    val context = LocalContext.current
+    val container = (context.applicationContext as App).container
+    var editingKey by remember { mutableStateOf<Int?>(null) }        // idx dòng đang sửa (phóng to + làm mờ dòng khác)
+    var qtyConfirm by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) } // chờ xác nhận đổi SL
+
+    Box(Modifier.weight(1f).fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+            if (hasBlockingAdvance) item {
+                Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(6.dp)).border(0.5.dp, Color(0xFFE2A03F), RoundedCornerShape(6.dp)).background(Color(0xFFE2A03F).copy(alpha = 0.08f)).padding(10.dp)) {
+                    Text("⚠️ Có ${advances.size} khoản ứng ship CHỜ HOÀN ỨNG — không thể chốt tới khi hoàn đủ.", color = Color(0xFFE2A03F), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    advances.forEach { a ->
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(a.orderCode ?: a.code, color = AdminColors.TextMuted, fontSize = 11.sp)
+                            Text(a.description ?: "", color = AdminColors.Text, fontSize = 11.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                            Text("còn ${money(a.remaining)}", color = Color(0xFFE2A03F), fontSize = 11.sp)
+                        }
                     }
                 }
             }
-        }
-        if (rows.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) { Text("Không có công nợ chưa chốt.", color = AdminColors.TextMuted, fontSize = 13.sp) } }
-        itemsIndexed(rows) { idx, r -> LedgerRow(idx, r.showHeader, r.date, r.docNo, r.description, r.qty, r.unitName, r.unitPrice, r.debit, r.credit, clickableDoc = r.originTable == "orders" && r.originId > 0, onDocClick = { onOpenOrder(r.originId) }) }
-        item {
-            Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(0.5.dp).background(AdminColors.Border))
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Tổng chưa chốt", color = AdminColors.TextMuted, fontSize = 14.sp)
-                Text(moneyD(money(pendingNet), AdminColors.Text), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            if (rows.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) { Text("Không có công nợ chưa chốt.", color = AdminColors.TextMuted, fontSize = 13.sp) } }
+            itemsIndexed(rows) { idx, r ->
+                if (r.itemId > 0L) EditableLedgerRow(
+                    idx = idx, row = r,
+                    dim = editingKey != null && editingKey != idx, editing = editingKey == idx,
+                    onEditingChange = { focused -> editingKey = if (focused) idx else if (editingKey == idx) null else editingKey },
+                    onOpenOrder = { onOpenOrder(r.originId) },
+                    confirmQty = { val d = CompletableDeferred<Boolean>(); qtyConfirm = d; d.await() },
+                    save = { qty, price ->
+                        val ok = try {
+                            container.vapi.updateOrderItem(r.originId, r.itemId, CreateOrderItem(r.variantId, r.unitId, qty, price)); true
+                        } catch (_: Exception) { false }
+                        if (ok) onReload() else Toast.makeText(context, "Cập nhật dòng thất bại", Toast.LENGTH_SHORT).show()
+                        ok
+                    },
+                ) else LedgerRow(idx, r.showHeader, r.date, r.docNo, r.description, r.qty, r.unitName, r.unitPrice, r.debit, r.credit, clickableDoc = r.originTable == "orders" && r.originId > 0, onDocClick = { onOpenOrder(r.originId) })
             }
-            Text("Bấm số đơn để mở đơn và chỉnh sửa trước khi chốt.", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
-            Button(
-                onClick = onPost, enabled = canSettle && !hasBlockingAdvance && !posting,
-                colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary, contentColor = Color.White),
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            ) { Text(if (posting) "Đang chốt…" else "Chốt công nợ") }
-            if (!canSettle) Text("Tài khoản của bạn không có quyền chốt công nợ.", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            Spacer(Modifier.height(40.dp))
+            item {
+                Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(0.5.dp).background(AdminColors.Border))
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Tổng chưa chốt", color = AdminColors.TextMuted, fontSize = 14.sp)
+                    Text(moneyD(money(pendingNet), AdminColors.Text), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                }
+                Text("Chạm SL/đơn giá để sửa nhanh; bấm số đơn để mở đơn đầy đủ.", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                Button(
+                    onClick = onPost, enabled = canSettle && !hasBlockingAdvance && !posting,
+                    colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                ) { Text(if (posting) "Đang chốt…" else "Chốt công nợ") }
+                if (!canSettle) Text("Tài khoản của bạn không có quyền chốt công nợ.", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Spacer(Modifier.height(40.dp))
+            }
+        }
+        // Xác nhận đổi SL (đụng tồn) — hoist trên list để phủ toàn vùng.
+        qtyConfirm?.let { d ->
+            ConfirmOverlay(
+                title = "Đổi số lượng",
+                message = "Đơn đã giao — đổi số lượng sẽ điều chỉnh lại tồn kho. Tiếp tục?",
+                onConfirm = { qtyConfirm = null; d.complete(true) },
+                onCancel = { qtyConfirm = null; d.complete(false) },
+            )
+        }
+    }
+}
+
+/** Dòng Chưa chốt CÓ sửa inline: chạm SL/đơn giá để sửa; focus → phóng to + làm mờ dòng khác;
+ *  đơn giá nhập "theo nghìn" + hint; blur lưu nếu đổi (đổi SL hỏi xác nhận vì đụng tồn). */
+@Composable
+private fun EditableLedgerRow(
+    idx: Int, row: PendingRowView, dim: Boolean, editing: Boolean,
+    onEditingChange: (Boolean) -> Unit, onOpenOrder: () -> Unit,
+    confirmQty: suspend () -> Boolean, save: suspend (qty: Double, price: Double) -> Boolean,
+) {
+    val scope = rememberCoroutineScope()
+    val origQty = row.qty ?: 0.0
+    val origPrice = row.unitPrice ?: 0.0
+    var qtyText by remember(row.itemId, origQty) { mutableStateOf(trimZeros(origQty)) }
+    var priceText by remember(row.itemId, origPrice) { mutableStateOf(money(origPrice)) }
+    var priceFocused by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    val numSize = if (editing) 15.sp else 11.sp
+
+    Column(Modifier.fillMaxWidth().alpha(if (dim) 0.5f else 1f)) {
+        if (idx > 0) Box(Modifier.fillMaxWidth().height(if (row.showHeader) 1.dp else 0.5.dp).background(if (row.showHeader) GOLD else AdminColors.Border))
+        Column(Modifier.fillMaxWidth().padding(vertical = if (editing) 12.dp else 8.dp)) {
+            if (row.showHeader) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(fmtDate(row.date), color = AdminColors.TextMuted, fontSize = 11.sp)
+                if (row.docNo.isNotBlank()) Text(row.docNo, color = AdminColors.Primary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onOpenOrder))
+            }
+            Text(row.description ?: "—", color = AdminColors.Text, fontSize = if (editing) 15.sp else 14.sp)
+            Row(Modifier.fillMaxWidth().padding(top = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).padding(start = 26.dp), verticalAlignment = Alignment.CenterVertically) {
+                    BasicTextField(
+                        value = qtyText,
+                        onValueChange = { raw -> qtyText = raw.filter { c -> c.isDigit() || c == '.' } },
+                        readOnly = saving,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium),
+                        cursorBrush = SolidColor(AdminColors.Primary),
+                        modifier = Modifier.widthIn(min = 24.dp).onFocusChanged { st ->
+                            if (st.isFocused) onEditingChange(true)
+                            else {
+                                onEditingChange(false)
+                                val newQty = qtyText.toDoubleOrNull() ?: 0.0
+                                if (newQty > 0 && newQty != origQty) scope.launch {
+                                    if (confirmQty()) { saving = true; val ok = save(newQty, origPrice); saving = false; if (!ok) qtyText = trimZeros(origQty) }
+                                    else qtyText = trimZeros(origQty)
+                                } else qtyText = trimZeros(origQty)
+                            }
+                        },
+                    )
+                    row.unitName?.let { Text("  $it", color = AdminColors.TextMuted, fontSize = numSize, fontStyle = FontStyle.Italic) }
+                    Text("  ×  ", color = AdminColors.TextMuted, fontSize = numSize)
+                    Box {
+                        if (priceFocused) expandMoneyShorthand(priceText)?.let { pv ->
+                            Popup(alignment = Alignment.TopStart, offset = IntOffset(0, -72)) {
+                                Text(money(pv), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Primary.copy(alpha = 0.65f)).padding(horizontal = 8.dp, vertical = 3.dp))
+                            }
+                        }
+                        BasicTextField(
+                            value = priceText,
+                            onValueChange = { raw -> priceText = raw.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                            readOnly = saving,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            modifier = Modifier.widthIn(min = 44.dp).onFocusChanged { st ->
+                                if (st.isFocused) { priceFocused = true; onEditingChange(true); priceText = trimZeros(origPrice) }
+                                else {
+                                    priceFocused = false; onEditingChange(false)
+                                    val v = expandMoneyShorthand(priceText) ?: 0.0
+                                    priceText = money(v)
+                                    if (v != origPrice) scope.launch { saving = true; val ok = save(origQty, v); saving = false; if (!ok) priceText = money(origPrice) }
+                                }
+                            },
+                        )
+                    }
+                }
+                if (row.debit > 0) Text("+${money(row.debit)}", color = AdminColors.Danger, fontSize = 14.sp)
+                if (row.credit > 0) Text("−${money(row.credit)}", color = AdminColors.Success, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+/** Overlay xác nhận đơn giản (scrim + card + Huỷ/Tiếp tục). */
+@Composable
+private fun ConfirmOverlay(title: String, message: String, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onCancel), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxWidth().padding(24.dp).clip(RoundedCornerShape(16.dp))
+                .background(AdminColors.Card).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .clickable(enabled = false) {}.padding(20.dp),
+        ) {
+            Text(title, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(message, color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.End) {
+                Text("Huỷ", color = AdminColors.TextMuted, fontSize = 14.sp, modifier = Modifier.clickable(onClick = onCancel).padding(horizontal = 16.dp, vertical = 8.dp))
+                Text("Tiếp tục", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.clickable(onClick = onConfirm).padding(horizontal = 16.dp, vertical = 8.dp))
+            }
         }
     }
 }

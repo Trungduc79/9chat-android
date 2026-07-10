@@ -317,6 +317,14 @@ data class DebtPendingRowDto(
     @SerializedName("unit_name") val unitName: String? = null,
     val qty: Double? = null,
     @SerializedName("unit_price") val unitPrice: Double? = null,
+    // Cho sửa inline SL/đơn giá ngay ở tab Chưa chốt (chỉ dòng item đơn hàng có đủ 3 field này).
+    @SerializedName("variant_id") val variantId: Long? = null,
+    @SerializedName("unit_id") val unitId: Long? = null,
+    val meta: DebtPendingRowMetaDto? = null,
+)
+
+data class DebtPendingRowMetaDto(
+    @SerializedName("order_item_id") val orderItemId: Long? = null,
 )
 
 data class DebtPendingSourceDto(
@@ -587,6 +595,16 @@ data class VatShortageDto(
     @SerializedName("shortage_qty") val shortageQty: Double = 0.0,
 )
 data class VatStockCheckDto(val shortages: List<VatShortageDto> = emptyList(), val ok: Boolean = true)
+
+data class VatPriceIssueDto(
+    @SerializedName("item_name") val itemName: String = "",
+    val unit: String? = null,
+    @SerializedName("sale_price") val salePrice: Double = 0.0,
+    @SerializedName("cost_price") val costPrice: Double = 0.0,
+    val diff: Double = 0.0,
+    @SerializedName("price_type") val priceType: String = "exclusive",
+)
+data class VatPriceCheckDto(val issues: List<VatPriceIssueDto> = emptyList(), val ok: Boolean = true)
 
 /** Body cho create/update/issue VAT draft (price_type + vat_info_id + ignore_unit_warnings). */
 data class VatDraftReq(

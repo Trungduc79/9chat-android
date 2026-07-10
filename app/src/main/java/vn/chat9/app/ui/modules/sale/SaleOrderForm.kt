@@ -114,6 +114,32 @@ private fun fmtMoney(n: Double): String = moneyFmt.format(Math.round(n))
 private fun parseMoney(s: String): Double = s.filter { it.isDigit() }.toDoubleOrNull() ?: 0.0
 private fun trimZeros(n: Double): String = if (n == Math.floor(n)) n.toLong().toString() else n.toString()
 
+/**
+ * Nhập tiền "theo nghìn" (thói quen VN — gõ tắt phần nghìn). Quy tắc nghìn thông minh:
+ *  - Có DẤU THẬP PHÂN → ×1000 (25.5 → 25.500 · 1234.567 → 1.234.567)
+ *  - Số nguyên < 1000 → ×1000 (350 → 350.000)
+ *  - Số nguyên ≥ 4 chữ số → giữ số thật (350000 → 350.000)
+ *  - Nhiều dấu phân cách → phân cách nghìn (1.234.567 → 1.234.567)
+ * Round-trip an toàn với giá trị đã format. Rỗng → null.
+ */
+private fun expandMoneyShorthand(raw: String): Double? {
+    val neg = raw.trim().startsWith("-")
+    val cleaned = raw.filter { it.isDigit() || it == '.' || it == ',' }
+    if (cleaned.isEmpty()) return null
+    val sepCount = cleaned.count { it == '.' || it == ',' }
+    val value: Double = when {
+        sepCount >= 2 -> cleaned.filter { it.isDigit() }.toDoubleOrNull() ?: return null
+        sepCount == 1 -> (cleaned.replace(',', '.').toDoubleOrNull() ?: return null) * 1000
+        else -> {
+            val n = cleaned.toDoubleOrNull() ?: return null
+            if (n < 1000) n * 1000 else n
+        }
+    }
+    if (value.isNaN() || value.isInfinite()) return null
+    val rounded = Math.round(value).toDouble()
+    return if (neg) -rounded else rounded
+}
+
 /** Tên variant ưu tiên cột name; fallback attributes joined; fallback product. */
 internal fun variantDisplay(v: VariantSearchDto, productName: String): String {
     if (!v.name.isNullOrBlank()) return v.name
@@ -817,21 +843,29 @@ private fun ItemRow(
                     Spacer(Modifier.weight(1f))
                     Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.weight(1f))
+                    // Nhập "theo nghìn": gõ text RAW khi focus, bung (expandMoneyShorthand) khi blur.
                     var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
-                    var priceAtFocus by remember(draft.variantId) { mutableStateOf<String?>(null) }
+                    var priceAtFocus by remember(draft.variantId) { mutableStateOf<Double?>(null) }
                     BasicTextField(
                         value = priceText,
-                        onValueChange = { raw -> val v = parseMoney(raw); priceText = if (v > 0) fmtMoney(v) else ""; onPriceChange(v) },
+                        onValueChange = { raw -> priceText = raw.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                         readOnly = !canEdit,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
                         cursorBrush = SolidColor(AdminColors.Primary),
-                        // Snapshot lúc focus, blur → autosave nếu đổi (tránh PUT thừa).
+                        // Focus: hiện RAW dễ sửa. Blur: bung theo nghìn → cập nhật + autosave nếu đổi.
                         modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}")
                             .onFocusChanged { st ->
-                                if (st.isFocused) priceAtFocus = priceText
-                                else if (priceAtFocus != null) { if (priceAtFocus != priceText) onPriceCommit(); priceAtFocus = null }
+                                if (st.isFocused) {
+                                    priceText = if (draft.price > 0) trimZeros(draft.price) else ""
+                                    priceAtFocus = draft.price
+                                } else if (priceAtFocus != null) {
+                                    val v = expandMoneyShorthand(priceText) ?: 0.0
+                                    priceText = if (v > 0) fmtMoney(v) else ""
+                                    if (v != priceAtFocus) { onPriceChange(v); onPriceCommit() }
+                                    priceAtFocus = null
+                                }
                             },
                     )
                     Spacer(Modifier.weight(1f))
@@ -880,18 +914,30 @@ private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scop
         Spacer(Modifier.width(6.dp))
         Column(Modifier.weight(0.58f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Nhập "theo nghìn": gõ RAW khi focus, bung khi blur (submit vẫn parseMoney string).
+                var text by remember(value) { mutableStateOf(value) }
+                var atFocus by remember { mutableStateOf<String?>(null) }
                 BasicTextField(
-                    value = value,
-                    onValueChange = { raw -> val v = parseMoney(raw); onChange(if (v > 0) fmtMoney(v) else "") },
+                    value = text,
+                    onValueChange = { raw -> text = raw.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                     readOnly = !enabled,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
                     cursorBrush = SolidColor(AdminColors.Primary),
-                    modifier = Modifier.weight(1f).centerOnFocus(focusCtx, scope, "ship-$label"),
+                    modifier = Modifier.weight(1f).centerOnFocus(focusCtx, scope, "ship-$label")
+                        .onFocusChanged { st ->
+                            if (st.isFocused) atFocus = text
+                            else if (atFocus != null) {
+                                val v = expandMoneyShorthand(text)
+                                text = if (v != null && v > 0) fmtMoney(v) else ""
+                                onChange(text)
+                                atFocus = null
+                            }
+                        },
                     decorationBox = { inner ->
                         Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.CenterEnd) {
-                            if (value.isEmpty()) Text("0", color = AdminColors.TextMuted, fontSize = 13.sp)
+                            if (text.isEmpty()) Text("0", color = AdminColors.TextMuted, fontSize = 13.sp)
                             inner()
                         }
                     },
@@ -1101,7 +1147,8 @@ private fun CustomerOrdersDialog(
         loading = true
         orders = try {
             container.vapi.listOrders(
-                type = if (isPurchase) "purchase" else "sale", partyId = customerId, invoiceOnly = "all", perPage = 100,
+                // Bỏ invoiceOnly → BE mặc định LOẠI đơn ảo HĐ VAT (is_invoice_only) khỏi màn sale.
+                type = if (isPurchase) "purchase" else "sale", partyId = customerId, perPage = 100,
                 dateFrom = startMs?.let { ymdFmt.format(Date(it)) },
                 dateTo = endMs?.let { ymdFmt.format(Date(it)) },
             ).data ?: emptyList()
@@ -1201,7 +1248,7 @@ private fun CustomerOrderRow(
     onOpenOrder: () -> Unit,
 ) {
     val statusColor = when (o.status) {
-        "confirmed" -> AdminColors.Info
+        "confirmed" -> AdminColors.Warning
         "delivered", "completed" -> AdminColors.Success
         "cancelled" -> AdminColors.Danger
         else -> AdminColors.TextMuted
