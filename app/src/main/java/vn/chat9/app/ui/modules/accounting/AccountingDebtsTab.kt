@@ -467,8 +467,8 @@ private fun ColumnScope.UnpaidTab(
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(0.5.dp).background(AdminColors.Border))
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Tổng chưa chốt", color = AdminColors.TextMuted, fontSize = 14.sp)
-                    MoneyAmount(money(pendingNet), AdminColors.Text, 16.sp, showDong = true)
+                    Text("Tổng chưa chốt (tạm tính)", color = AdminColors.TextMuted, fontSize = 14.sp)
+                    MoneyAmount(money(pendingNet + closing), AdminColors.Text, 16.sp, showDong = true)
                 }
                 Text("Chạm SL/đơn giá để sửa nhanh; bấm số đơn để mở đơn đầy đủ.", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
                 Button(
