@@ -50,7 +50,9 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Popup
@@ -495,11 +497,13 @@ private fun EditableLedgerRow(
     val origQty = row.qty ?: 0.0
     val origPrice = row.unitPrice ?: 0.0
     var qtyText by remember(row.itemId, origQty) { mutableStateOf(trimZeros(origQty)) }
-    var priceText by remember(row.itemId, origPrice) { mutableStateOf(money(origPrice)) }
+    var priceTfv by remember(row.itemId, origPrice) { mutableStateOf(TextFieldValue(money(origPrice))) }
+    var qtyFocused by remember { mutableStateOf(false) }
     var priceFocused by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     val numSize = 13.sp
     val priceColor = if (priceSaved) GOLD else AdminColors.Danger
+    val hintOffsetY = with(LocalDensity.current) { -84 - 5.dp.roundToPx() }
     // Focus input → cuộn dòng vào tầm nhìn (trên bàn phím) sau khi IME mở (LazyColumn imePadding).
     fun scrollUp() { scope.launch { delay(300); runCatching { bring.bringIntoView() } } }
 
@@ -514,44 +518,53 @@ private fun EditableLedgerRow(
             Text(row.description ?: "—", color = AdminColors.Text, fontSize = 14.sp)
             Row(Modifier.fillMaxWidth().padding(top = 1.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).padding(start = 26.dp), verticalAlignment = Alignment.CenterVertically) {
-                    BasicTextField(
-                        value = qtyText,
-                        onValueChange = { raw -> qtyText = raw.filter { c -> c.isDigit() || c == '.' } },
-                        readOnly = saving,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.End),
-                        cursorBrush = SolidColor(AdminColors.Primary),
-                        decorationBox = { inner ->
-                            Box(contentAlignment = Alignment.CenterEnd) {
-                                if (qtyText.isEmpty()) Text(trimZeros(origQty), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
-                                inner()
-                            }
-                        },
-                        modifier = Modifier.widthIn(min = 48.dp).onFocusChanged { st ->
-                            if (st.isFocused) { onEditingChange(true); scrollUp() }
-                            else {
-                                onEditingChange(false)
-                                val newQty = qtyText.toDoubleOrNull() ?: 0.0
-                                if (newQty > 0 && newQty != origQty) scope.launch {
-                                    if (confirmQty()) { saving = true; val ok = save(newQty, origPrice, false); saving = false; if (!ok) qtyText = trimZeros(origQty) }
-                                    else qtyText = trimZeros(origQty)
-                                } else qtyText = trimZeros(origQty)
-                            }
-                        },
-                    )
+                    Box {
+                        if (qtyFocused && qtyText.isNotEmpty()) Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
+                            Text(qtyText + (row.unitName?.let { " $it" } ?: ""), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Primary.copy(alpha = 0.75f)).padding(horizontal = 10.dp, vertical = 4.dp))
+                        }
+                        BasicTextField(
+                            value = qtyText,
+                            onValueChange = { raw -> qtyText = raw.filter { c -> c.isDigit() || c == '.' } },
+                            readOnly = saving,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.End),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            decorationBox = { inner ->
+                                Box(contentAlignment = Alignment.CenterEnd) {
+                                    if (qtyText.isEmpty()) Text(trimZeros(origQty), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
+                                    inner()
+                                }
+                            },
+                            modifier = Modifier.widthIn(min = 48.dp).onFocusChanged { st ->
+                                if (st.isFocused) { qtyFocused = true; onEditingChange(true); scrollUp() }
+                                else {
+                                    qtyFocused = false; onEditingChange(false)
+                                    val newQty = qtyText.toDoubleOrNull() ?: 0.0
+                                    if (newQty > 0 && newQty != origQty) scope.launch {
+                                        if (confirmQty()) { saving = true; val ok = save(newQty, origPrice, false); saving = false; if (!ok) qtyText = trimZeros(origQty) }
+                                        else qtyText = trimZeros(origQty)
+                                    } else qtyText = trimZeros(origQty)
+                                }
+                            },
+                        )
+                    }
                     row.unitName?.let { Text("  $it", color = AdminColors.TextMuted, fontSize = numSize, fontStyle = FontStyle.Italic) }
                     Text("  ×  ", color = AdminColors.TextMuted, fontSize = numSize)
                     Box {
-                        if (priceFocused) expandMoneyShorthand(priceText)?.let { pv ->
-                            Popup(alignment = Alignment.TopStart, offset = IntOffset(0, -84 - with(LocalDensity.current) { 5.dp.roundToPx() })) {
+                        if (priceFocused) expandMoneyShorthand(priceTfv.text)?.let { pv ->
+                            Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
                                 Text(money(pv), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
                                     modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Primary.copy(alpha = 0.75f)).padding(horizontal = 10.dp, vertical = 4.dp))
                             }
                         }
                         BasicTextField(
-                            value = priceText,
-                            onValueChange = { raw -> priceText = raw.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                            value = priceTfv,
+                            onValueChange = { raw ->
+                                val f = raw.text.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                                priceTfv = if (f == raw.text) raw else TextFieldValue(f, selection = TextRange(f.length))
+                            },
                             readOnly = saving,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
@@ -559,17 +572,22 @@ private fun EditableLedgerRow(
                             cursorBrush = SolidColor(AdminColors.Primary),
                             decorationBox = { inner ->
                                 Box {
-                                    if (priceText.isEmpty()) Text(money(origPrice), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
+                                    if (priceTfv.text.isEmpty()) Text(money(origPrice), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
                                     inner()
                                 }
                             },
                             modifier = Modifier.widthIn(min = 44.dp).onFocusChanged { st ->
-                                if (st.isFocused) { priceFocused = true; onEditingChange(true); priceText = trimZeros(origPrice); scrollUp() }
-                                else {
+                                if (st.isFocused) {
+                                    // Tap → focus + chọn toàn bộ (double tap sẽ đặt lại con trỏ → không select-all)
+                                    priceFocused = true; onEditingChange(true)
+                                    val raw = trimZeros(origPrice)
+                                    priceTfv = TextFieldValue(raw, selection = TextRange(0, raw.length))
+                                    scrollUp()
+                                } else {
                                     priceFocused = false; onEditingChange(false)
-                                    val v = expandMoneyShorthand(priceText) ?: 0.0
-                                    priceText = money(v)
-                                    if (v != origPrice) scope.launch { saving = true; val ok = save(origQty, v, true); saving = false; if (!ok) priceText = money(origPrice) }
+                                    val v = expandMoneyShorthand(priceTfv.text) ?: 0.0
+                                    priceTfv = TextFieldValue(money(v))
+                                    if (v != origPrice) scope.launch { saving = true; val ok = save(origQty, v, true); saving = false; if (!ok) priceTfv = TextFieldValue(money(origPrice)) }
                                 }
                             },
                         )
