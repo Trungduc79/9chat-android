@@ -537,7 +537,7 @@ private fun EditableLedgerRow(
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 40.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 38.dp).onFocusChanged { st ->
                                 if (st.isFocused) { qtyFocused = true; onEditingChange(true); scrollUp() }
                                 else {
                                     qtyFocused = false; onEditingChange(false)
@@ -576,7 +576,7 @@ private fun EditableLedgerRow(
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 44.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 46.dp).onFocusChanged { st ->
                                 if (st.isFocused) {
                                     // Tap → focus + chọn toàn bộ. Chạy TRỄ ~60ms để select-all không bị
                                     // cú tap (đặt con trỏ sau khi focus) ghi đè. Double tap: cú chạm thứ 2
