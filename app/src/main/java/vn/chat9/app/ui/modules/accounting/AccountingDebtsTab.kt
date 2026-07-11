@@ -559,7 +559,7 @@ private fun EditableLedgerRow(
                         )
                     }
                     row.unitName?.let { Text("  $it", color = AdminColors.TextMuted, fontSize = numSize, fontStyle = FontStyle.Italic) }
-                    Box(Modifier.width(16.dp), contentAlignment = Alignment.Center) { Text("×", color = AdminColors.TextMuted, fontSize = numSize) }
+                    Box(Modifier.width(16.dp), contentAlignment = Alignment.Center) { Text("×", color = AdminColors.TextMuted.copy(alpha = 0.5f), fontSize = numSize) }
                     Box {
                         if (priceFocused) expandMoneyShorthand(priceTfv.text)?.let { pv ->
                             Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
