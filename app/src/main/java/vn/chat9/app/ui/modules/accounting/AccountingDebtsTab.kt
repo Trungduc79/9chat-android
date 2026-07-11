@@ -1031,13 +1031,13 @@ private fun ShipAdvancePayDialog(
 
             when (method) {
                 "" -> Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    MethodButton("Tiền mặt", AdminColors.Success, Modifier.weight(1f)) {
+                    MethodButton("CASH", AdminColors.Success, Modifier.weight(1f)) {
                         method = "cash"
-                        scope.launch { try { cashers = (container.vapi.listCashers().data ?: emptyList()).filter { it.type != "bank_account" }; casherId = cashers.firstOrNull()?.id } catch (_: Exception) {} }
+                        scope.launch { try { cashers = (container.vapi.listCashers().data ?: emptyList()).filter { it.type == "petty_cash" || it.type == "safe" || it.type == "mobile" }; casherId = cashers.firstOrNull()?.id } catch (_: Exception) {} }
                     }
-                    MethodButton("Tiền khoản (NH)", AdminColors.Primary, Modifier.weight(1f)) {
+                    MethodButton("BANK", AdminColors.Primary, Modifier.weight(1f)) {
                         method = "bank"
-                        scope.launch { loading = true; try { candidates = container.vapi.expensePaymentCandidates(advance.id, "bank").data?.candidates ?: emptyList() } catch (_: Exception) {} finally { loading = false } }
+                        scope.launch { loading = true; try { candidates = (container.vapi.expensePaymentCandidates(advance.id, "bank").data?.candidates ?: emptyList()).filter { !it.type.contains("cash") } } catch (_: Exception) {} finally { loading = false } }
                     }
                 }
                 "cash" -> Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
@@ -1093,7 +1093,7 @@ private fun ShipAdvancePayDialog(
                         Text("← Đổi phương thức", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable { method = "" })
                         Text(if (showAll) "Chỉ gợi ý khớp" else "Xem tất cả GD tiền ra", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable {
                             showAll = !showAll
-                            if (showAll && allTx.isEmpty()) scope.launch { loading = true; try { allTx = (container.vapi.listMoneyOut("bank", "out").data ?: emptyList()).map { ExpensePaymentCandidateDto(id = it.id, code = it.code, amount = it.amount, date = it.date, bankName = it.bankName, description = it.description) } } catch (_: Exception) {} finally { loading = false } }
+                            if (showAll && allTx.isEmpty()) scope.launch { loading = true; try { allTx = (container.vapi.listMoneyOut("bank", "out").data ?: emptyList()).filter { it.channel == "bank" && !it.type.contains("cash") }.map { ExpensePaymentCandidateDto(id = it.id, code = it.code, amount = it.amount, date = it.date, bankName = it.bankName, description = it.description) } } catch (_: Exception) {} finally { loading = false } }
                         })
                     }
                     if (loading) Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp)) }
