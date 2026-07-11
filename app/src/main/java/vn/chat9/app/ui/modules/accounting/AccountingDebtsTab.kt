@@ -377,7 +377,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
             if (loading && statement == null) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             } else if (showUnpaid) {
-                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
+                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, closing, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
             } else {
                 SettledTab(statement, stmtRows, closing, party.partyType, party.partyId, party.name,
                     rangeStart = stmtFrom, rangeEnd = stmtTo,
@@ -407,7 +407,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
 @Composable
 private fun ColumnScope.UnpaidTab(
     rows: List<PendingRowView>, advances: List<DebtPendingAdvanceDto>, hasBlockingAdvance: Boolean,
-    pendingNet: Double, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
+    pendingNet: Double, closing: Double, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
     onReload: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -431,6 +431,14 @@ private fun ColumnScope.UnpaidTab(
                         }
                     }
                 }
+            }
+            // Số dư đầu kỳ = số dư cuối kỳ của sổ đã chốt (điểm xuất phát của nợ chưa chốt).
+            item {
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Đầu kỳ", color = AdminColors.TextMuted, fontSize = 14.sp)
+                    MoneyAmount(money(closing), AdminColors.Text, 14.sp, showDong = true)
+                }
+                Box(Modifier.fillMaxWidth().height(0.5.dp).background(AdminColors.Border))
             }
             if (rows.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) { Text("Không có công nợ chưa chốt.", color = AdminColors.TextMuted, fontSize = 13.sp) } }
             itemsIndexed(rows) { idx, r ->
