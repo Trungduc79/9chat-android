@@ -354,8 +354,9 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
                         Text(if (party.partyType == "customer") "Khách hàng" else "Nhà cung cấp", color = AdminColors.TextMuted, fontSize = 11.sp)
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("Số dư hiện tại", color = AdminColors.TextMuted, fontSize = 10.sp)
-                        Text(moneyD(money(closing), AdminColors.Text), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        // Số dư hiện tại = đã chốt + chưa chốt (tạm tính nếu còn nợ chưa chốt).
+                        Text(if (hasPending) "Số dư hiện tại (tạm tính)" else "Số dư hiện tại", color = if (hasPending) Color(0xFFE2A03F) else AdminColors.TextMuted, fontSize = 10.sp)
+                        Text(moneyD(money(closing + pendingNet), AdminColors.Text), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
                     Spacer(Modifier.width(8.dp))
                 }
