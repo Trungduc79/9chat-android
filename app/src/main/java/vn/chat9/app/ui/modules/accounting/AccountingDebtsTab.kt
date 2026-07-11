@@ -503,7 +503,7 @@ private fun EditableLedgerRow(
     var saving by remember { mutableStateOf(false) }
     val numSize = 13.sp
     val priceColor = if (priceSaved) GOLD else AdminColors.Danger
-    val hintOffsetY = with(LocalDensity.current) { -84 - 5.dp.roundToPx() }
+    val hintOffsetY = with(LocalDensity.current) { -84 - 10.dp.roundToPx() }
     // Focus input → cuộn dòng vào tầm nhìn (trên bàn phím) sau khi IME mở (LazyColumn imePadding).
     fun scrollUp() { scope.launch { delay(300); runCatching { bring.bringIntoView() } } }
 
@@ -520,7 +520,7 @@ private fun EditableLedgerRow(
                 Row(Modifier.weight(1f).padding(start = 26.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         if (qtyFocused && qtyText.isNotEmpty()) Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
-                            Text(qtyText + (row.unitName?.let { " $it" } ?: ""), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
+                            Text(qtyText, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
                                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Primary.copy(alpha = 0.75f)).padding(horizontal = 10.dp, vertical = 4.dp))
                         }
                         BasicTextField(
@@ -529,15 +529,15 @@ private fun EditableLedgerRow(
                             readOnly = saving,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.End),
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
                             cursorBrush = SolidColor(AdminColors.Primary),
                             decorationBox = { inner ->
-                                Box(contentAlignment = Alignment.CenterEnd) {
+                                Box(contentAlignment = Alignment.Center) {
                                     if (qtyText.isEmpty()) Text(trimZeros(origQty), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 48.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 40.dp).onFocusChanged { st ->
                                 if (st.isFocused) { qtyFocused = true; onEditingChange(true); scrollUp() }
                                 else {
                                     qtyFocused = false; onEditingChange(false)
@@ -568,20 +568,22 @@ private fun EditableLedgerRow(
                             readOnly = saving,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            textStyle = TextStyle(color = priceColor, fontSize = numSize, fontWeight = FontWeight.Medium),
+                            textStyle = TextStyle(color = priceColor, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
                             cursorBrush = SolidColor(AdminColors.Primary),
                             decorationBox = { inner ->
-                                Box {
+                                Box(contentAlignment = Alignment.Center) {
                                     if (priceTfv.text.isEmpty()) Text(money(origPrice), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
                                     inner()
                                 }
                             },
                             modifier = Modifier.widthIn(min = 44.dp).onFocusChanged { st ->
                                 if (st.isFocused) {
-                                    // Tap → focus + chọn toàn bộ (double tap sẽ đặt lại con trỏ → không select-all)
+                                    // Tap → focus + chọn toàn bộ. Chạy TRỄ ~60ms để select-all không bị
+                                    // cú tap (đặt con trỏ sau khi focus) ghi đè. Double tap: cú chạm thứ 2
+                                    // tới sau 60ms sẽ đặt lại con trỏ → không select-all.
                                     priceFocused = true; onEditingChange(true)
-                                    val raw = trimZeros(origPrice)
-                                    priceTfv = TextFieldValue(raw, selection = TextRange(0, raw.length))
+                                    priceTfv = TextFieldValue(trimZeros(origPrice))
+                                    scope.launch { delay(60); priceTfv = priceTfv.copy(selection = TextRange(0, priceTfv.text.length)) }
                                     scrollUp()
                                 } else {
                                     priceFocused = false; onEditingChange(false)
