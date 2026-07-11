@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
@@ -413,6 +414,7 @@ private fun ColumnScope.UnpaidTab(
     var editingKey by remember { mutableStateOf<Int?>(null) }        // idx dòng đang sửa (phóng to + làm mờ dòng khác)
     var qtyConfirm by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) } // chờ xác nhận đổi SL
     var flashItemId by remember { mutableStateOf<Long?>(null) }      // dòng vừa lưu OK → flash xanh
+    val goldPriceIds = remember { mutableStateListOf<Long>() }       // dòng vừa sửa giá OK → đơn giá vàng tới khi reload
 
     Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
@@ -433,15 +435,16 @@ private fun ColumnScope.UnpaidTab(
                 if (r.itemId > 0L) EditableLedgerRow(
                     idx = idx, row = r,
                     dim = editingKey != null && editingKey != idx, editing = editingKey == idx,
-                    flashing = flashItemId == r.itemId,
+                    flashing = flashItemId == r.itemId, priceSaved = goldPriceIds.contains(r.itemId),
                     onEditingChange = { focused -> editingKey = if (focused) idx else if (editingKey == idx) null else editingKey },
                     onOpenOrder = { onOpenOrder(r.originId) },
                     confirmQty = { val d = CompletableDeferred<Boolean>(); qtyConfirm = d; d.await() },
-                    save = { qty, price ->
+                    save = { qty, price, isPrice ->
                         val ok = try {
                             container.vapi.updateOrderItem(r.originId, r.itemId, CreateOrderItem(r.variantId, r.unitId, qty, price)); true
                         } catch (_: Exception) { false }
                         if (ok) {
+                            if (isPrice && !goldPriceIds.contains(r.itemId)) goldPriceIds.add(r.itemId)
                             flashItemId = r.itemId
                             scope.launch { delay(900); if (flashItemId == r.itemId) flashItemId = null }
                             onReload()
@@ -483,9 +486,9 @@ private fun ColumnScope.UnpaidTab(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EditableLedgerRow(
-    idx: Int, row: PendingRowView, dim: Boolean, editing: Boolean, flashing: Boolean,
+    idx: Int, row: PendingRowView, dim: Boolean, editing: Boolean, flashing: Boolean, priceSaved: Boolean,
     onEditingChange: (Boolean) -> Unit, onOpenOrder: () -> Unit,
-    confirmQty: suspend () -> Boolean, save: suspend (qty: Double, price: Double) -> Boolean,
+    confirmQty: suspend () -> Boolean, save: suspend (qty: Double, price: Double, isPrice: Boolean) -> Boolean,
 ) {
     val scope = rememberCoroutineScope()
     val bring = remember { BringIntoViewRequester() }
@@ -495,19 +498,20 @@ private fun EditableLedgerRow(
     var priceText by remember(row.itemId, origPrice) { mutableStateOf(money(origPrice)) }
     var priceFocused by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
-    val numSize = if (editing) 17.sp else 13.sp
+    val numSize = 13.sp
+    val priceColor = if (priceSaved) GOLD else AdminColors.Danger
     // Focus input → cuộn dòng vào tầm nhìn (trên bàn phím) sau khi IME mở (LazyColumn imePadding).
     fun scrollUp() { scope.launch { delay(300); runCatching { bring.bringIntoView() } } }
 
     Column(Modifier.fillMaxWidth().bringIntoViewRequester(bring).alpha(if (dim) 0.5f else 1f)
         .background(if (flashing) Color(0xFF22C55E).copy(alpha = 0.14f) else Color.Transparent)) {
         if (idx > 0) Box(Modifier.fillMaxWidth().height(if (row.showHeader) 1.dp else 0.5.dp).background(if (row.showHeader) GOLD else AdminColors.Border))
-        Column(Modifier.fillMaxWidth().padding(vertical = if (editing) 12.dp else 8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             if (row.showHeader) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(fmtDate(row.date), color = AdminColors.TextMuted, fontSize = 11.sp)
                 if (row.docNo.isNotBlank()) Text(row.docNo, color = AdminColors.Primary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onOpenOrder))
             }
-            Text(row.description ?: "—", color = AdminColors.Text, fontSize = if (editing) 15.sp else 14.sp)
+            Text(row.description ?: "—", color = AdminColors.Text, fontSize = 14.sp)
             Row(Modifier.fillMaxWidth().padding(top = 1.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).padding(start = 26.dp), verticalAlignment = Alignment.CenterVertically) {
                     BasicTextField(
@@ -518,13 +522,19 @@ private fun EditableLedgerRow(
                         singleLine = true,
                         textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.End),
                         cursorBrush = SolidColor(AdminColors.Primary),
+                        decorationBox = { inner ->
+                            Box(contentAlignment = Alignment.CenterEnd) {
+                                if (qtyText.isEmpty()) Text(trimZeros(origQty), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
+                                inner()
+                            }
+                        },
                         modifier = Modifier.widthIn(min = 48.dp).onFocusChanged { st ->
                             if (st.isFocused) { onEditingChange(true); scrollUp() }
                             else {
                                 onEditingChange(false)
                                 val newQty = qtyText.toDoubleOrNull() ?: 0.0
                                 if (newQty > 0 && newQty != origQty) scope.launch {
-                                    if (confirmQty()) { saving = true; val ok = save(newQty, origPrice); saving = false; if (!ok) qtyText = trimZeros(origQty) }
+                                    if (confirmQty()) { saving = true; val ok = save(newQty, origPrice, false); saving = false; if (!ok) qtyText = trimZeros(origQty) }
                                     else qtyText = trimZeros(origQty)
                                 } else qtyText = trimZeros(origQty)
                             }
@@ -534,7 +544,7 @@ private fun EditableLedgerRow(
                     Text("  ×  ", color = AdminColors.TextMuted, fontSize = numSize)
                     Box {
                         if (priceFocused) expandMoneyShorthand(priceText)?.let { pv ->
-                            Popup(alignment = Alignment.TopStart, offset = IntOffset(0, -84)) {
+                            Popup(alignment = Alignment.TopStart, offset = IntOffset(0, -84 - with(LocalDensity.current) { 5.dp.roundToPx() })) {
                                 Text(money(pv), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
                                     modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Primary.copy(alpha = 0.75f)).padding(horizontal = 10.dp, vertical = 4.dp))
                             }
@@ -545,22 +555,28 @@ private fun EditableLedgerRow(
                             readOnly = saving,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium),
+                            textStyle = TextStyle(color = priceColor, fontSize = numSize, fontWeight = FontWeight.Medium),
                             cursorBrush = SolidColor(AdminColors.Primary),
+                            decorationBox = { inner ->
+                                Box {
+                                    if (priceText.isEmpty()) Text(money(origPrice), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
+                                    inner()
+                                }
+                            },
                             modifier = Modifier.widthIn(min = 44.dp).onFocusChanged { st ->
                                 if (st.isFocused) { priceFocused = true; onEditingChange(true); priceText = trimZeros(origPrice); scrollUp() }
                                 else {
                                     priceFocused = false; onEditingChange(false)
                                     val v = expandMoneyShorthand(priceText) ?: 0.0
                                     priceText = money(v)
-                                    if (v != origPrice) scope.launch { saving = true; val ok = save(origQty, v); saving = false; if (!ok) priceText = money(origPrice) }
+                                    if (v != origPrice) scope.launch { saving = true; val ok = save(origQty, v, true); saving = false; if (!ok) priceText = money(origPrice) }
                                 }
                             },
                         )
                     }
                 }
-                if (row.debit > 0) MoneyAmount("+${money(row.debit)}", AdminColors.Danger, 15.sp, showDong = false)
-                if (row.credit > 0) MoneyAmount("−${money(row.credit)}", AdminColors.Success, 15.sp, showDong = false)
+                if (row.debit > 0) MoneyAmount("+${money(row.debit)}", AdminColors.Text, 15.sp, showDong = false)
+                if (row.credit > 0) MoneyAmount("−${money(row.credit)}", AdminColors.Text, 15.sp, showDong = false)
             }
         }
     }
