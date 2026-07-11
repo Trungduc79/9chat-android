@@ -517,7 +517,7 @@ private fun EditableLedgerRow(
             }
             Text(row.description ?: "—", color = AdminColors.Text, fontSize = 14.sp)
             Row(Modifier.fillMaxWidth().padding(top = 1.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).padding(start = 26.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         if (qtyFocused && qtyTfv.text.isNotEmpty()) Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
                             Text(qtyTfv.text, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
@@ -540,7 +540,7 @@ private fun EditableLedgerRow(
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 34.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 50.dp).onFocusChanged { st ->
                                 if (st.isFocused) {
                                     // Tap → select-all (trễ 60ms để không bị cú tap ghi đè con trỏ)
                                     qtyFocused = true; onEditingChange(true)
@@ -584,7 +584,7 @@ private fun EditableLedgerRow(
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 60.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 68.dp).onFocusChanged { st ->
                                 if (st.isFocused) {
                                     // Tap → focus + chọn toàn bộ. Chạy TRỄ ~60ms để select-all không bị
                                     // cú tap (đặt con trỏ sau khi focus) ghi đè. Double tap: cú chạm thứ 2
