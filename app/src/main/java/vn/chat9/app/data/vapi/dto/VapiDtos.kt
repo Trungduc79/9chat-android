@@ -349,6 +349,7 @@ data class DebtPendingAdvanceDto(
     val description: String? = null,
     @SerializedName("order_id") val orderId: Long? = null,
     @SerializedName("order_code") val orderCode: String? = null,
+    @SerializedName("expense_date") val expenseDate: String? = null,
 )
 
 // ----- Hoàn ứng ship: ứng viên GD tiền ra + phân bổ (allocate customer_debt) -----

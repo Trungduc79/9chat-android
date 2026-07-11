@@ -387,7 +387,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
             if (loading && statement == null) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             } else if (showUnpaid) {
-                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, closing, party.partyId, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
+                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, closing, party.partyId, party.name, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
             } else {
                 SettledTab(statement, stmtRows, closing, party.partyType, party.partyId, party.name,
                     rangeStart = stmtFrom, rangeEnd = stmtTo,
@@ -417,7 +417,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
 @Composable
 private fun ColumnScope.UnpaidTab(
     rows: List<PendingRowView>, advances: List<DebtPendingAdvanceDto>, hasBlockingAdvance: Boolean,
-    pendingNet: Double, closing: Double, customerId: Long, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
+    pendingNet: Double, closing: Double, customerId: Long, customerName: String, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
     onReload: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -503,7 +503,7 @@ private fun ColumnScope.UnpaidTab(
         }
         // Khai báo khoản ứng ship đã chi từ đâu (tiền mặt / ngân hàng).
         payAdvance?.let { a ->
-            ShipAdvancePayDialog(a, customerId, onDismiss = { payAdvance = null }, onResolved = { payAdvance = null; onReload() })
+            ShipAdvancePayDialog(a, customerId, customerName, onDismiss = { payAdvance = null }, onResolved = { payAdvance = null; onReload() })
         }
     }
 }
@@ -978,7 +978,7 @@ private fun MethodButton(label: String, tint: Color, modifier: Modifier, onClick
  */
 @Composable
 private fun ShipAdvancePayDialog(
-    advance: DebtPendingAdvanceDto, customerId: Long,
+    advance: DebtPendingAdvanceDto, customerId: Long, customerName: String,
     onDismiss: () -> Unit, onResolved: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -999,7 +999,26 @@ private fun ShipAdvancePayDialog(
     var allTx by remember { mutableStateOf<List<ExpensePaymentCandidateDto>>(emptyList()) }
     var showAll by remember { mutableStateOf(false) }
     var selectedTx by remember { mutableStateOf<ExpensePaymentCandidateDto?>(null) }
-    val displayList = if (showAll) allTx else candidates
+    var bankSearch by remember { mutableStateOf("") }
+
+    // Chấm điểm gợi ý GD chuyển khoản: khớp ngày ứng, khớp số tiền, tên KH nằm trong nội dung CK.
+    val nameStop = setOf("cty", "cong", "ty", "cua", "hang", "shop", "dn", "ship", "tnhh", "mtv", "cp")
+    fun nameToks(s: String): List<String> = noAccent(s).split(Regex("[^a-z0-9]+")).filter { it.length >= 2 && it !in nameStop }
+    val custToks = remember(customerName) { nameToks(customerName) }
+    fun scoreOf(tx: ExpensePaymentCandidateDto): Pair<Int, List<String>> {
+        val reasons = mutableListOf<String>(); var sc = 0
+        if (kotlin.math.abs(tx.amount - remaining) < 1 || kotlin.math.abs(tx.amount - advance.amount) < 1) { sc += 2; reasons.add("khớp tiền") }
+        val advDate = advance.expenseDate
+        if (!advDate.isNullOrBlank() && tx.date.take(10) == advDate.take(10)) { sc += 2; reasons.add("khớp ngày") }
+        if (custToks.isNotEmpty()) { val d = noAccent(tx.description ?: ""); if (custToks.all { d.contains(it) }) { sc += 3; reasons.add("khớp tên KH") } }
+        return sc to reasons
+    }
+    val displayList = run {
+        val base = if (showAll) allTx else candidates
+        val q = noAccent(bankSearch.trim())
+        val filtered = if (q.isEmpty()) base else base.filter { noAccent(it.description ?: "").contains(q) || noAccent(it.code).contains(q) }
+        filtered.sortedByDescending { scoreOf(it).first }
+    }
     val bankAlloc = minOf(selectedTx?.amount ?: 0.0, remaining)
 
     fun doAllocate(txId: Long, amount: Double) {
@@ -1014,6 +1033,18 @@ private fun ShipAdvancePayDialog(
                 withContext(Dispatchers.Main) { Toast.makeText(context, "Hoàn ứng thất bại", Toast.LENGTH_SHORT).show() }
                 submitting = false
             }
+        }
+    }
+
+    fun loadAllTx() {
+        if (allTx.isNotEmpty()) return
+        scope.launch {
+            loading = true
+            try {
+                allTx = (container.vapi.listMoneyOut("bank", "out").data ?: emptyList())
+                    .filter { it.channel == "bank" && !it.type.contains("cash") }
+                    .map { ExpensePaymentCandidateDto(id = it.id, code = it.code, amount = it.amount, date = it.date, bankName = it.bankName, description = it.description) }
+            } catch (_: Exception) {} finally { loading = false }
         }
     }
 
@@ -1093,21 +1124,41 @@ private fun ShipAdvancePayDialog(
                         Text("← Đổi phương thức", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable { method = "" })
                         Text(if (showAll) "Chỉ gợi ý khớp" else "Xem tất cả GD tiền ra", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable {
                             showAll = !showAll
-                            if (showAll && allTx.isEmpty()) scope.launch { loading = true; try { allTx = (container.vapi.listMoneyOut("bank", "out").data ?: emptyList()).filter { it.channel == "bank" && !it.type.contains("cash") }.map { ExpensePaymentCandidateDto(id = it.id, code = it.code, amount = it.amount, date = it.date, bankName = it.bankName, description = it.description) } } catch (_: Exception) {} finally { loading = false } }
+                            if (showAll) loadAllTx()
                         })
                     }
+                    // Ô tìm kiếm GD theo nội dung/mã CK — gõ tự động mở "tất cả GD".
+                    BasicTextField(
+                        value = bankSearch,
+                        onValueChange = { v -> bankSearch = v; if (v.trim().isNotEmpty() && !showAll) { showAll = true; loadAllTx() } },
+                        singleLine = true,
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 13.sp),
+                        cursorBrush = SolidColor(AdminColors.Primary),
+                        decorationBox = { inner ->
+                            Row(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("🔍 ", color = AdminColors.TextMuted, fontSize = 13.sp)
+                                Box(Modifier.weight(1f)) { if (bankSearch.isEmpty()) Text("Tìm nội dung / mã CK…", color = AdminColors.TextMuted, fontSize = 13.sp); inner() }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     if (loading) Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp)) }
                     else if (displayList.isEmpty()) Text(if (showAll) "Không có GD tiền ra chưa dùng." else "Không có GD khớp — bấm \"Xem tất cả\".", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
                     else Column(Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(top = 8.dp)) {
                         displayList.forEach { tx ->
                             val sel = tx.id == selectedTx?.id
-                            Column(Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(8.dp)).border(0.5.dp, if (sel) AdminColors.Primary else AdminColors.Border, RoundedCornerShape(8.dp)).background(if (sel) AdminColors.Primary.copy(alpha = 0.10f) else Color.Transparent).clickable { selectedTx = tx }.padding(10.dp)) {
+                            val (score, reasons) = scoreOf(tx)
+                            val borderCol = if (sel) AdminColors.Primary else if (score >= 3) AdminColors.Success.copy(alpha = 0.5f) else AdminColors.Border
+                            Column(Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(8.dp)).border(0.5.dp, borderCol, RoundedCornerShape(8.dp)).background(if (sel) AdminColors.Primary.copy(alpha = 0.10f) else Color.Transparent).clickable { selectedTx = tx }.padding(10.dp)) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(tx.code, color = AdminColors.TextMuted, fontSize = 11.sp)
                                     Text("−${money(tx.amount)}đ", color = AdminColors.Danger, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 }
                                 tx.description?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp, maxLines = 1) }
                                 Text(fmtDate(tx.date) + (tx.bankName?.let { " · $it" } ?: ""), color = AdminColors.TextMuted, fontSize = 11.sp)
+                                if (reasons.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    reasons.forEach { r -> Text(r, color = AdminColors.Success, fontSize = 10.sp, modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(AdminColors.Success.copy(alpha = 0.12f)).padding(horizontal = 6.dp, vertical = 2.dp)) }
+                                }
                             }
                         }
                     }
