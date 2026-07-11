@@ -50,6 +50,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Popup
 import kotlinx.coroutines.CompletableDeferred
@@ -453,7 +454,7 @@ private fun ColumnScope.UnpaidTab(
                 Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(0.5.dp).background(AdminColors.Border))
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Tổng chưa chốt", color = AdminColors.TextMuted, fontSize = 14.sp)
-                    Text(moneyD(money(pendingNet), AdminColors.Text), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    MoneyAmount(money(pendingNet), AdminColors.Text, 16.sp, showDong = true)
                 }
                 Text("Chạm SL/đơn giá để sửa nhanh; bấm số đơn để mở đơn đầy đủ.", color = AdminColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
                 Button(
@@ -515,9 +516,9 @@ private fun EditableLedgerRow(
                         readOnly = saving,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium),
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = numSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.End),
                         cursorBrush = SolidColor(AdminColors.Primary),
-                        modifier = Modifier.onFocusChanged { st ->
+                        modifier = Modifier.widthIn(min = 48.dp).onFocusChanged { st ->
                             if (st.isFocused) { onEditingChange(true); scrollUp() }
                             else {
                                 onEditingChange(false)
@@ -558,8 +559,8 @@ private fun EditableLedgerRow(
                         )
                     }
                 }
-                if (row.debit > 0) Text("+${money(row.debit)}", color = AdminColors.Danger, fontSize = 15.sp)
-                if (row.credit > 0) Text("−${money(row.credit)}", color = AdminColors.Success, fontSize = 15.sp)
+                if (row.debit > 0) MoneyAmount("+${money(row.debit)}", AdminColors.Danger, 15.sp, showDong = false)
+                if (row.credit > 0) MoneyAmount("−${money(row.credit)}", AdminColors.Success, 15.sp, showDong = false)
             }
         }
     }
