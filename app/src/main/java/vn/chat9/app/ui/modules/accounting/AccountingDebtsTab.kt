@@ -595,8 +595,12 @@ private fun EditableLedgerRow(
                         )
                     }
                 }
-                if (row.debit > 0) MoneyAmount("+${money(row.debit)}", AdminColors.Text, 15.sp, showDong = false)
-                if (row.credit > 0) MoneyAmount("−${money(row.credit)}", AdminColors.Text, 15.sp, showDong = false)
+                // Dấu "=" thẳng cột (neo phải qua ô thành tiền cố định); cùng cỡ dấu "×", xám mờ.
+                Text("=", color = AdminColors.TextMuted.copy(alpha = 0.5f), fontSize = numSize, modifier = Modifier.padding(horizontal = 6.dp))
+                Box(Modifier.width(112.dp), contentAlignment = Alignment.CenterEnd) {
+                    if (row.debit > 0) MoneyAmount(money(row.debit), AdminColors.Text, 15.sp, showDong = false)
+                    if (row.credit > 0) MoneyAmount(money(row.credit), AdminColors.Text, 15.sp, showDong = false)
+                }
             }
         }
     }
