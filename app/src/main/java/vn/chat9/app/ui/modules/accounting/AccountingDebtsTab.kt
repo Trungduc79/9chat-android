@@ -496,7 +496,7 @@ private fun EditableLedgerRow(
     val bring = remember { BringIntoViewRequester() }
     val origQty = row.qty ?: 0.0
     val origPrice = row.unitPrice ?: 0.0
-    var qtyText by remember(row.itemId, origQty) { mutableStateOf(trimZeros(origQty)) }
+    var qtyTfv by remember(row.itemId, origQty) { mutableStateOf(TextFieldValue(trimZeros(origQty))) }
     var priceTfv by remember(row.itemId, origPrice) { mutableStateOf(TextFieldValue(money(origPrice))) }
     var qtyFocused by remember { mutableStateOf(false) }
     var priceFocused by remember { mutableStateOf(false) }
@@ -519,13 +519,16 @@ private fun EditableLedgerRow(
             Row(Modifier.fillMaxWidth().padding(top = 1.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).padding(start = 26.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box {
-                        if (qtyFocused && qtyText.isNotEmpty()) Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
-                            Text(qtyText, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
+                        if (qtyFocused && qtyTfv.text.isNotEmpty()) Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
+                            Text(qtyTfv.text, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium,
                                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Primary.copy(alpha = 0.75f)).padding(horizontal = 10.dp, vertical = 4.dp))
                         }
                         BasicTextField(
-                            value = qtyText,
-                            onValueChange = { raw -> qtyText = raw.filter { c -> c.isDigit() || c == '.' } },
+                            value = qtyTfv,
+                            onValueChange = { raw ->
+                                val f = raw.text.filter { c -> c.isDigit() || c == '.' }
+                                qtyTfv = if (f == raw.text) raw else TextFieldValue(f, selection = TextRange(f.length))
+                            },
                             readOnly = saving,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
@@ -533,19 +536,24 @@ private fun EditableLedgerRow(
                             cursorBrush = SolidColor(AdminColors.Primary),
                             decorationBox = { inner ->
                                 Box(contentAlignment = Alignment.Center) {
-                                    if (qtyText.isEmpty()) Text(trimZeros(origQty), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
+                                    if (qtyTfv.text.isEmpty()) Text(trimZeros(origQty), color = AdminColors.TextMuted, fontSize = numSize, fontWeight = FontWeight.Medium)
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 38.dp).onFocusChanged { st ->
-                                if (st.isFocused) { qtyFocused = true; onEditingChange(true); scrollUp() }
+                            modifier = Modifier.widthIn(min = 34.dp).onFocusChanged { st ->
+                                if (st.isFocused) {
+                                    // Tap → select-all (trễ 60ms để không bị cú tap ghi đè con trỏ)
+                                    qtyFocused = true; onEditingChange(true)
+                                    scope.launch { delay(60); qtyTfv = qtyTfv.copy(selection = TextRange(0, qtyTfv.text.length)) }
+                                    scrollUp()
+                                }
                                 else {
                                     qtyFocused = false; onEditingChange(false)
-                                    val newQty = qtyText.toDoubleOrNull() ?: 0.0
+                                    val newQty = qtyTfv.text.toDoubleOrNull() ?: 0.0
                                     if (newQty > 0 && newQty != origQty) scope.launch {
-                                        if (confirmQty()) { saving = true; val ok = save(newQty, origPrice, false); saving = false; if (!ok) qtyText = trimZeros(origQty) }
-                                        else qtyText = trimZeros(origQty)
-                                    } else qtyText = trimZeros(origQty)
+                                        if (confirmQty()) { saving = true; val ok = save(newQty, origPrice, false); saving = false; if (!ok) qtyTfv = TextFieldValue(trimZeros(origQty)) }
+                                        else qtyTfv = TextFieldValue(trimZeros(origQty))
+                                    } else qtyTfv = TextFieldValue(trimZeros(origQty))
                                 }
                             },
                         )
@@ -576,7 +584,7 @@ private fun EditableLedgerRow(
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 46.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 50.dp).onFocusChanged { st ->
                                 if (st.isFocused) {
                                     // Tap → focus + chọn toàn bộ. Chạy TRỄ ~60ms để select-all không bị
                                     // cú tap (đặt con trỏ sau khi focus) ghi đè. Double tap: cú chạm thứ 2
