@@ -559,7 +559,7 @@ private fun EditableLedgerRow(
                         )
                     }
                     row.unitName?.let { Text("  $it", color = AdminColors.TextMuted, fontSize = numSize, fontStyle = FontStyle.Italic) }
-                    Text("  ×  ", color = AdminColors.TextMuted, fontSize = numSize)
+                    Box(Modifier.width(16.dp), contentAlignment = Alignment.Center) { Text("×", color = AdminColors.TextMuted, fontSize = numSize) }
                     Box {
                         if (priceFocused) expandMoneyShorthand(priceTfv.text)?.let { pv ->
                             Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, hintOffsetY)) {
@@ -584,7 +584,7 @@ private fun EditableLedgerRow(
                                     inner()
                                 }
                             },
-                            modifier = Modifier.widthIn(min = 50.dp).onFocusChanged { st ->
+                            modifier = Modifier.widthIn(min = 60.dp).onFocusChanged { st ->
                                 if (st.isFocused) {
                                     // Tap → focus + chọn toàn bộ. Chạy TRỄ ~60ms để select-all không bị
                                     // cú tap (đặt con trỏ sau khi focus) ghi đè. Double tap: cú chạm thứ 2
@@ -603,8 +603,8 @@ private fun EditableLedgerRow(
                         )
                     }
                 }
-                // Dấu "=" thẳng cột (neo phải qua ô thành tiền cố định); cùng cỡ dấu "×", xám mờ.
-                Text("=", color = AdminColors.TextMuted.copy(alpha = 0.5f), fontSize = numSize, modifier = Modifier.padding(horizontal = 6.dp))
+                // Dấu "=" thẳng cột (neo phải qua ô thành tiền cố định); cột tối thiểu, căn giữa; cùng cỡ "×", xám mờ.
+                Box(Modifier.width(16.dp), contentAlignment = Alignment.Center) { Text("=", color = AdminColors.TextMuted.copy(alpha = 0.5f), fontSize = numSize) }
                 Box(Modifier.width(112.dp), contentAlignment = Alignment.CenterEnd) {
                     if (row.debit > 0) MoneyAmount(money(row.debit), AdminColors.Text, 15.sp, showDong = false)
                     if (row.credit > 0) MoneyAmount(money(row.credit), AdminColors.Text, 15.sp, showDong = false)
