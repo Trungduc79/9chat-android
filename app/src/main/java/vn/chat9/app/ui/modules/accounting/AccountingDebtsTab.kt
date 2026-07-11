@@ -995,7 +995,6 @@ private fun ShipAdvancePayDialog(
     val cashAmt = expandMoneyShorthand(cashText) ?: 0.0
 
     var loading by remember { mutableStateOf(false) }
-    var candidates by remember { mutableStateOf<List<ExpensePaymentCandidateDto>>(emptyList()) }
     var allTx by remember { mutableStateOf<List<ExpensePaymentCandidateDto>>(emptyList()) }
     var showAll by remember { mutableStateOf(false) }
     var selectedTx by remember { mutableStateOf<ExpensePaymentCandidateDto?>(null) }
@@ -1013,11 +1012,15 @@ private fun ShipAdvancePayDialog(
         if (custToks.isNotEmpty()) { val d = noAccent(tx.description ?: ""); if (custToks.all { d.contains(it) }) { sc += 3; reasons.add("khớp tên KH") } }
         return sc to reasons
     }
+    // Chấm điểm trên TOÀN BỘ GD tiền ra: gõ tìm → lọc; mặc định (gợi ý) → điểm ≥ 2; xem tất cả → mọi GD.
     val displayList = run {
-        val base = if (showAll) allTx else candidates
         val q = noAccent(bankSearch.trim())
-        val filtered = if (q.isEmpty()) base else base.filter { noAccent(it.description ?: "").contains(q) || noAccent(it.code).contains(q) }
-        filtered.sortedByDescending { scoreOf(it).first }
+        val base = when {
+            q.isNotEmpty() -> allTx.filter { noAccent(it.description ?: "").contains(q) || noAccent(it.code).contains(q) }
+            !showAll -> allTx.filter { scoreOf(it).first >= 2 }
+            else -> allTx
+        }
+        base.sortedByDescending { scoreOf(it).first }
     }
     val bankAlloc = minOf(selectedTx?.amount ?: 0.0, remaining)
 
@@ -1068,7 +1071,7 @@ private fun ShipAdvancePayDialog(
                     }
                     MethodButton("BANK", AdminColors.Primary, Modifier.weight(1f)) {
                         method = "bank"
-                        scope.launch { loading = true; try { candidates = (container.vapi.expensePaymentCandidates(advance.id, "bank").data?.candidates ?: emptyList()).filter { !it.type.contains("cash") } } catch (_: Exception) {} finally { loading = false } }
+                        loadAllTx()
                     }
                 }
                 "cash" -> Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
