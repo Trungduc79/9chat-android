@@ -20,8 +20,12 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -266,6 +270,11 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
     var backdateSources by remember { mutableStateOf<List<DebtBackdatedSourceDto>>(emptyList()) }
     var showReasons by remember { mutableStateOf(false) }
 
+    // Dialog sửa đơn mở → tắt vuốt trái/phải đổi tab của AccountingScreen (reset khi rời màn).
+    val tabSwipeBlocked = LocalTabSwipeBlocked.current
+    LaunchedEffect(editOrderId) { tabSwipeBlocked?.value = editOrderId != null }
+    DisposableEffect(Unit) { onDispose { tabSwipeBlocked?.value = false } }
+
     // Lọc sổ chi tiết theo khoảng ngày (null = BE tự áp 15 ngày gần nhất).
     var stmtFrom by remember { mutableStateOf<Long?>(null) }
     var stmtTo by remember { mutableStateOf<Long?>(null) }
@@ -378,7 +387,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
             if (loading && statement == null) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
             } else if (showUnpaid) {
-                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, closing, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
+                UnpaidTab(pendingRows, advances, hasBlockingAdvance, pendingNet, closing, party.partyId, canSettle, posting, onOpenOrder = { editOrderId = it }, onPost = { onPostClick() }, onReload = { reloadTick++ })
             } else {
                 SettledTab(statement, stmtRows, closing, party.partyType, party.partyId, party.name,
                     rangeStart = stmtFrom, rangeEnd = stmtTo,
@@ -408,7 +417,7 @@ private fun AccountingDebtDetail(party: DebtOverviewRowDto, onBack: () -> Unit) 
 @Composable
 private fun ColumnScope.UnpaidTab(
     rows: List<PendingRowView>, advances: List<DebtPendingAdvanceDto>, hasBlockingAdvance: Boolean,
-    pendingNet: Double, closing: Double, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
+    pendingNet: Double, closing: Double, customerId: Long, canSettle: Boolean, posting: Boolean, onOpenOrder: (Long) -> Unit, onPost: () -> Unit,
     onReload: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -418,17 +427,20 @@ private fun ColumnScope.UnpaidTab(
     var qtyConfirm by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) } // chờ xác nhận đổi SL
     var flashItemId by remember { mutableStateOf<Long?>(null) }      // dòng vừa lưu OK → flash xanh
     val goldPriceIds = remember { mutableStateListOf<Long>() }       // dòng vừa sửa giá OK → đơn giá vàng tới khi reload
+    var payAdvance by remember { mutableStateOf<DebtPendingAdvanceDto?>(null) } // khoản ứng đang khai báo chi từ đâu
 
     Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
             if (hasBlockingAdvance) item {
                 Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(6.dp)).border(0.5.dp, Color(0xFFE2A03F), RoundedCornerShape(6.dp)).background(Color(0xFFE2A03F).copy(alpha = 0.08f)).padding(10.dp)) {
                     Text("⚠️ Có ${advances.size} khoản ứng ship CHỜ HOÀN ỨNG — không thể chốt tới khi hoàn đủ.", color = Color(0xFFE2A03F), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("Chạm vào từng khoản để khai báo đã chi từ đâu (tiền mặt / ngân hàng).", color = AdminColors.TextMuted, fontSize = 11.sp, fontStyle = FontStyle.Italic, modifier = Modifier.padding(top = 2.dp))
                     advances.forEach { a ->
-                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(top = 6.dp).clickable { payAdvance = a }, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(a.orderCode ?: a.code, color = AdminColors.TextMuted, fontSize = 11.sp)
                             Text(a.description ?: "", color = AdminColors.Text, fontSize = 11.sp, maxLines = 1, modifier = Modifier.weight(1f))
                             Text("còn ${money(a.remaining)}", color = Color(0xFFE2A03F), fontSize = 11.sp)
+                            Text("›", color = Color(0xFFE2A03F), fontSize = 15.sp)
                         }
                     }
                 }
@@ -465,7 +477,7 @@ private fun ColumnScope.UnpaidTab(
                 ) else LedgerRow(idx, r.showHeader, r.date, r.docNo, r.description, r.qty, r.unitName, r.unitPrice, r.debit, r.credit, clickableDoc = r.originTable == "orders" && r.originId > 0, onDocClick = { onOpenOrder(r.originId) })
             }
             item {
-                Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(0.5.dp).background(AdminColors.Border))
+                Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(2.dp).background(AdminColors.Success))
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Tổng chưa chốt (tạm tính)", color = AdminColors.TextMuted, fontSize = 14.sp)
                     MoneyAmount(money(pendingNet + closing), AdminColors.Text, 16.sp, showDong = true)
@@ -488,6 +500,10 @@ private fun ColumnScope.UnpaidTab(
                 onConfirm = { qtyConfirm = null; d.complete(true) },
                 onCancel = { qtyConfirm = null; d.complete(false) },
             )
+        }
+        // Khai báo khoản ứng ship đã chi từ đâu (tiền mặt / ngân hàng).
+        payAdvance?.let { a ->
+            ShipAdvancePayDialog(a, customerId, onDismiss = { payAdvance = null }, onResolved = { payAdvance = null; onReload() })
         }
     }
 }
@@ -905,8 +921,9 @@ private fun LedgerRow(
                         if (unitPrice != null && unitPrice != 0.0) Text("  × ${money(unitPrice)}", color = AdminColors.TextMuted, fontSize = 11.sp)
                     }
                 }
-                if (debit > 0) Text("+${money(debit)}", color = AdminColors.Danger, fontSize = 14.sp)
-                if (credit > 0) Text("−${money(credit)}", color = AdminColors.Success, fontSize = 14.sp)
+                // MoneyAmount (chừa cột 'đ' cố định) → SỐ căn phải thẳng cột với dòng sửa được & dòng tổng.
+                if (debit > 0) MoneyAmount("+${money(debit)}", AdminColors.Danger, 14.sp, showDong = false)
+                if (credit > 0) MoneyAmount("−${money(credit)}", AdminColors.Success, 14.sp, showDong = false)
             }
         }
     }
@@ -941,6 +958,176 @@ private fun BackdateReasonsOverlay(sources: List<DebtBackdatedSourceDto>, postin
                 colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary, contentColor = Color.White),
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
             ) { Text(if (posting) "Đang chốt…" else "Xác nhận chốt") }
+        }
+    }
+}
+
+@Composable
+private fun MethodButton(label: String, tint: Color, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.clip(RoundedCornerShape(10.dp)).border(0.5.dp, AdminColors.Border, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick).padding(vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) { Text(label, color = tint, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
+}
+
+/**
+ * Khai báo khoản ứng ship (chi hộ KH chờ hoàn ứng) đã chi từ đâu.
+ * Tiền mặt: tạo GD cash mới → allocate customer_debt. Ngân hàng: chọn GD tiền ra
+ * (gợi ý khớp + xem tất cả) → allocate. Số tiền kẹp ≤ còn-cần-hoàn (BE chặn nếu vượt).
+ */
+@Composable
+private fun ShipAdvancePayDialog(
+    advance: DebtPendingAdvanceDto, customerId: Long,
+    onDismiss: () -> Unit, onResolved: () -> Unit,
+) {
+    val context = LocalContext.current
+    val container = (context.applicationContext as App).container
+    val scope = rememberCoroutineScope()
+    val remaining = advance.remaining
+    var method by remember { mutableStateOf("") }         // "" | cash | bank
+    var submitting by remember { mutableStateOf(false) }
+
+    var cashers by remember { mutableStateOf<List<CasherDto>>(emptyList()) }
+    var casherId by remember { mutableStateOf<Long?>(null) }
+    var casherMenu by remember { mutableStateOf(false) }
+    var cashText by remember { mutableStateOf(trimZeros(remaining)) }
+    val cashAmt = expandMoneyShorthand(cashText) ?: 0.0
+
+    var loading by remember { mutableStateOf(false) }
+    var candidates by remember { mutableStateOf<List<ExpensePaymentCandidateDto>>(emptyList()) }
+    var allTx by remember { mutableStateOf<List<ExpensePaymentCandidateDto>>(emptyList()) }
+    var showAll by remember { mutableStateOf(false) }
+    var selectedTx by remember { mutableStateOf<ExpensePaymentCandidateDto?>(null) }
+    val displayList = if (showAll) allTx else candidates
+    val bankAlloc = minOf(selectedTx?.amount ?: 0.0, remaining)
+
+    fun doAllocate(txId: Long, amount: Double) {
+        scope.launch {
+            submitting = true
+            try {
+                container.vapi.allocateMoneyTx(txId, AllocateRequest(listOf(
+                    AllocateLineDto("customer_debt", customerId, advance.orderId, amount))))
+                withContext(Dispatchers.Main) { Toast.makeText(context, "Đã khai báo hoàn ứng ship", Toast.LENGTH_SHORT).show() }
+                onResolved()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(context, "Hoàn ứng thất bại", Toast.LENGTH_SHORT).show() }
+                submitting = false
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxWidth(0.94f).clip(RoundedCornerShape(16.dp)).background(AdminColors.Card).padding(16.dp)) {
+            Text("Khoản ứng ship đã chi từ đâu?", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Column(Modifier.fillMaxWidth().padding(top = 10.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE2A03F).copy(alpha = 0.10f)).padding(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(advance.orderCode ?: advance.code, color = AdminColors.TextMuted, fontSize = 12.sp)
+                    Text("Còn cần hoàn: ${money(remaining)}đ", color = Color(0xFFE2A03F), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+                advance.description?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp, maxLines = 2, modifier = Modifier.padding(top = 2.dp)) }
+                Text("Đã hoàn ${money(advance.reimbursed)}/${money(advance.amount)}đ", color = AdminColors.TextMuted, fontSize = 11.sp)
+            }
+
+            when (method) {
+                "" -> Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MethodButton("Tiền mặt", AdminColors.Success, Modifier.weight(1f)) {
+                        method = "cash"
+                        scope.launch { try { cashers = (container.vapi.listCashers().data ?: emptyList()).filter { it.type != "bank_account" }; casherId = cashers.firstOrNull()?.id } catch (_: Exception) {} }
+                    }
+                    MethodButton("Tiền khoản (NH)", AdminColors.Primary, Modifier.weight(1f)) {
+                        method = "bank"
+                        scope.launch { loading = true; try { candidates = container.vapi.expensePaymentCandidates(advance.id, "bank").data?.candidates ?: emptyList() } catch (_: Exception) {} finally { loading = false } }
+                    }
+                }
+                "cash" -> Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    Text("← Đổi phương thức", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable { method = "" })
+                    Text("Chi từ két", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+                    Box {
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp)).clickable { casherMenu = true }.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(cashers.firstOrNull { it.id == casherId }?.name ?: "Chọn két", color = AdminColors.Text, fontSize = 14.sp)
+                            Text("▾", color = AdminColors.TextMuted)
+                        }
+                        DropdownMenu(expanded = casherMenu, onDismissRequest = { casherMenu = false }) {
+                            cashers.forEach { c -> DropdownMenuItem(text = { Text(c.name) }, onClick = { casherId = c.id; casherMenu = false }) }
+                        }
+                    }
+                    Text("Số tiền chi (≤ còn cần hoàn)", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+                    BasicTextField(
+                        value = cashText,
+                        onValueChange = { raw -> cashText = raw.filter { it.isDigit() || it == '.' || it == ',' } },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium),
+                        cursorBrush = SolidColor(AdminColors.Primary),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp)).padding(12.dp),
+                    )
+                    Text("= ${money(cashAmt)}đ", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    if (cashAmt > 0 && cashAmt < remaining) Text("Hoàn 1 phần — còn thiếu ${money(remaining - cashAmt)}đ.", color = Color(0xFFE2A03F), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    val cashValid = casherId != null && cashAmt > 0 && cashAmt <= remaining + 1
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                submitting = true
+                                try {
+                                    val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                                    val txId = container.vapi.createMoneyTransaction(CreateMoneyTxRequest(
+                                        type = "pending", direction = "out", channel = "cash", casherId = casherId,
+                                        amount = cashAmt, date = today,
+                                        description = "Chi hộ ship hoàn ứng ${advance.code}" + (advance.orderCode?.let { " · $it" } ?: ""))).data?.id
+                                        ?: throw Exception("Không tạo được phiếu chi")
+                                    doAllocate(txId, cashAmt)
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) { Toast.makeText(context, "Tạo phiếu chi thất bại", Toast.LENGTH_SHORT).show() }
+                                    submitting = false
+                                }
+                            }
+                        },
+                        enabled = cashValid && !submitting,
+                        colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    ) { Text(if (submitting) "Đang lưu…" else "Chi tiền mặt & hoàn ứng") }
+                }
+                else -> Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("← Đổi phương thức", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable { method = "" })
+                        Text(if (showAll) "Chỉ gợi ý khớp" else "Xem tất cả GD tiền ra", color = AdminColors.Primary, fontSize = 12.sp, modifier = Modifier.clickable {
+                            showAll = !showAll
+                            if (showAll && allTx.isEmpty()) scope.launch { loading = true; try { allTx = (container.vapi.listMoneyOut("bank", "out").data ?: emptyList()).map { ExpensePaymentCandidateDto(id = it.id, code = it.code, amount = it.amount, date = it.date, bankName = it.bankName, description = it.description) } } catch (_: Exception) {} finally { loading = false } }
+                        })
+                    }
+                    if (loading) Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(28.dp)) }
+                    else if (displayList.isEmpty()) Text(if (showAll) "Không có GD tiền ra chưa dùng." else "Không có GD khớp — bấm \"Xem tất cả\".", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                    else Column(Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(top = 8.dp)) {
+                        displayList.forEach { tx ->
+                            val sel = tx.id == selectedTx?.id
+                            Column(Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(8.dp)).border(0.5.dp, if (sel) AdminColors.Primary else AdminColors.Border, RoundedCornerShape(8.dp)).background(if (sel) AdminColors.Primary.copy(alpha = 0.10f) else Color.Transparent).clickable { selectedTx = tx }.padding(10.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(tx.code, color = AdminColors.TextMuted, fontSize = 11.sp)
+                                    Text("−${money(tx.amount)}đ", color = AdminColors.Danger, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                                tx.description?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp, maxLines = 1) }
+                                Text(fmtDate(tx.date) + (tx.bankName?.let { " · $it" } ?: ""), color = AdminColors.TextMuted, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    selectedTx?.let { tx ->
+                        val (txt, col) = when {
+                            kotlin.math.abs(tx.amount - remaining) < 1 -> "Vừa đủ — hoàn ứng xong." to AdminColors.Success
+                            tx.amount < remaining -> "Hoàn 1 phần — còn thiếu ${money(remaining - tx.amount)}đ." to Color(0xFFE2A03F)
+                            else -> "GD lớn hơn — chỉ dùng ${money(remaining)}đ, dư ${money(tx.amount - remaining)}đ để mục đích khác." to AdminColors.Primary
+                        }
+                        Text(txt, color = col, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        Button(
+                            onClick = { doAllocate(tx.id, bankAlloc) },
+                            enabled = bankAlloc > 0 && !submitting,
+                            colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary, contentColor = Color.White),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        ) { Text(if (submitting) "Đang lưu…" else "Xác nhận đã thanh toán qua GD này") }
+                    }
+                }
+            }
+            Text("Đóng", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.align(Alignment.End).padding(top = 12.dp).clickable(onClick = onDismiss))
         }
     }
 }

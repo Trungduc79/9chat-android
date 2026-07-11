@@ -39,6 +39,8 @@ data class OrderDto(
     @SerializedName("shipping_fee") val shippingFee: Double? = null,           // Phí ship KH → công nợ
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // Phí ship KHO → chi phí
     @SerializedName("cod_collected") val codCollected: Double? = null,         // Thu hộ COD
+    @SerializedName("discount_amount") val discountAmount: Double? = null,      // Giảm cả đơn → giảm công nợ
+    @SerializedName("discount_reason") val discountReason: String? = null,      // Lý do giảm cả đơn
     // Drop-ship: đơn liên kết (đơn nhập trỏ tới đơn bán đã tự giao sau cascade fulfill,
     // hoặc đơn bán bị chặn fulfill trực tiếp — phải đi qua đơn nhập).
     @SerializedName("linked_order_id") val linkedOrderId: Long? = null,
@@ -342,10 +344,33 @@ data class DebtPendingAdvanceDto(
     val id: Long = 0,
     val code: String = "",
     val amount: Double = 0.0,
+    val reimbursed: Double = 0.0,
     val remaining: Double = 0.0,
     val description: String? = null,
+    @SerializedName("order_id") val orderId: Long? = null,
     @SerializedName("order_code") val orderCode: String? = null,
 )
+
+// ----- Hoàn ứng ship: ứng viên GD tiền ra + phân bổ (allocate customer_debt) -----
+data class ExpensePaymentCandidateDto(
+    val id: Long = 0,
+    val code: String = "",
+    val type: String = "",
+    val amount: Double = 0.0,
+    val date: String = "",
+    @SerializedName("bank_name") val bankName: String? = null,
+    val description: String? = null,
+    @SerializedName("casher_id") val casherId: Long? = null,
+)
+data class PaymentCandidatesDto(val candidates: List<ExpensePaymentCandidateDto> = emptyList())
+data class AllocateLineDto(
+    val purpose: String,
+    @SerializedName("party_id") val partyId: Long?,
+    @SerializedName("order_id") val orderId: Long?,
+    val amount: Double,
+)
+data class AllocateRequest(val lines: List<AllocateLineDto>)
+data class AllocateResultDto(val transaction: MoneyTransactionDto? = null)
 
 data class DebtPendingDto(
     @SerializedName("pending_count") val pendingCount: Int = 0,
@@ -643,6 +668,8 @@ data class CreateOrderRequest(
     @SerializedName("shipping_fee") val shippingFee: Double? = null,       // phí ship KH
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // phí ship kho
     @SerializedName("cod_collected") val codCollected: Double? = null,     // thu hộ
+    @SerializedName("discount_amount") val discountAmount: Double? = null,  // giảm cả đơn → giảm công nợ
+    @SerializedName("discount_reason") val discountReason: String? = null,  // lý do giảm cả đơn
     @SerializedName("dropship_customer_id") val dropshipCustomerId: Long? = null, // đơn nhập giao thẳng → KH nhận
     val items: List<CreateOrderItem>,
     val notes: String? = null,

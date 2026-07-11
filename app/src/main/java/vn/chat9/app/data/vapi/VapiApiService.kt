@@ -10,6 +10,8 @@ import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
+import vn.chat9.app.data.vapi.dto.AllocateRequest
+import vn.chat9.app.data.vapi.dto.AllocateResultDto
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.CategoryDto
@@ -23,6 +25,7 @@ import vn.chat9.app.data.vapi.dto.DebtStatementDto
 import vn.chat9.app.data.vapi.dto.ExpenseCategoryDto
 import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.PayExpenseRequest
+import vn.chat9.app.data.vapi.dto.PaymentCandidatesDto
 import vn.chat9.app.data.vapi.dto.ProductHistoryDto
 import vn.chat9.app.data.vapi.dto.StaffRolesDto
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
@@ -39,6 +42,7 @@ import vn.chat9.app.data.vapi.dto.VatDraftReq
 import vn.chat9.app.data.vapi.dto.VatIncludePhoneReq
 import vn.chat9.app.data.vapi.dto.VatInfoDto
 import vn.chat9.app.data.vapi.dto.VatOutputInvoiceDto
+import vn.chat9.app.data.vapi.dto.VatPriceCheckDto
 import vn.chat9.app.data.vapi.dto.VatStockCheckDto
 import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.data.vapi.dto.FulfillRequest
@@ -371,6 +375,12 @@ interface VapiApiService {
     @GET("v1/orders/{id}/vat-stock-check")
     suspend fun vatStockCheck(@Path("id") id: Long): VapiResponse<VatStockCheckDto>
 
+    @GET("v1/orders/{id}/vat-price-check")
+    suspend fun vatPriceCheck(
+        @Path("id") id: Long,
+        @Query("price_type") priceType: String,
+    ): VapiResponse<VatPriceCheckDto>
+
     /** Tạo HĐ nháp trên EasyInvoice (chưa ký). */
     @POST("v1/orders/{id}/create-vat-draft")
     suspend fun createVatDraft(@Path("id") id: Long, @Body body: VatDraftReq): VapiResponse<VatOutputInvoiceDto>
@@ -405,6 +415,26 @@ interface VapiApiService {
     /** Biến GD pending tiền ra thành chi phí (tạo Expense + duyệt + mark-paid). */
     @POST("v1/money-transactions/{id}/pay-expense")
     suspend fun payExpense(@Path("id") id: Long, @Body body: PayExpenseRequest): VapiResponse<MoneyTransactionDto>
+
+    /** Phân bổ GD tiền ra đa purpose (hoàn ứng ship = line customer_debt). */
+    @POST("v1/money-transactions/{id}/allocate")
+    suspend fun allocateMoneyTx(@Path("id") id: Long, @Body body: AllocateRequest): VapiResponse<AllocateResultDto>
+
+    /** GD tiền ra ứng viên hoàn ứng cho 1 khoản ứng (bank|cash): chưa link + khớp tiền + gần ngày. */
+    @GET("v1/expenses/{id}/payment-candidates")
+    suspend fun expensePaymentCandidates(
+        @Path("id") id: Long,
+        @Query("channel") channel: String,
+    ): VapiResponse<PaymentCandidatesDto>
+
+    /** Danh sách GD tiền RA chưa dùng hết (xem tất cả khi hoàn ứng ngân hàng). */
+    @GET("v1/money-transactions")
+    suspend fun listMoneyOut(
+        @Query("channel") channel: String,
+        @Query("direction") direction: String,
+        @Query("unsettled") unsettled: Int = 1,
+        @Query("per_page") perPage: Int = 100,
+    ): VapiResponse<List<MoneyTransactionDto>>
 
     /** Danh mục chi phí (dropdown loại phí khi chi tiền mặt). */
     @GET("v1/expense-categories")
