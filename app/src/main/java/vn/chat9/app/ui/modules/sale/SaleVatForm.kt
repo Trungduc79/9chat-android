@@ -221,6 +221,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
     }
 
     // So 1 dòng với giá vốn đã cache (quy đổi sang đơn vị HĐ + gross-up theo phương thức giá).
+    // Dùng GIÁ SẼ LƯU (đã bung nghìn): đang gõ 790 → so với 790.000, không phải 790.
     // null = không có vấn đề, hoặc chưa có giá nhập (không kiểm tra được).
     fun localPriceIssue(d: OrderItemDraft): VatPriceIssueDto? {
         val cb = costBasis[d.variantId] ?: return null
@@ -230,7 +231,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         if (qtyInvoice <= 0) return null
         val rate = if (cb.taxRate in listOf(5.0, 8.0, 10.0)) cb.taxRate else 0.0
         val inclusive = priceType == "inclusive"
-        val gross = d.qty * d.price
+        val gross = d.qty * expandVatPrice(d.price)
         val preVat = if (inclusive && rate > 0) gross / (1 + rate / 100) else gross
         val saleNet = preVat / qtyInvoice
         if (saleNet <= 0) return null
