@@ -28,6 +28,12 @@ import vn.chat9.app.ui.explore.AdminColors
  * Lộ trình port: Phase 1 = Dòng tiền (số dư quỹ + GD + tạo GD tiền mặt); Phase 2 =
  * Công nợ; Phase 3 = VAT. Permission gate ở [ModuleRegistry].
  */
+/**
+ * Cờ chặn vuốt đổi tab — overlay con (vd dialog sửa đơn ở Công nợ) set true để
+ * tắt gesture vuốt trái/phải của [AccountingScreen] khi đang hiển thị.
+ */
+val LocalTabSwipeBlocked = staticCompositionLocalOf<MutableState<Boolean>?> { null }
+
 private enum class AccTab(val label: String, val icon: ImageVector) {
     PNL("Lãi Lỗ", Icons.Default.ShowChart),
     VAT("VAT", Icons.Default.ReceiptLong),
@@ -38,9 +44,11 @@ private enum class AccTab(val label: String, val icon: ImageVector) {
 @Composable
 fun AccountingScreen(onBack: () -> Unit) {
     var tab by remember { mutableStateOf(AccTab.PNL) }   // mặc định Lãi Lỗ (mirror web)
+    val swipeBlocked = remember { mutableStateOf(false) } // overlay con tắt vuốt đổi tab
 
     androidx.activity.compose.BackHandler(enabled = true) { onBack() }
 
+    CompositionLocalProvider(LocalTabSwipeBlocked provides swipeBlocked) {
     Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
         TabRow(
             selectedTabIndex = tab.ordinal,
@@ -66,7 +74,9 @@ fun AccountingScreen(onBack: () -> Unit) {
         // Vuốt trái/phải đổi tab (threshold 80px). Tab đầu vuốt phải → thoát module.
         var dragAccum by remember { mutableStateOf(0f) }
         Box(
-            Modifier.weight(1f).fillMaxWidth().pointerInput(tab) {
+            // swipeBlocked (overlay con) → bỏ qua gesture vuốt đổi tab.
+            Modifier.weight(1f).fillMaxWidth().pointerInput(tab, swipeBlocked.value) {
+                if (swipeBlocked.value) return@pointerInput
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         if (dragAccum < -80f && tab.ordinal < AccTab.entries.lastIndex) tab = AccTab.entries[tab.ordinal + 1]
@@ -85,5 +95,6 @@ fun AccountingScreen(onBack: () -> Unit) {
                 AccTab.VAT -> AccountingVatTab()
             }
         }
+    }
     }
 }

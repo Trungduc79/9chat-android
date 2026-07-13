@@ -91,6 +91,9 @@ import vn.chat9.app.data.vapi.dto.DeliveredItem
 import vn.chat9.app.data.vapi.dto.FulfillRequest
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.OrderItemDto
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import vn.chat9.app.ui.common.NumEditHint
 import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors as C
 
@@ -691,15 +694,18 @@ private fun ItemRow(
                     // để center field vào GIỮA "view còn lại" (= screen - keyboard), không center
                     // theo viewport scroll Column (lệch vì có status bar + WarehouseScreen TabRow
                     // + InfoCard chiếm phần trên ~200dp).
-                    var qtyText by remember(item.id) { mutableStateOf(trimZeros(delivered)) }
+                    var qtyTfv by remember(item.id) { mutableStateOf(TextFieldValue(trimZeros(delivered))) }
+                    var qtyFocused by remember(item.id) { mutableStateOf(false) }
                     var fieldYInWindow by remember(item.id) { mutableStateOf(0f) }
                     var fieldHeightPx by remember(item.id) { mutableStateOf(0f) }
                     val scope = rememberCoroutineScope()
-                    BasicTextField(
-                        value = qtyText,
+                    Box {
+                        NumEditHint(qtyFocused, qtyTfv.text)
+                        BasicTextField(
+                        value = qtyTfv,
                         onValueChange = { raw ->
-                            val filtered = raw.filter { c -> c.isDigit() || c == '.' }
-                            qtyText = filtered
+                            val filtered = raw.text.filter { c -> c.isDigit() || c == '.' }
+                            qtyTfv = if (filtered == raw.text) raw else TextFieldValue(filtered, TextRange(filtered.length))
                             onSet(filtered.toDoubleOrNull() ?: 0.0)
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -718,7 +724,11 @@ private fun ItemRow(
                                 fieldHeightPx = coords.size.height.toFloat()
                             }
                             .onFocusChanged { state ->
-                                if (state.isFocused) scope.launch {
+                                if (state.isFocused) {
+                                    qtyFocused = true
+                                    // Tap → select-all (trễ 60ms để không bị cú tap ghi đè con trỏ).
+                                    scope.launch { kotlinx.coroutines.delay(60); qtyTfv = qtyTfv.copy(selection = TextRange(0, qtyTfv.text.length)) }
+                                    scope.launch {
                                     kotlinx.coroutines.delay(280) // chờ IME mở xong + layout resize
                                     // Công thức Đức:
                                     //   topOfView    = statusBar + topTabBar
@@ -732,9 +742,11 @@ private fun ItemRow(
                                     if (delta > 0f) runCatching {
                                         focusCtx.scrollState.animateScrollBy(delta)
                                     }
-                                }
+                                    }
+                                } else qtyFocused = false
                             },
-                    )
+                        )
+                    }
                 } else {
                     // View mode: số lượng căn giữa cột 56dp khớp header "SL".
                     Box(modifier = Modifier.width(56.dp), contentAlignment = Alignment.Center) {

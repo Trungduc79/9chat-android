@@ -34,14 +34,19 @@ import vn.chat9.app.data.vapi.dto.CreateOrderItem
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
 import vn.chat9.app.data.vapi.dto.AttachVatInfoReq
 import vn.chat9.app.data.vapi.dto.PoDraftResultDto
+import vn.chat9.app.data.vapi.dto.PoRepriceReq
+import vn.chat9.app.data.vapi.dto.PoRepriceResultDto
 import vn.chat9.app.data.vapi.dto.SyncEiReq
 import vn.chat9.app.data.vapi.dto.TaxLookupDto
 import vn.chat9.app.data.vapi.dto.VatBuyerNameReq
+import vn.chat9.app.data.vapi.dto.VatCostBasisListDto
+import vn.chat9.app.data.vapi.dto.VatCostBasisReq
 import vn.chat9.app.data.vapi.dto.VatDraftImagesDto
 import vn.chat9.app.data.vapi.dto.VatDraftReq
 import vn.chat9.app.data.vapi.dto.VatIncludePhoneReq
 import vn.chat9.app.data.vapi.dto.VatInfoDto
 import vn.chat9.app.data.vapi.dto.VatOutputInvoiceDto
+import vn.chat9.app.data.vapi.dto.VatIssueGuardsDto
 import vn.chat9.app.data.vapi.dto.VatPriceCheckDto
 import vn.chat9.app.data.vapi.dto.VatStockCheckDto
 import vn.chat9.app.data.vapi.dto.CustomerDto
@@ -353,10 +358,20 @@ interface VapiApiService {
     suspend fun syncEasyInvoice(@Body body: SyncEiReq = SyncEiReq()): VapiResponse<Unit>
 
     // ===== Form HĐ VAT (Phase 3B) — tạo/xem trước/ký =====
-    /** Upload PO khách (multipart) → AI tạo đơn HĐ VAT nháp. Cần scope ai:write. */
+    /**
+     * Upload PO khách (multipart) → AI tạo đơn HĐ VAT nháp. Cần scope ai:write.
+     * customerId: đã chọn khách trên form → BE dùng luôn, không để AI đoán khách.
+     */
     @Multipart
     @POST("v1/ai/po-draft")
-    suspend fun poDraft(@Part file: MultipartBody.Part): VapiResponse<PoDraftResultDto>
+    suspend fun poDraft(
+        @Part file: MultipartBody.Part,
+        @Part("customer_id") customerId: okhttp3.RequestBody? = null,
+    ): VapiResponse<PoDraftResultDto>
+
+    /** Đổi khách thủ công trên form HĐ VAT → định giá lại dòng theo khách mới. */
+    @POST("v1/ai/po-reprice")
+    suspend fun poReprice(@Body body: PoRepriceReq): VapiResponse<PoRepriceResultDto>
 
     @POST("v1/orders/{id}/touch")
     suspend fun touchOrder(@Path("id") id: Long): VapiResponse<Unit>
@@ -380,6 +395,14 @@ interface VapiApiService {
         @Path("id") id: Long,
         @Query("price_type") priceType: String,
     ): VapiResponse<VatPriceCheckDto>
+
+    /** Giá vốn FIFO theo variant → cache client, so giá xuất tại chỗ khi gõ đơn giá. */
+    @POST("v1/vat/cost-basis")
+    suspend fun vatCostBasis(@Body body: VatCostBasisReq): VapiResponse<VatCostBasisListDto>
+
+    /** Cờ khóa cứng trước phát hành HĐ (block_stock / block_price / block_unit). */
+    @GET("v1/settings/vat-issue-guards")
+    suspend fun vatIssueGuards(): VapiResponse<VatIssueGuardsDto>
 
     /** Tạo HĐ nháp trên EasyInvoice (chưa ký). */
     @POST("v1/orders/{id}/create-vat-draft")

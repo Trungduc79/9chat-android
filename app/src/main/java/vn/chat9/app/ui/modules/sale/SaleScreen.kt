@@ -70,6 +70,9 @@ fun SaleScreen(onBack: () -> Unit) {
     val customersListState = rememberLazyListState()
     var viewingOrderId by remember { mutableStateOf<Long?>(null) }   // tap đơn → chi tiết/edit
     var viewingPurchase by remember { mutableStateOf(false) }        // đơn đang tạo/xem là đơn nhập?
+    var viewingDebtLocked by remember { mutableStateOf(false) }      // đơn đang xem đã chốt công nợ → badge header
+    // Đổi đơn đang xem → reset badge; SaleOrderForm sẽ báo lại qua onDebtLockedChange sau khi load.
+    LaunchedEffect(viewingOrderId) { viewingDebtLocked = false }
 
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
@@ -129,6 +132,12 @@ fun SaleScreen(onBack: () -> Unit) {
                     else -> "Chi tiết đơn"
                 }
                 Text(headerTitle, color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                // Badge "Đã chốt công nợ" ngay trên header khi xem đơn đã chốt (thay dòng riêng trong form).
+                if (!creating && viewingDebtLocked) {
+                    Text("Đã chốt công nợ", color = AdminColors.Primary, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(end = 4.dp).clip(RoundedCornerShape(4.dp))
+                            .background(AdminColors.Primary.copy(alpha = 0.15f)).padding(horizontal = 8.dp, vertical = 3.dp))
+                }
                 // Tùy chọn 3 chấm — chỉ đơn nhập ĐÃ LƯU (đang xem chi tiết): Gửi NCC (ảnh) / chia sẻ / xóa.
                 val curId = viewingOrderId
                 if (viewingPurchase && !creating && curId != null) {
@@ -300,7 +309,9 @@ fun SaleScreen(onBack: () -> Unit) {
                 }
             }
 
-            SaleOrderForm(orderId = viewingOrderId, isPurchase = viewingPurchase, onDone = { creating = false; viewingOrderId = null; viewingPurchase = false })
+            // Chi tiết đơn: cho sửa cả đơn đã xác nhận/đã giao (allowEditAnyStatus) — BE + cờ khoá từng
+            // trường (ship đã báo/chi, ứng CK) là chốt chặn. Tạo mới đơn nháp không truyền cờ (autosave).
+            SaleOrderForm(orderId = viewingOrderId, isPurchase = viewingPurchase, allowEditAnyStatus = !creating && viewingOrderId != null, onDebtLockedChange = { viewingDebtLocked = it }, onDone = { creating = false; viewingOrderId = null; viewingPurchase = false })
         }
         return
     }

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -77,6 +79,11 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.*
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import kotlinx.coroutines.delay
+import vn.chat9.app.ui.common.NumEditHint
 import vn.chat9.app.ui.explore.AdminColors
 import java.text.NumberFormat
 import java.util.Locale
@@ -94,6 +101,13 @@ private fun parsePriceVat(s: String): Double {
     val num = if (parts.size > 1) parts[0] + "." + parts.drop(1).joinToString("") else parts[0]
     return num.toDoubleOrNull() ?: 0.0
 }
+/**
+ * Nhập tắt theo nghìn: gõ 850 → 850.000. CHỈ áp cho số NGUYÊN < 1000 — HĐ VAT có giá lẻ thật
+ * (16.761,90) nên KHÔNG ×1000 khi có phần thập phân.
+ */
+private fun expandVatPrice(n: Double): Double =
+    if (n > 0 && n < 1000 && n == Math.floor(n)) n * 1000 else n
+
 private fun round2(n: Double): Double = Math.round(n * 100.0) / 100.0
 private fun round4(n: Double): Double = Math.round(n * 10000.0) / 10000.0
 private fun trimQty(n: Double): String = if (n == Math.floor(n)) n.toLong().toString() else n.toString()
@@ -128,10 +142,27 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
     var priceType by remember { mutableStateOf("inclusive") }   // inclusive | exclusive
     var buyerName by remember { mutableStateOf("") }
     var includePhone by remember { mutableStateOf(false) }
+    var poNumber by remember { mutableStateOf("") }              // orders.reference — số PO khách
+    var lastAutoBuyerName by remember { mutableStateOf("") }     // chuỗi auto lần trước (để biết user đã sửa tay chưa)
 
     var linkedVat by remember { mutableStateOf<VatOutputInvoiceDto?>(null) }
     val signed = linkedVat?.signed == true
     val canEdit = !signed && (currentOrderId == null || status == "draft")
+
+    // Tên người mua tự điền "{Tên đơn vị} - {Số PO}" khi ĐƠN VỊ mua bật cờ buyer_name_with_po.
+    // Không có số PO → để trống. Kế toán sửa tay rồi thì không ghi đè nữa.
+    val autoBuyerName = run {
+        val vi = vatInfos.firstOrNull { it.id == selectedVatInfoId }
+        val po = poNumber.trim()
+        if (vi?.buyerNameWithPo == true && po.isNotBlank()) "${vi.legalName.orEmpty()} - $po" else ""
+    }
+    LaunchedEffect(autoBuyerName, canEdit) {
+        if (!canEdit) return@LaunchedEffect
+        if (buyerName.isBlank() || buyerName == lastAutoBuyerName) {
+            buyerName = autoBuyerName
+            lastAutoBuyerName = autoBuyerName
+        }
+    }
 
     var customerPickerOpen by remember { mutableStateOf(orderId == null) }
     var productPickerOpen by remember { mutableStateOf(false) }
@@ -164,11 +195,56 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
     var previewLoading by remember { mutableStateOf(false) }
     var previewPages by remember { mutableStateOf<List<String>>(emptyList()) }
     var signing by remember { mutableStateOf(false) }
+    var vatBlocked by remember { mutableStateOf<String?>(null) }   // chi tiết 422 VAT_ISSUE_BLOCKED (gate 3 kiểm tra)
     var creatingDraft by remember { mutableStateOf(false) }
     var copyingImage by remember { mutableStateOf(false) }
     var sharingImage by remember { mutableStateOf(false) }
     var shortages by remember { mutableStateOf<List<VatShortageDto>>(emptyList()) }         // thiếu XNT trong preview
     var cardShortages by remember { mutableStateOf<List<VatShortageDto>>(emptyList()) }     // thiếu XNT hiển thị trong card (HĐ nháp chưa ký)
+    // Cờ khóa cứng /settings/vat-guards: bật → KHÔNG cho lưu giá dưới giá vốn (hoàn nguyên ngay).
+    var blockPrice by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        blockPrice = try { container.vapi.vatIssueGuards().data?.blockPrice == true } catch (_: Exception) { false }
+    }
+
+    // ===== Giá vốn cache (prefetch) → so giá xuất TẠI CHỖ, phản hồi ngay khi nhập giá =====
+    // Giá vốn FIFO chỉ phụ thuộc tên hàng + đơn vị HĐ (không phụ thuộc giá bán) → nạp 1 lần
+    // khi mở đơn / thêm SP là đủ. Server vẫn gate lại lúc ký phát hành.
+    val costBasis = remember { mutableStateMapOf<Long, VatCostBasisDto>() }
+    val variantKey = items.joinToString(",") { it.variantId.toString() }
+    LaunchedEffect(variantKey) {
+        val missing = items.map { it.variantId }.filter { it != 0L && it !in costBasis }.distinct()
+        if (missing.isEmpty()) return@LaunchedEffect
+        try {
+            container.vapi.vatCostBasis(VatCostBasisReq(missing)).data?.items?.forEach { costBasis[it.variantId] = it }
+        } catch (_: Exception) { /* im lặng — vẫn còn gate lúc ký */ }
+    }
+
+    // So 1 dòng với giá vốn đã cache (quy đổi sang đơn vị HĐ + gross-up theo phương thức giá).
+    // null = không có vấn đề, hoặc chưa có giá nhập (không kiểm tra được).
+    fun localPriceIssue(d: OrderItemDraft): VatPriceIssueDto? {
+        val cb = costBasis[d.variantId] ?: return null
+        val costNet = cb.costNet ?: return null
+        val cf = d.units.firstOrNull { it.id == d.unitId }?.conversionFactor ?: 1.0
+        val qtyInvoice = d.qty * cf / (cb.conversionFactor.takeIf { it > 0 } ?: 1.0)
+        if (qtyInvoice <= 0) return null
+        val rate = if (cb.taxRate in listOf(5.0, 8.0, 10.0)) cb.taxRate else 0.0
+        val inclusive = priceType == "inclusive"
+        val gross = d.qty * d.price
+        val preVat = if (inclusive && rate > 0) gross / (1 + rate / 100) else gross
+        val saleNet = preVat / qtyInvoice
+        if (saleNet <= 0) return null
+        val sale = if (inclusive) saleNet * (1 + rate / 100) else saleNet
+        val cost = if (inclusive) costNet * (1 + (cb.costVatRate ?: 0.0) / 100) else costNet
+        if (sale >= cost - 0.0001) return null
+        return VatPriceIssueDto(d.variantId, cb.itemName, cb.invoiceUnit, sale, cost, cost - sale, priceType)
+    }
+
+    // Cảnh báo hiển thị = tính TẠI CHỖ (đổi ngay khi nhập giá, không đợi server).
+    val cardPriceIssues: List<VatPriceIssueDto> = items.mapNotNull { localPriceIssue(it) }
+    // Dòng chưa từng nhập HĐ VAT → không so được giá (hiện nhãn vàng, không chặn).
+    val noCostItems: List<String> = items.filter { it.variantId != 0L && costBasis[it.variantId]?.costNet == null }
+        .map { it.productName }
     var eiPreviewUrl by remember { mutableStateOf<String?>(null) }                          // ảnh HĐ trên EI (data URL) để xem full-screen
     var eiLoadingPreview by remember { mutableStateOf(false) }
 
@@ -193,11 +269,35 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         linkedVat?.vatInfoId?.let { selectedVatInfoId = it }
     }
 
-    // Nạp cảnh báo thiếu XNT cho card (HĐ nháp EI chưa ký) — hiện dưới nút Xem HĐ EI.
+    // Nạp cảnh báo thiếu XNT cho card. KHÔNG cần đợi có HĐ nháp EI — đơn đã lưu là check được.
+    // Đã KÝ → thôi, không cảnh báo nữa. (Giá xuất<nhập tính tại chỗ từ cache, không gọi API.)
     suspend fun reloadCardShortages() {
-        val id = currentOrderId; val lv = linkedVat
-        if (id == null || lv == null || lv.signed) { cardShortages = emptyList(); return }
+        val id = currentOrderId
+        if (id == null || linkedVat?.signed == true) { cardShortages = emptyList(); return }
         cardShortages = try { container.vapi.vatStockCheck(id).data?.shortages ?: emptyList() } catch (_: Exception) { emptyList() }
+    }
+
+    // Sửa ĐƠN GIÁ → lưu (debounce) + đồng bộ EI; KHÔNG đụng tồn. Giá thấp đã bị chặn ngay lúc
+    // rời ô nhập (cache giá vốn) nên tới đây giá luôn hợp lệ.
+    val priceKey = items.joinToString("|") { "${it.variantId}:${it.price}" }
+    LaunchedEffect(priceKey, priceType, currentOrderId) {
+        val id = currentOrderId ?: return@LaunchedEffect
+        if (!canEdit || items.isEmpty()) return@LaunchedEffect
+        delay(900)
+        try {
+            container.vapi.updateOrder(id, CreateOrderRequest(
+                type = "sale", isInvoiceOnly = true, partyType = "customer",
+                partyId = selectedCustomer?.id ?: return@LaunchedEffect, status = "draft",
+                orderedAt = java.time.Instant.ofEpochMilli(orderDateMs).toString(),
+                reference = poNumber.trim().ifBlank { null },
+                items = items.filter { it.variantId != 0L && it.qty > 0 }
+                    .map { CreateOrderItem(it.variantId, it.unitId, it.qty, it.price) },
+            ))
+            // Có HĐ nháp EI → đẩy lại cho khớp giá mới (không reload tồn).
+            if (linkedVat != null && linkedVat?.signed != true) {
+                try { container.vapi.updateVatDraft(id, VatDraftReq(priceType, true, selectedVatInfoId)) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) { /* im lặng — không spam khi gõ */ }
     }
 
     // Load đơn existing / vừa tạo từ PO.
@@ -207,6 +307,9 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             val o = container.vapi.getOrder(oid).data ?: return@LaunchedEffect
             status = o.status
             includePhone = o.vatIncludePhone
+            poNumber = o.reference.orEmpty()
+            buyerName = o.vatBuyerName.orEmpty()
+            lastAutoBuyerName = buyerName   // tên đã lưu = coi như auto → cho phép cập nhật lại
             priceType = if (o.meta?.vatPriceType == "exclusive") "exclusive" else "inclusive"
             o.party?.let { selectedCustomer = CustomerDto(id = it.id, name = it.name ?: "", phone = it.phone) }
             o.orderedAt?.let { runCatching { orderDateMs = java.time.Instant.parse(it).toEpochMilli() } }
@@ -251,6 +354,28 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         }
     }
 
+    /**
+     * Đổi khách thủ công → định giá lại dòng theo khách mới: đơn giá + ĐƠN VỊ lấy từ HĐ VAT
+     * gần nhất của khách đó (SL quy đổi giữ lượng cơ bản), fallback giá bán gần nhất.
+     * Dòng BE không trả về (không có căn cứ) thì giữ nguyên.
+     */
+    suspend fun repriceItemsFor(c: CustomerDto) {
+        val rows = items.filter { it.variantId != 0L && it.unitId != 0L }
+        if (rows.isEmpty()) return
+        try {
+            val req = PoRepriceReq(c.id, rows.map { PoRepriceItemReq(it.variantId, it.unitId, it.qty) })
+            val priced = container.vapi.poReprice(req).data?.items ?: return
+            var n = 0
+            for (p in priced) {
+                val idx = items.indexOfFirst { it.variantId == p.variantId }
+                if (idx < 0) continue
+                items[idx] = items[idx].copy(unitId = p.unitId, qty = p.qtyUnit, price = p.unitPrice)
+                n++
+            }
+            if (n > 0) Toast.makeText(context, "Đã cập nhật giá $n mặt hàng theo khách ${c.name}", Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) { /* giữ nguyên giá cũ */ }
+    }
+
     // Lưu đơn (create/update is_invoice_only) → trả id. Set tên người mua + SĐT + đồng bộ HĐ nháp nếu có.
     suspend fun saveOrder(): Long? {
         val cust = selectedCustomer ?: run { Toast.makeText(context, "Chọn khách hàng trước", Toast.LENGTH_SHORT).show(); return null }
@@ -259,6 +384,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         val payload = CreateOrderRequest(
             type = "sale", isInvoiceOnly = true, partyType = "customer", partyId = cust.id, status = "draft",
             orderedAt = java.time.Instant.ofEpochMilli(orderDateMs).toString(),
+            reference = poNumber.trim().ifBlank { null },   // số PO khách
             items = valid.map { CreateOrderItem(it.variantId, it.unitId, it.qty, it.price) },
         )
         val id = currentOrderId
@@ -375,6 +501,14 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                 previewOpen = false
                 // Đồng bộ EI nền (không chặn UI).
                 launch { try { container.vapi.syncEasyInvoice(SyncEiReq(inv?.issueDate?.take(10), null)) } catch (_: Exception) {} }
+            } catch (e: retrofit2.HttpException) {
+                val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                val j = try { org.json.JSONObject(body ?: "") } catch (_: Exception) { null }
+                if (j?.optString("code") == "VAT_ISSUE_BLOCKED") {
+                    vatBlocked = vatBlockedText(j.optJSONObject("errors"))
+                } else {
+                    Toast.makeText(context, j?.optString("error").orEmpty().ifBlank { "Ký phát hành thất bại. Kiểm tra quyền & đăng nhập EI." }, Toast.LENGTH_LONG).show()
+                }
             } catch (e: Exception) {
                 Toast.makeText(context, "Ký phát hành thất bại. Kiểm tra quyền & đăng nhập EI.", Toast.LENGTH_LONG).show()
             } finally { signing = false }
@@ -476,17 +610,27 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                 val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
                 val body = bytes.toRequestBody(mime.toMediaTypeOrNull())
                 val part = okhttp3.MultipartBody.Part.createFormData("file", "po", body)
-                val res = container.vapi.poDraft(part).data
+                // Đã chọn khách trước khi upload → BE dùng luôn khách này (giá/đơn vị theo
+                // lịch sử HĐ của khách), không để AI đoán.
+                val custPart = selectedCustomer?.id?.let {
+                    it.toString().toRequestBody("text/plain".toMediaTypeOrNull())
+                }
+                val res = container.vapi.poDraft(part, custPart).data
                 val newId = res?.order?.id
                 if (newId == null) { Toast.makeText(context, "Không đọc được PO", Toast.LENGTH_SHORT).show(); return@launch }
+                val unresolvedCount = res.unresolved?.size ?: 0
                 val msg = buildString {
                     append(res.matchedCustomer?.name?.let { "Khách: $it" } ?: "Chưa khớp khách")
-                    if (res.unresolved.isNotEmpty()) append(" · ${res.unresolved.size} mặt hàng chưa nhận diện")
+                    if (unresolvedCount > 0) append(" · $unresolvedCount mặt hàng chưa nhận diện")
                 }
                 Toast.makeText(context, "Đã tạo HĐ nháp từ PO. $msg", Toast.LENGTH_LONG).show()
                 items.clear(); currentOrderId = newId   // trigger reload
-            } catch (_: Exception) {
-                Toast.makeText(context, "Không đọc được PO (cần quyền ai:write).", Toast.LENGTH_LONG).show()
+            } catch (e: retrofit2.HttpException) {
+                val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                val err = try { org.json.JSONObject(body ?: "").optString("error") } catch (_: Exception) { null }
+                Toast.makeText(context, err.orEmpty().ifBlank { "Không đọc được PO (HTTP ${e.code()})" }, Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Không đọc được PO: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
             } finally { poUploading = false }
         }
     }
@@ -552,7 +696,8 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                 linkedVat?.let { vat ->
                     Card("") {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Hóa đơn VAT", color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("Hóa đơn VAT", color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            PoNumberField(poNumber, canEdit, Modifier.weight(1f)) { poNumber = it }
                             // Chưa ký → icon đồng bộ + menu 3 chấm. Đã phát hành → khoá, không action.
                             if (!signed) {
                                 if (syncing) CircularProgressIndicator(Modifier.padding(4.dp).size(18.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
@@ -629,7 +774,9 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                     if (items.isEmpty()) Text("Chưa có mặt hàng — chọn KH rồi Thêm SP hoặc Upload PO", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
                     else items.forEachIndexed { idx, it ->
                         if (idx > 0) HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.4f))
-                        val displayPrice: Double? = if (linkedVat != null) {
+                        // Giá theo HĐ (đọc-only) CHỈ khi đã khoá (đã ký / non-draft) — như web.
+                        // Còn sửa được thì hiện giá GỐC trên đơn để nhập trực tiếp.
+                        val displayPrice: Double? = if (linkedVat != null && !canEdit) {
                             val lineAmt = if (sameCount) (if (displayIncVat) invItems[idx].total else invItems[idx].subtotal)
                                 else {
                                     val invAmt = if (displayIncVat) linkedVat!!.total else linkedVat!!.subtotal
@@ -641,6 +788,20 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                             onDelete = { items.removeAt(idx) },
                             onQtyChange = { q -> items[idx] = it.copy(qty = q) },
                             onPriceChange = { p -> items[idx] = it.copy(price = p) },
+                            // Rời ô giá → so NGAY với giá vốn cache. Bị chặn → trả giá cũ để ô hiển
+                            // thị hoàn nguyên, không gửi giá xấu lên server.
+                            onPriceCommit = { prev, newPrice ->
+                                val bad = if (blockPrice) localPriceIssue(it.copy(price = newPrice)) else null
+                                if (bad != null) {
+                                    Toast.makeText(
+                                        context,
+                                        "Chặn giá thấp: ${bad.itemName} bán ${fmtPriceVat(bad.salePrice)} < giá nhập ${fmtPriceVat(bad.costPrice)}. Đã hoàn về giá cũ.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    items[idx] = it.copy(price = prev)
+                                    prev
+                                } else newPrice
+                            },
                             onUnitChange = { u ->
                                 val oldU = it.units.firstOrNull { x -> x.id == it.unitId }
                                 val cfOld = oldU?.conversionFactor ?: 1.0; val cfNew = u.conversionFactor
@@ -702,6 +863,8 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                 if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                                 else Text("Xem HĐ EI (ký phát hành)")
                             }
+                            if (cardPriceIssues.isNotEmpty()) PriceIssueBox(cardPriceIssues, priceType, Modifier.fillMaxWidth().padding(top = 10.dp))
+                            if (noCostItems.isNotEmpty()) NoCostBox(noCostItems, Modifier.fillMaxWidth().padding(top = 10.dp))
                             if (cardShortages.isNotEmpty()) ShortageBox(cardShortages, Modifier.fillMaxWidth().padding(top = 10.dp))
                         }
                     }
@@ -712,7 +875,8 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                 if (linkedVat == null) {
                     Card("") {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Hóa đơn VAT", color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("Hóa đơn VAT", color = AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            PoNumberField(poNumber, canEdit, Modifier.weight(1f)) { poNumber = it }
                             if (canEdit) Text(
                                 "+ Thêm đơn vị", color = Color.White, fontSize = 12.sp,
                                 modifier = Modifier.clip(RoundedCornerShape(8.dp)).border(0.5.dp, AdminColors.Border, RoundedCornerShape(8.dp))
@@ -728,6 +892,9 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                         VatInfoDropdown(vatInfos, selectedVatInfoId, canEdit) { selectedVatInfoId = it }
                         if (selectedCustomer != null && vatInfos.isEmpty()) Text("⚠ Khách chưa có MST — nhấn \"+ Thêm đơn vị\".", color = Color(0xFFE2A03F), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
                         Spacer(Modifier.height(12.dp))
+                        // Giá xuất < giá nhập — cảnh báo ngay khi sửa giá, chưa cần tạo HĐ nháp.
+                        if (cardPriceIssues.isNotEmpty()) PriceIssueBox(cardPriceIssues, priceType, Modifier.fillMaxWidth().padding(bottom = 10.dp))
+                        if (noCostItems.isNotEmpty()) NoCostBox(noCostItems, Modifier.fillMaxWidth().padding(bottom = 10.dp))
                         Button(
                             onClick = { openPreview() }, enabled = canEdit && !saving && selectedCustomer != null && items.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary), modifier = Modifier.fillMaxWidth(),
@@ -744,9 +911,11 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         // Pickers (overlay z-stack)
         if (customerPickerOpen) CustomerPicker(
             onPick = { c ->
+                val changed = selectedCustomer?.id != c.id
                 selectedCustomer = c; customerPickerOpen = false
                 scope.launch { loadVatInfo(c.id, autoSelect = true) }
                 scope.launch { suggested = try { container.vapi.recentProducts(c.id, 5).data ?: emptyList() } catch (_: Exception) { emptyList() } }
+                if (changed) scope.launch { repriceItemsFor(c) }
             },
             onClose = { customerPickerOpen = false },
         )
@@ -819,6 +988,19 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                     dismissButton = { TextButton(onClick = { datePickerOpen = false }) { Text("Huỷ", color = AdminColors.TextMuted) } },
                     colors = DatePickerDefaults.colors(containerColor = AdminColors.Card),
                 ) { DatePicker(state = dp) }
+            }
+        }
+
+        // Gate 3 kiểm tra trước phát hành chặn cứng → dialog liệt kê chi tiết.
+        if (vatBlocked != null) {
+            MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
+                AlertDialog(
+                    onDismissRequest = { vatBlocked = null },
+                    confirmButton = { TextButton(onClick = { vatBlocked = null }) { Text("Đã hiểu", color = AdminColors.Primary) } },
+                    title = { Text("Chưa thể phát hành hóa đơn", color = AdminColors.Text) },
+                    text = { Text(vatBlocked ?: "", color = AdminColors.Text, fontSize = 13.sp) },
+                    containerColor = AdminColors.Card,
+                )
             }
         }
     }
@@ -924,12 +1106,77 @@ private fun VatFormConfirmOverlay(title: String, message: String, onCancel: () -
 
 private val WARN_VAT = Color(0xFFE2A03F)
 
+/** Format 422 VAT_ISSUE_BLOCKED (errors=categories) → text nhiều dòng, chỉ nhóm đang chặn cứng. */
+private fun vatBlockedText(errors: org.json.JSONObject?): String {
+    if (errors == null) return "Vi phạm điều kiện kiểm tra trước phát hành."
+    val nf = java.text.NumberFormat.getInstance(java.util.Locale("vi"))
+    fun m(v: Double) = nf.format(v.toLong())
+    fun items(key: String) = errors.optJSONObject(key)?.takeIf { it.optBoolean("block") }?.optJSONArray("items")
+    val out = StringBuilder()
+    items("stock")?.let { arr ->
+        out.append("• Thiếu tồn XNT:\n")
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val u = o.optString("unit").takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+            out.append("   – ${o.optString("item_name")}$u: thiếu ${m(o.optDouble("shortage_qty"))} (còn ${m(o.optDouble("available_qty"))}/${m(o.optDouble("requested_qty"))})\n")
+        }
+    }
+    items("price")?.let { arr ->
+        out.append("• Giá xuất < giá nhập (FIFO HĐ VAT):\n")
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val u = o.optString("unit").takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+            out.append("   – ${o.optString("item_name")}$u: bán ${m(o.optDouble("sale_price"))} < vốn ${m(o.optDouble("cost_price"))} (lỗ ${m(o.optDouble("diff"))})\n")
+        }
+    }
+    items("unit")?.let { arr ->
+        out.append("• Lệch đơn vị:\n")
+        for (i in 0 until arr.length()) out.append("   – ${arr.optString(i)}\n")
+    }
+    return out.toString().trimEnd().ifBlank { "Vi phạm điều kiện kiểm tra trước phát hành." }
+}
+
 /** Text thiếu tồn để copy/share (gộp mọi HĐ nháp) — mẫu: "N. Tên (Đơn vị)\n# thiếu (Đơn vị)". */
 private fun shortageText(list: List<VatShortageDto>): String =
     "Thiếu tồn kho HĐ nháp chờ ký:\n" + list.mapIndexed { i, s ->
         val u = s.unit?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
         "${i + 1}. ${s.itemName}$u\n# ${trimQty(s.shortageQty)}$u"
     }.joinToString("\n")
+
+/** Box cảnh báo giá xuất < giá nhập — ĐỎ, đặt TRÊN box thiếu tồn. So theo phương thức giá. */
+@Composable
+private fun PriceIssueBox(issues: List<VatPriceIssueDto>, priceType: String, modifier: Modifier = Modifier) {
+    val nf = remember { java.text.NumberFormat.getInstance(java.util.Locale("vi")) }
+    val red = Color(0xFFEB5757)
+    Column(modifier.clip(RoundedCornerShape(8.dp)).border(0.6.dp, red.copy(alpha = 0.4f), RoundedCornerShape(8.dp)).background(red.copy(alpha = 0.08f)).padding(8.dp)) {
+        Text(
+            "⚠ Giá xuất thấp hơn giá nhập (${if (priceType == "inclusive") "đã gồm VAT" else "chưa gồm VAT"})",
+            color = red, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(6.dp))
+        issues.forEach { p ->
+            val u = p.unit?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+            Column(Modifier.padding(top = 3.dp)) {
+                Text("${p.itemName}$u", color = AdminColors.Text, fontSize = 11.sp)
+                Text(
+                    "Nhập ${nf.format(p.costPrice.toLong())} > ${nf.format(p.salePrice.toLong())} Bán ( Lỗ ${nf.format(p.diff.toLong())} )",
+                    color = AdminColors.Text, fontSize = 11.sp,
+                )
+            }
+        }
+    }
+}
+
+/** Box "chưa có giá nhập" — VÀNG: mặt hàng chưa từng nhập HĐ VAT → không so được giá (không chặn). */
+@Composable
+private fun NoCostBox(names: List<String>, modifier: Modifier = Modifier) {
+    val amber = Color(0xFFF2C94C)
+    Column(modifier.clip(RoundedCornerShape(8.dp)).border(0.6.dp, amber.copy(alpha = 0.4f), RoundedCornerShape(8.dp)).background(amber.copy(alpha = 0.08f)).padding(8.dp)) {
+        Text("⚠ Chưa có giá nhập (thế giới VAT)", color = amber, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(4.dp))
+        Text("${names.joinToString(", ")} — không kiểm tra được giá xuất.", color = AdminColors.TextMuted, fontSize = 11.sp)
+    }
+}
 
 /**
  * Box cảnh báo thiếu XNT — làm giống web: tiêu đề "Thiếu tồn kho — gộp mọi HĐ nháp (N SP)"
@@ -1020,6 +1267,9 @@ private val GOLD_VAT2 = Color(0xFFD4AF37)
 private fun VatItemRow(
     draft: OrderItemDraft, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, canEdit: Boolean, displayPrice: Double? = null,
     onDelete: () -> Unit, onQtyChange: (Double) -> Unit, onPriceChange: (Double) -> Unit, onUnitChange: (VariantUnitDto) -> Unit,
+    // Rời ô giá: (giá cũ, giá mới) → trả GIÁ ĐƯỢC CHẤP NHẬN. Bị chặn (giá < giá vốn + block_price)
+    // → trả giá cũ, ô hiển thị hoàn nguyên theo.
+    onPriceCommit: (prevPrice: Double, newPrice: Double) -> Double = { _, new -> new },
 ) {
     var offsetX by remember(draft.variantId) { mutableStateOf(0f) }
     var rowWidth by remember { mutableStateOf(1f) }
@@ -1043,13 +1293,19 @@ private fun VatItemRow(
                 Text(draft.variantName, color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    var qtyText by remember(draft.variantId, draft.unitId) { mutableStateOf(trimQty(draft.qty)) }
-                    BasicTextField(
-                        value = qtyText, onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
-                        readOnly = !canEdit, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                        cursorBrush = SolidColor(AdminColors.Primary), modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "vqty-${draft.variantId}-${draft.unitId}"),
-                    )
+                    var qtyTfv by remember(draft.variantId, draft.unitId) { mutableStateOf(TextFieldValue(trimQty(draft.qty))) }
+                    var qtyFocused by remember(draft.variantId, draft.unitId) { mutableStateOf(false) }
+                    Box {
+                        NumEditHint(qtyFocused, qtyTfv.text)
+                        BasicTextField(
+                            value = qtyTfv, onValueChange = { raw -> val f = raw.text.filter { c -> c.isDigit() || c == '.' }; qtyTfv = if (f == raw.text) raw else TextFieldValue(f, TextRange(f.length)); onQtyChange(f.toDoubleOrNull() ?: 0.0) },
+                            readOnly = !canEdit, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "vqty-${draft.variantId}-${draft.unitId}")
+                                .onFocusChanged { st -> if (st.isFocused) { qtyFocused = true; scope.launch { delay(60); qtyTfv = qtyTfv.copy(selection = TextRange(0, qtyTfv.text.length)) } } else qtyFocused = false },
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     UnitDropdown(draft.units, draft.unitId, canEdit, onUnitChange)
                     Spacer(Modifier.weight(1f))
@@ -1059,13 +1315,35 @@ private fun VatItemRow(
                         // Hiển thị đơn giá NET (đọc-only) — chế độ "chưa VAT" của bảng.
                         Text(fmtPriceVat(displayPrice), color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 60.dp))
                     } else {
-                        var priceText by remember(draft.variantId, draft.unitId) { mutableStateOf(fmtPriceVat(draft.price)) }
-                        BasicTextField(
-                            value = priceText, onValueChange = { raw -> priceText = raw; onPriceChange(parsePriceVat(raw)) },
-                            readOnly = !canEdit, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
-                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                            cursorBrush = SolidColor(AdminColors.Primary), modifier = Modifier.widthIn(min = 60.dp).centerOnFocus(focusCtx, scope, "vprice-${draft.variantId}-${draft.unitId}"),
-                        )
+                        var priceTfv by remember(draft.variantId, draft.unitId) { mutableStateOf(TextFieldValue(fmtPriceVat(draft.price))) }
+                        var priceFocused by remember(draft.variantId, draft.unitId) { mutableStateOf(false) }
+                        var priceBefore by remember(draft.variantId, draft.unitId) { mutableStateOf(draft.price) }
+                        Box {
+                            // Hint hiện SỐ SẼ LƯU (đã bung theo nghìn): gõ 850 → hint 850.000.
+                            NumEditHint(priceFocused, priceTfv.text.takeIf { it.isNotEmpty() }?.let { fmtPriceVat(expandVatPrice(parsePriceVat(it))) })
+                            BasicTextField(
+                                value = priceTfv, onValueChange = { raw -> priceTfv = raw; onPriceChange(parsePriceVat(raw.text)) },
+                                readOnly = !canEdit, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
+                                textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                                cursorBrush = SolidColor(AdminColors.Primary),
+                                modifier = Modifier.widthIn(min = 60.dp).centerOnFocus(focusCtx, scope, "vprice-${draft.variantId}-${draft.unitId}")
+                                    .onFocusChanged { st ->
+                                        if (st.isFocused) {
+                                            priceFocused = true
+                                            priceBefore = draft.price      // giá trước khi sửa (để hoàn nguyên)
+                                            scope.launch { delay(60); priceTfv = priceTfv.copy(selection = TextRange(0, priceTfv.text.length)) }
+                                        } else {
+                                            priceFocused = false
+                                            // Rời ô → chốt giá đã bung, hiển thị lại theo định dạng vi-VN.
+                                            val expanded = expandVatPrice(parsePriceVat(priceTfv.text))
+                                            onPriceChange(expanded)
+                                            val accepted = if (expanded != priceBefore) onPriceCommit(priceBefore, expanded) else expanded
+                                            priceTfv = TextFieldValue(fmtPriceVat(accepted))
+                                            if (accepted != expanded) onPriceChange(accepted)
+                                        }
+                                    },
+                            )
+                        }
                     }
                     Spacer(Modifier.weight(1f))
                     Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
@@ -1290,6 +1568,29 @@ private fun Base64Image(dataUrl: String, modifier: Modifier = Modifier) {
     val bmp = rememberBase64Bitmap(dataUrl)
     if (bmp != null) Image(bitmap = bmp, contentDescription = null, contentScale = ContentScale.FillWidth, modifier = modifier)
     else Box(modifier.height(120.dp).background(Color(0x22FFFFFF)), Alignment.Center) { Text("Không tải được trang", color = Color.White, fontSize = 12.sp) }
+}
+
+/**
+ * Số PO của khách (orders.reference) — gõ ngay cạnh tiêu đề thẻ: "Hóa đơn VAT - PO12345".
+ * Nguồn để ghép tên người mua khi đơn vị mua bật cờ buyer_name_with_po.
+ */
+@Composable
+private fun PoNumberField(value: String, canEdit: Boolean, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+    Row(modifier.padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (value.isNotBlank() || canEdit) {
+            Text("- ", color = AdminColors.TextMuted, fontSize = 12.sp)
+            BasicTextField(
+                value = value, onValueChange = onChange, singleLine = true, readOnly = !canEdit,
+                textStyle = TextStyle(color = AdminColors.Primary, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                cursorBrush = SolidColor(AdminColors.Primary),
+                decorationBox = { inner ->
+                    if (value.isEmpty()) Text("Số PO", color = AdminColors.TextMuted, fontSize = 12.sp, fontStyle = FontStyle.Italic)
+                    inner()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
 }
 
 /**

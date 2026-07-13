@@ -35,12 +35,18 @@ data class OrderDto(
     @SerializedName("warehouse_id") val warehouseId: Long? = null,   // kho bán (sale edit)
     @SerializedName("total_amount") val totalAmount: Double? = null,
     val notes: String? = null,
+    val reference: String? = null,                                    // số PO của khách (HĐ VAT)
+    @SerializedName("vat_buyer_name") val vatBuyerName: String? = null, // tên người mua trên HĐ
     // Phí ship + COD (init form ở màn fulfill; NV kho có thể sửa rồi gửi qua FulfillRequest)
     @SerializedName("shipping_fee") val shippingFee: Double? = null,           // Phí ship KH → công nợ
     @SerializedName("actual_shipping_fee") val actualShippingFee: Double? = null, // Phí ship KHO → chi phí
     @SerializedName("cod_collected") val codCollected: Double? = null,         // Thu hộ COD
     @SerializedName("discount_amount") val discountAmount: Double? = null,      // Giảm cả đơn → giảm công nợ
     @SerializedName("discount_reason") val discountReason: String? = null,      // Lý do giảm cả đơn
+    // Cờ khoá khi sửa đơn non-draft (BE show()): đã chốt công nợ / ship đã báo-chi / ứng ship KH hoàn CK.
+    @SerializedName("debt_calc") val debtCalc: String? = null,                          // != null → đã chốt công nợ (badge)
+    @SerializedName("ship_company_locked") val shipCompanyLocked: Boolean = false,      // ship KHO đã báo/thanh toán → khoá
+    @SerializedName("ship_customer_bank_locked") val shipCustomerBankLocked: Boolean = false, // ứng ship KH hoàn CK → khoá
     // Drop-ship: đơn liên kết (đơn nhập trỏ tới đơn bán đã tự giao sau cascade fulfill,
     // hoặc đơn bán bị chặn fulfill trực tiếp — phải đi qua đơn nhập).
     @SerializedName("linked_order_id") val linkedOrderId: Long? = null,
@@ -553,6 +559,8 @@ data class VatInfoDto(
     @SerializedName("tax_code") val taxCode: String? = null,
     @SerializedName("legal_name") val legalName: String? = null,
     @SerializedName("short_name") val shortName: String? = null,
+    // Bật → tên người mua trên HĐ tự điền "{legal_name} - {số PO}". Cài ở web (trang KH).
+    @SerializedName("buyer_name_with_po") val buyerNameWithPo: Boolean? = null,
 )
 
 data class VatBuyerNameReq(@SerializedName("buyer_name") val buyerName: String?)
@@ -597,7 +605,42 @@ data class VatOutputItemDto(
 data class PoDraftResultDto(
     val order: OrderDto? = null,
     @SerializedName("matched_customer") val matchedCustomer: PartyDto? = null,
-    val unresolved: List<String> = emptyList(),
+    // BE trả object {name, code, qty, reason} — KHÔNG phải chuỗi. Gson bỏ qua default → nullable.
+    val unresolved: List<PoUnresolvedDto>? = null,
+)
+
+/** Cờ khóa cứng kiểm tra trước phát hành HĐ VAT (settings /settings/vat-guards). */
+data class VatIssueGuardsDto(
+    @SerializedName("block_stock") val blockStock: Boolean = false,
+    @SerializedName("block_price") val blockPrice: Boolean = false,
+    @SerializedName("block_unit") val blockUnit: Boolean = false,
+)
+
+/** Định giá lại dòng theo khách (user đổi khách thủ công trên form HĐ VAT). */
+data class PoRepriceReq(
+    @SerializedName("customer_id") val customerId: Long,
+    val items: List<PoRepriceItemReq>,
+)
+data class PoRepriceItemReq(
+    @SerializedName("variant_id") val variantId: Long,
+    @SerializedName("unit_id") val unitId: Long,
+    @SerializedName("qty_unit") val qtyUnit: Double,
+)
+data class PoRepriceResultDto(val items: List<PoRepricedItemDto>? = null)
+data class PoRepricedItemDto(
+    @SerializedName("variant_id") val variantId: Long = 0,
+    @SerializedName("unit_id") val unitId: Long = 0,
+    @SerializedName("qty_unit") val qtyUnit: Double = 0.0,
+    @SerializedName("unit_price") val unitPrice: Double = 0.0,
+    val source: String? = null,
+)
+
+/** Mặt hàng trong PO mà AI không khớp được với sản phẩm hệ thống. */
+data class PoUnresolvedDto(
+    val name: String? = null,
+    val code: String? = null,
+    val qty: Double? = null,
+    val reason: String? = null,
 )
 
 /** Ảnh HĐ nháp render từng trang (data URL base64). */
@@ -623,6 +666,7 @@ data class VatShortageDto(
 data class VatStockCheckDto(val shortages: List<VatShortageDto> = emptyList(), val ok: Boolean = true)
 
 data class VatPriceIssueDto(
+    @SerializedName("variant_id") val variantId: Long = 0,   // khớp đúng dòng vừa sửa khi chặn
     @SerializedName("item_name") val itemName: String = "",
     val unit: String? = null,
     @SerializedName("sale_price") val salePrice: Double = 0.0,
@@ -631,6 +675,22 @@ data class VatPriceIssueDto(
     @SerializedName("price_type") val priceType: String = "exclusive",
 )
 data class VatPriceCheckDto(val issues: List<VatPriceIssueDto> = emptyList(), val ok: Boolean = true)
+
+/**
+ * Giá vốn FIFO (thế giới VAT) theo variant — nạp 1 lần rồi CACHE, so giá xuất tại chỗ khi gõ
+ * đơn giá (không gọi API mỗi lần). costNet = null → chưa từng nhập HĐ VAT cho tên+đơn vị này.
+ */
+data class VatCostBasisReq(@SerializedName("variant_ids") val variantIds: List<Long>)
+data class VatCostBasisDto(
+    @SerializedName("variant_id") val variantId: Long = 0,
+    @SerializedName("item_name") val itemName: String = "",
+    @SerializedName("invoice_unit") val invoiceUnit: String = "",
+    @SerializedName("conversion_factor") val conversionFactor: Double = 1.0,
+    @SerializedName("tax_rate") val taxRate: Double = 0.0,
+    @SerializedName("cost_net") val costNet: Double? = null,
+    @SerializedName("cost_vat_rate") val costVatRate: Double? = null,
+)
+data class VatCostBasisListDto(val items: List<VatCostBasisDto> = emptyList())
 
 /** Body cho create/update/issue VAT draft (price_type + vat_info_id + ignore_unit_warnings). */
 data class VatDraftReq(
@@ -672,6 +732,7 @@ data class CreateOrderRequest(
     @SerializedName("discount_amount") val discountAmount: Double? = null,  // giảm cả đơn → giảm công nợ
     @SerializedName("discount_reason") val discountReason: String? = null,  // lý do giảm cả đơn
     @SerializedName("dropship_customer_id") val dropshipCustomerId: Long? = null, // đơn nhập giao thẳng → KH nhận
+    val reference: String? = null,                                          // số PO của khách (HĐ VAT)
     val items: List<CreateOrderItem>,
     val notes: String? = null,
     @SerializedName("created_by_user_id") val createdByUserId: Long? = null, // 9chat user id

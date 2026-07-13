@@ -258,8 +258,9 @@ private fun PurchaseOrderRow(o: OrderDto, onClick: () -> Unit, onDelete: () -> U
     val canDelete = o.status == "draft" || o.status == "confirmed"
     val statusColor = when (o.status) {
         "draft" -> AdminColors.TextMuted
-        "confirmed" -> AdminColors.Info
-        "received", "completed" -> AdminColors.Success
+        "confirmed" -> AdminColors.Warning
+        // Đã nhận nhưng chưa chốt công nợ (debtCalc null) → cam; đã chốt → xanh
+        "received", "completed" -> if (o.debtCalc != null) AdminColors.Success else AdminColors.Warning
         "cancelled" -> AdminColors.Danger
         else -> AdminColors.TextMuted
     }

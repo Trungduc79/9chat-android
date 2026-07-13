@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -98,6 +99,9 @@ import vn.chat9.app.data.vapi.dto.RecentProductDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.VariantUnitDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import vn.chat9.app.ui.common.NumEditHint
 import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.modules.warehouse.PhotoZoomViewer
@@ -156,7 +160,7 @@ internal fun variantDisplay(v: VariantSearchDto, productName: String): String {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditAnyStatus: Boolean = false, onDone: () -> Unit) {
+fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditAnyStatus: Boolean = false, onDebtLockedChange: (Boolean) -> Unit = {}, onDone: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -177,6 +181,8 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     var shipCustomer by remember { mutableStateOf("") }
     var shipCompany by remember { mutableStateOf("") }
     var codAmount by remember { mutableStateOf("") }
+    var discount by remember { mutableStateOf("") }
+    var discountReason by remember { mutableStateOf("") }
     var orderDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var datePickerOpen by remember { mutableStateOf(false) }
     // Đơn đang xem — đổi khi tap thumb 1 đơn khác trong dialog "đơn của khách" (mirror web router.push
@@ -190,8 +196,14 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     // Edit/view existing order: load khi có orderId. canEdit = tạo mới HOẶC draft; allowEditAnyStatus
     // (dialog công nợ) → cho sửa mọi tình trạng trừ đã huỷ.
     var existingStatus by remember { mutableStateOf<String?>(null) }
-    val canEdit = currentOrderId == null || existingStatus == "draft" ||
-        (allowEditAnyStatus && existingStatus != null && existingStatus != "cancelled")
+    // Cờ khoá đơn non-draft (BE show): đã chốt công nợ (badge) + khoá riêng ship KH/KHO.
+    var orderDebtCalc by remember { mutableStateOf<String?>(null) }
+    var shipCompanyLocked by remember { mutableStateOf(false) }
+    var shipCustomerBankLocked by remember { mutableStateOf(false) }
+    // Đơn ĐÃ CHỐT CÔNG NỢ (debt_calc != null) → KHÓA CỨNG, chỉ xem (BE cũng 409 ORDER_LOCKED).
+    val debtLocked = orderDebtCalc != null
+    val canEdit = !debtLocked && (currentOrderId == null || existingStatus == "draft" ||
+        (allowEditAnyStatus && existingStatus != null && existingStatus != "cancelled"))
     // Sửa đơn ĐÃ non-draft → lưu qua per-item endpoint (giữ nguyên tình trạng).
     val editingNonDraft = allowEditAnyStatus && existingStatus != null && existingStatus != "draft" && existingStatus != "cancelled"
     // Ảnh đính kèm đơn (ảnh xác nhận giao/nhận) + snapshot item để diff khi sửa non-draft.
@@ -244,6 +256,10 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
         try {
             val o = container.vapi.getOrder(oid).data ?: return@LaunchedEffect
             existingStatus = o.status
+            orderDebtCalc = o.debtCalc
+            onDebtLockedChange(o.debtCalc != null)   // badge "Đã chốt công nợ" hiển thị ở header (SaleScreen)
+            shipCompanyLocked = o.shipCompanyLocked
+            shipCustomerBankLocked = o.shipCustomerBankLocked
             deliveryDate = o.completedAt
             o.party?.let { p ->
                 // Đơn nhập: hiển thị tên rút gọn NCC; đơn bán: tên KH.
@@ -262,6 +278,8 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             shipCustomer = o.shippingFee?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
             shipCompany = o.actualShippingFee?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
             codAmount = o.codCollected?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
+            discount = o.discountAmount?.takeIf { it > 0 }?.let { fmtMoney(it) } ?: ""
+            discountReason = o.discountReason ?: ""
             items.clear()
             originalItems.clear()
             o.items.forEach { it2 ->
@@ -308,8 +326,9 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
 
     // ===== Autosave nháp (mirror web SaleOrderFormView) =====
     // Chọn SP đầu tiên → tạo đơn nháp ngay; đổi giá/SL/đơn vị → PUT item khi blur; xoá → DELETE.
-    // Chỉ khi tạo mới / sửa đơn nháp; dialog công nợ (allowEditAnyStatus) → giữ lưu tay.
-    val autosaveEnabled = !allowEditAnyStatus
+    // Tạo mới / sửa đơn NHÁP → autosave. Sửa đơn non-draft (editingNonDraft) → lưu tay (mirror web).
+    // Dùng !editingNonDraft (không phải !allowEditAnyStatus) để mở nháp từ Sale detail vẫn autosave.
+    val autosaveEnabled = !editingNonDraft
     // Serialize autosave (create/add/update) → tránh tạo TRÙNG đơn khi chọn 2 SP liên tiếp.
     val autosaveMutex = remember { kotlinx.coroutines.sync.Mutex() }
     suspend fun autosaveDraft(vId: Long) {
@@ -342,6 +361,8 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                     shippingFee = if (isPurchase) null else parseMoney(shipCustomer).takeIf { it > 0 },
                     actualShippingFee = if (isPurchase) null else parseMoney(shipCompany).takeIf { it > 0 },
                     codCollected = if (isPurchase) null else parseMoney(codAmount).takeIf { it > 0 },
+                    discountAmount = if (isPurchase) null else parseMoney(discount),
+                    discountReason = if (isPurchase || parseMoney(discount) <= 0) null else discountReason.trim(),
                     items = listOf(line),
                     notes = notes.ifBlank { null },
                     createdByUserId = userId,
@@ -543,19 +564,42 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             if (!isPurchase) {
             Spacer(Modifier.height(12.dp))
             Card("", vPadding = 6.dp) {
-                ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit, marker = "(2)") { shipCustomer = it }
-                ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit) { shipCompany = it }
+                // Ship KH/KHO khoá riêng khi BE báo đã báo-chi / ứng CK (dù đơn cho sửa).
+                ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit && !shipCustomerBankLocked, marker = "(2)", locked = shipCustomerBankLocked) { shipCustomer = it }
+                ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit && !shipCompanyLocked, locked = shipCompanyLocked) { shipCompany = it }
                 ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit, marker = "(3)") { codAmount = it }
-                // Tổng cộng = tổng tiền hàng + ship KH - thu hộ
-                val grandTotal = items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount)
+                ShipRow("Giảm cả đơn", discount, focusCtx, scope, canEdit, marker = "(4)") { discount = it }
+                // Lý do giảm — chỉ hiện khi có giảm (>0); bỏ trống → BE mặc định "Giảm cả đơn".
+                if (parseMoney(discount) > 0) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        BasicTextField(
+                            value = discountReason,
+                            onValueChange = { discountReason = it },
+                            readOnly = !canEdit,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 13.sp, fontStyle = FontStyle.Italic, textAlign = TextAlign.Center),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            modifier = Modifier.fillMaxWidth().centerOnFocus(focusCtx, scope, "discount-reason"),
+                            decorationBox = { inner ->
+                                Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                                    if (discountReason.isEmpty()) Text("Lý do giảm (mặc định: Giảm cả đơn)", color = AdminColors.TextMuted, fontSize = 12.sp, fontStyle = FontStyle.Italic)
+                                    inner()
+                                }
+                            },
+                        )
+                    }
+                }
+                // Tổng cộng = tổng tiền hàng + ship KH - thu hộ - giảm cả đơn
+                val grandTotal = items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount) - parseMoney(discount)
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(0.56f), verticalAlignment = Alignment.CenterVertically) {
                         Text("Tổng cộng ", color = AdminColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        Text("(1) + (2) - (3)", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, maxLines = 1)
+                        Text("(1) + (2) - (3) - (4)", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, maxLines = 1, softWrap = false)
                     }
                     Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.width(6.dp))
-                    Row(Modifier.weight(0.58f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+                    Row(Modifier.weight(0.44f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
                         Text(fmtMoney(grandTotal), color = AdminColors.Primary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
                         Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
                     }
@@ -601,7 +645,7 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             // Tạo mới / draft → Lưu nháp | Xác nhận.
             if (canEdit && editingNonDraft) {
                 Button(
-                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone, onDraftSaved) { saving = it } },
+                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), parseMoney(discount), discountReason, existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone, onDraftSaved) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
                     modifier = Modifier.fillMaxWidth(),
@@ -611,12 +655,12 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                 }
             } else if (canEdit) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "draft", false, emptyList(), context, onDone, onDraftSaved) { saving = it } },
+                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), parseMoney(discount), discountReason, "draft", false, emptyList(), context, onDone, onDraftSaved) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     modifier = Modifier.weight(1f),
                 ) { Text("Lưu nháp") }
                 Button(
-                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), "confirmed", false, emptyList(), context, onDone, onDraftSaved) { saving = it } },
+                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), parseMoney(discount), discountReason, "confirmed", false, emptyList(), context, onDone, onDraftSaved) { saving = it } },
                     enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
                     modifier = Modifier.weight(1f),
@@ -821,53 +865,69 @@ private fun ItemRow(
                 // đều → gap qty-unit = unit-× = ×-price = price-= BẰNG NHAU.
                 // Total + đ cố định phải (không weight).
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    var qtyText by remember(draft.variantId) { mutableStateOf(trimZeros(draft.qty)) }
+                    var qtyTfv by remember(draft.variantId) { mutableStateOf(TextFieldValue(trimZeros(draft.qty))) }
                     var qtyAtFocus by remember(draft.variantId) { mutableStateOf<String?>(null) }
-                    BasicTextField(
-                        value = qtyText,
-                        onValueChange = { raw -> val f = raw.filter { c -> c.isDigit() || c == '.' }; qtyText = f; onQtyChange(f.toDoubleOrNull() ?: 0.0) },
-                        readOnly = !canEdit,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                        cursorBrush = SolidColor(AdminColors.Primary),
-                        // Snapshot lúc focus, blur → autosave nếu đổi (tránh PUT thừa).
-                        modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}")
-                            .onFocusChanged { st ->
-                                if (st.isFocused) qtyAtFocus = qtyText
-                                else if (qtyAtFocus != null) { if (qtyAtFocus != qtyText) onQtyCommit(); qtyAtFocus = null }
-                            },
-                    )
+                    var qtyFocused by remember(draft.variantId) { mutableStateOf(false) }
+                    Box {
+                        NumEditHint(qtyFocused, qtyTfv.text)
+                        BasicTextField(
+                            value = qtyTfv,
+                            onValueChange = { raw -> val f = raw.text.filter { c -> c.isDigit() || c == '.' }; qtyTfv = if (f == raw.text) raw else TextFieldValue(f, TextRange(f.length)); onQtyChange(f.toDoubleOrNull() ?: 0.0) },
+                            readOnly = !canEdit,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            // Tap → select-all (trễ 60ms) + hint; snapshot lúc focus, blur → autosave nếu đổi.
+                            modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "qty-${draft.variantId}")
+                                .onFocusChanged { st ->
+                                    if (st.isFocused) {
+                                        qtyFocused = true; qtyAtFocus = qtyTfv.text
+                                        scope.launch { delay(60); qtyTfv = qtyTfv.copy(selection = TextRange(0, qtyTfv.text.length)) }
+                                    } else if (qtyAtFocus != null) {
+                                        qtyFocused = false
+                                        if (qtyAtFocus != qtyTfv.text) onQtyCommit(); qtyAtFocus = null
+                                    }
+                                },
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     UnitDropdown(draft.units, draft.unitId, canEdit, onUnitChange)
                     Spacer(Modifier.weight(1f))
                     Text("×", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.weight(1f))
                     // Nhập "theo nghìn": gõ text RAW khi focus, bung (expandMoneyShorthand) khi blur.
-                    var priceText by remember(draft.variantId) { mutableStateOf(fmtMoney(draft.price)) }
+                    var priceTfv by remember(draft.variantId) { mutableStateOf(TextFieldValue(fmtMoney(draft.price))) }
                     var priceAtFocus by remember(draft.variantId) { mutableStateOf<Double?>(null) }
-                    BasicTextField(
-                        value = priceText,
-                        onValueChange = { raw -> priceText = raw.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                        readOnly = !canEdit,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
-                        cursorBrush = SolidColor(AdminColors.Primary),
-                        // Focus: hiện RAW dễ sửa. Blur: bung theo nghìn → cập nhật + autosave nếu đổi.
-                        modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}")
-                            .onFocusChanged { st ->
-                                if (st.isFocused) {
-                                    priceText = if (draft.price > 0) trimZeros(draft.price) else ""
-                                    priceAtFocus = draft.price
-                                } else if (priceAtFocus != null) {
-                                    val v = expandMoneyShorthand(priceText) ?: 0.0
-                                    priceText = if (v > 0) fmtMoney(v) else ""
-                                    if (v != priceAtFocus) { onPriceChange(v); onPriceCommit() }
-                                    priceAtFocus = null
-                                }
-                            },
-                    )
+                    var priceFocused by remember(draft.variantId) { mutableStateOf(false) }
+                    Box {
+                        NumEditHint(priceFocused, expandMoneyShorthand(priceTfv.text)?.let { fmtMoney(it) })
+                        BasicTextField(
+                            value = priceTfv,
+                            onValueChange = { raw -> val f = raw.text.filter { c -> c.isDigit() || c == '.' || c == ',' }; priceTfv = if (f == raw.text) raw else TextFieldValue(f, TextRange(f.length)) },
+                            readOnly = !canEdit,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
+                            cursorBrush = SolidColor(AdminColors.Primary),
+                            // Focus: hiện RAW (theo nghìn) + select-all + hint số đã bung. Blur: bung → cập nhật + autosave nếu đổi.
+                            modifier = Modifier.widthIn(min = 56.dp).centerOnFocus(focusCtx, scope, "price-${draft.variantId}")
+                                .onFocusChanged { st ->
+                                    if (st.isFocused) {
+                                        priceFocused = true
+                                        priceTfv = TextFieldValue(if (draft.price > 0) trimZeros(draft.price) else "")
+                                        priceAtFocus = draft.price
+                                        scope.launch { delay(60); priceTfv = priceTfv.copy(selection = TextRange(0, priceTfv.text.length)) }
+                                    } else if (priceAtFocus != null) {
+                                        priceFocused = false
+                                        val v = expandMoneyShorthand(priceTfv.text) ?: 0.0
+                                        priceTfv = TextFieldValue(if (v > 0) fmtMoney(v) else "")
+                                        if (v != priceAtFocus) { onPriceChange(v); onPriceCommit() }
+                                        priceAtFocus = null
+                                    }
+                                },
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     Text("=", color = AdminColors.TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.width(6.dp))
@@ -904,44 +964,53 @@ internal fun UnitDropdown(units: List<VariantUnitDto>, selectedId: Long, enabled
 }
 
 @Composable
-private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, enabled: Boolean, marker: String = "", onChange: (String) -> Unit) {
+private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, enabled: Boolean, marker: String = "", locked: Boolean = false, onChange: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
             Text(label, color = AdminColors.TextMuted, fontSize = 12.sp)
             if (marker.isNotEmpty()) Text(" $marker", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+            if (locked) Text(" 🔒", fontSize = 11.sp)
         }
         Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
         Spacer(Modifier.width(6.dp))
         Column(Modifier.weight(0.58f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Nhập "theo nghìn": gõ RAW khi focus, bung khi blur (submit vẫn parseMoney string).
-                var text by remember(value) { mutableStateOf(value) }
+                // Nhập "theo nghìn": tap → RAW + select-all + hint (số đã bung); bung khi blur.
+                var tfv by remember(value) { mutableStateOf(TextFieldValue(value)) }
                 var atFocus by remember { mutableStateOf<String?>(null) }
-                BasicTextField(
-                    value = text,
-                    onValueChange = { raw -> text = raw.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    readOnly = !enabled,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
-                    cursorBrush = SolidColor(AdminColors.Primary),
-                    modifier = Modifier.weight(1f).centerOnFocus(focusCtx, scope, "ship-$label")
-                        .onFocusChanged { st ->
-                            if (st.isFocused) atFocus = text
-                            else if (atFocus != null) {
-                                val v = expandMoneyShorthand(text)
-                                text = if (v != null && v > 0) fmtMoney(v) else ""
-                                onChange(text)
-                                atFocus = null
+                var focused by remember { mutableStateOf(false) }
+                Box(Modifier.weight(1f)) {
+                    NumEditHint(focused, expandMoneyShorthand(tfv.text)?.let { fmtMoney(it) })
+                    BasicTextField(
+                        value = tfv,
+                        onValueChange = { raw -> val f = raw.text.filter { c -> c.isDigit() || c == '.' || c == ',' }; tfv = if (f == raw.text) raw else TextFieldValue(f, TextRange(f.length)) },
+                        readOnly = !enabled,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp, textAlign = TextAlign.End, fontWeight = FontWeight.Medium),
+                        cursorBrush = SolidColor(AdminColors.Primary),
+                        modifier = Modifier.fillMaxWidth().centerOnFocus(focusCtx, scope, "ship-$label")
+                            .onFocusChanged { st ->
+                                if (st.isFocused) {
+                                    focused = true; atFocus = tfv.text
+                                    tfv = TextFieldValue(expandMoneyShorthand(tfv.text)?.takeIf { it > 0 }?.let { trimZeros(it) } ?: "")
+                                    scope.launch { delay(60); tfv = tfv.copy(selection = TextRange(0, tfv.text.length)) }
+                                } else if (atFocus != null) {
+                                    focused = false
+                                    val v = expandMoneyShorthand(tfv.text)
+                                    tfv = TextFieldValue(if (v != null && v > 0) fmtMoney(v) else "")
+                                    onChange(tfv.text)
+                                    atFocus = null
+                                }
+                            },
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.CenterEnd) {
+                                if (tfv.text.isEmpty()) Text("0", color = AdminColors.TextMuted, fontSize = 13.sp)
+                                inner()
                             }
                         },
-                    decorationBox = { inner ->
-                        Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.CenterEnd) {
-                            if (text.isEmpty()) Text("0", color = AdminColors.TextMuted, fontSize = 13.sp)
-                            inner()
-                        }
-                    },
-                )
+                    )
+                }
                 Text(" đ", color = AdminColors.TextMuted, fontSize = 11.sp)
             }
             HorizontalDivider(color = AdminColors.Border)
@@ -1369,6 +1438,8 @@ private fun submit(
     shipCustomer: Double,
     shipCompany: Double,
     cod: Double,
+    discount: Double,
+    discountReason: String,
     status: String,
     nonDraft: Boolean,
     originalItems: List<OrigItemSnap>,
@@ -1394,6 +1465,10 @@ private fun submit(
                 shippingFee = if (isPurchase) null else shipCustomer.takeIf { it > 0 },
                 actualShippingFee = if (isPurchase) null else shipCompany.takeIf { it > 0 },
                 codCollected = if (isPurchase) null else cod.takeIf { it > 0 },
+                // Gửi discount LUÔN (kể cả 0) cho đơn bán → BE xoá dòng giảm + đảo nợ khi về 0.
+                // Lý do gửi thô (kể cả rỗng) → BE tự fallback "Giảm cả đơn {mã}" khi trống.
+                discountAmount = if (isPurchase) null else discount,
+                discountReason = if (isPurchase || discount <= 0) null else discountReason.trim(),
                 items = items.map { CreateOrderItem(it.variantId, it.unitId, it.qty, it.price) },
                 notes = notes.ifBlank { null },
                 createdByUserId = userId,
