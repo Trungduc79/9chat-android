@@ -173,6 +173,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
 
     // Busy flags
     var saving by remember { mutableStateOf(false) }
+    var autoSaving by remember { mutableStateOf(false) }   // đang tự lưu đơn (debounce sau khi sửa)
     var poUploading by remember { mutableStateOf(false) }
     var syncing by remember { mutableStateOf(false) }
 
@@ -293,6 +294,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         val id = currentOrderId ?: return@LaunchedEffect
         if (!canEdit || items.isEmpty()) return@LaunchedEffect
         delay(900)
+        autoSaving = true
         try {
             container.vapi.updateOrder(id, CreateOrderRequest(
                 type = "sale", isInvoiceOnly = true, partyType = "customer",
@@ -306,7 +308,8 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             if (linkedVat != null && linkedVat?.signed != true) {
                 try { container.vapi.updateVatDraft(id, VatDraftReq(priceType, true, selectedVatInfoId)) } catch (_: Exception) {}
             }
-        } catch (_: Exception) { /* im lặng — không spam khi gõ */ }
+        } catch (_: Exception) { /* im lặng — không spam khi gõ */
+        } finally { autoSaving = false }
     }
 
     // Load đơn existing / vừa tạo từ PO.
@@ -674,6 +677,10 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                 Text(if (poUploading) "Đang đọc…" else "PO", color = Color.White, fontSize = 12.sp, lineHeight = 12.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
                             }
                             Spacer(Modifier.width(6.dp))
+                        }
+                        // Đang tự lưu đơn → quay vòng nhỏ cạnh ngày.
+                        if (autoSaving) {
+                            CircularProgressIndicator(Modifier.padding(end = 6.dp).size(14.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
                         }
                         val dateLabel = java.text.SimpleDateFormat("dd/MM/yyyy", Locale("vi")).format(java.util.Date(orderDateMs))
                         Text(dateLabel, color = if (canEdit) AdminColors.Primary else AdminColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium,
