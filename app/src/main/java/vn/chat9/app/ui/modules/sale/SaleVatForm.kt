@@ -239,6 +239,16 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         return VatPriceIssueDto(d.variantId, d.productName, unit?.name ?: cb.invoiceUnit, sale, cost, cost - sale, priceType)
     }
 
+    // Gợi ý ô giá trống = GIÁ NHẬP (giá vốn) quy về đơn vị đang chọn + phương thức giá.
+    fun costPlaceholder(d: OrderItemDraft): String? {
+        val cb = costBasis[d.variantId] ?: return null
+        val costNet = cb.costNet ?: return null
+        val cf = d.units.firstOrNull { it.id == d.unitId }?.conversionFactor ?: 1.0
+        val ratio = cf / (cb.conversionFactor.takeIf { it > 0 } ?: 1.0)
+        val cost = (if (priceType == "inclusive") costNet * (1 + (cb.costVatRate ?: 0.0) / 100) else costNet) * ratio
+        return if (cost > 0) fmtPriceVat(cost) else null
+    }
+
     // Cảnh báo hiển thị = tính TẠI CHỖ (đổi ngay khi nhập giá, không đợi server).
     val cardPriceIssues: List<VatPriceIssueDto> = items.mapNotNull { localPriceIssue(it) }
     // Dòng chưa từng nhập HĐ VAT → không so được giá (hiện nhãn vàng, không chặn).
@@ -783,7 +793,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                 }
                             if (it.qty != 0.0) lineAmt / it.qty else it.price
                         } else null
-                        VatItemRow(it, focusCtx, scope, canEdit, displayPrice = displayPrice,
+                        VatItemRow(it, focusCtx, scope, canEdit, displayPrice = displayPrice, pricePlaceholder = costPlaceholder(it),
                             onDelete = { items.removeAt(idx) },
                             onQtyChange = { q -> items[idx] = it.copy(qty = q) },
                             onPriceChange = { p -> items[idx] = it.copy(price = p) },
@@ -1269,6 +1279,8 @@ private fun VatItemRow(
     // Rời ô giá: (giá cũ, giá mới) → trả GIÁ ĐƯỢC CHẤP NHẬN. Bị chặn (giá < giá vốn + block_price)
     // → trả giá cũ, ô hiển thị hoàn nguyên theo.
     onPriceCommit: (prevPrice: Double, newPrice: Double) -> Double = { _, new -> new },
+    // Gợi ý khi ô giá trống: giá nhập (giá vốn) quy về đơn vị đang chọn.
+    pricePlaceholder: String? = null,
 ) {
     var offsetX by remember(draft.variantId) { mutableStateOf(0f) }
     var rowWidth by remember { mutableStateOf(1f) }
@@ -1314,12 +1326,17 @@ private fun VatItemRow(
                         // Hiển thị đơn giá NET (đọc-only) — chế độ "chưa VAT" của bảng.
                         Text(fmtPriceVat(displayPrice), color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 60.dp))
                     } else {
-                        var priceTfv by remember(draft.variantId, draft.unitId) { mutableStateOf(TextFieldValue(fmtPriceVat(draft.price))) }
+                        var priceTfv by remember(draft.variantId, draft.unitId) { mutableStateOf(TextFieldValue(if (draft.price > 0) fmtPriceVat(draft.price) else "")) }
                         var priceFocused by remember(draft.variantId, draft.unitId) { mutableStateOf(false) }
                         var priceBefore by remember(draft.variantId, draft.unitId) { mutableStateOf(draft.price) }
-                        Box {
+                        Box(contentAlignment = Alignment.Center) {
                             // Hint hiện SỐ SẼ LƯU (đã bung theo nghìn): gõ 850 → hint 850.000.
                             NumEditHint(priceFocused, priceTfv.text.takeIf { it.isNotEmpty() }?.let { fmtPriceVat(expandVatPrice(parsePriceVat(it))) })
+                            // Chưa nhập giá → gợi ý GIÁ NHẬP (giá vốn) theo đơn vị đang chọn.
+                            if (priceTfv.text.isEmpty() && pricePlaceholder != null) Text(
+                                pricePlaceholder, color = AdminColors.TextMuted.copy(alpha = 0.5f),
+                                fontSize = 15.sp, textAlign = TextAlign.Center,
+                            )
                             BasicTextField(
                                 value = priceTfv, onValueChange = { raw -> priceTfv = raw; onPriceChange(parsePriceVat(raw.text)) },
                                 readOnly = !canEdit, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
@@ -1337,7 +1354,7 @@ private fun VatItemRow(
                                             val expanded = expandVatPrice(parsePriceVat(priceTfv.text))
                                             onPriceChange(expanded)
                                             val accepted = if (expanded != priceBefore) onPriceCommit(priceBefore, expanded) else expanded
-                                            priceTfv = TextFieldValue(fmtPriceVat(accepted))
+                                            priceTfv = TextFieldValue(if (accepted > 0) fmtPriceVat(accepted) else "")
                                             if (accepted != expanded) onPriceChange(accepted)
                                         }
                                     },
