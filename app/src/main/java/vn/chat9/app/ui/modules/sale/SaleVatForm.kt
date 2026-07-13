@@ -220,25 +220,23 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         } catch (_: Exception) { /* im lặng — vẫn còn gate lúc ký */ }
     }
 
-    // So 1 dòng với giá vốn đã cache (quy đổi sang đơn vị HĐ + gross-up theo phương thức giá).
+    // So 1 dòng với giá vốn đã cache. Giá vốn về từ BE theo ĐƠN VỊ HĐ (vd Hộp) → quy đổi ngược
+    // về ĐƠN VỊ ĐANG NHẬP trên đơn (vd Thùng); cảnh báo cũng hiện theo đơn vị đó.
     // Dùng GIÁ SẼ LƯU (đã bung nghìn): đang gõ 790 → so với 790.000, không phải 790.
-    // null = không có vấn đề, hoặc chưa có giá nhập (không kiểm tra được).
     fun localPriceIssue(d: OrderItemDraft): VatPriceIssueDto? {
         val cb = costBasis[d.variantId] ?: return null
         val costNet = cb.costNet ?: return null
-        val cf = d.units.firstOrNull { it.id == d.unitId }?.conversionFactor ?: 1.0
-        val qtyInvoice = d.qty * cf / (cb.conversionFactor.takeIf { it > 0 } ?: 1.0)
-        if (qtyInvoice <= 0) return null
-        val rate = if (cb.taxRate in listOf(5.0, 8.0, 10.0)) cb.taxRate else 0.0
+        val unit = d.units.firstOrNull { it.id == d.unitId }
+        val cf = unit?.conversionFactor ?: 1.0
+        val ratio = cf / (cb.conversionFactor.takeIf { it > 0 } ?: 1.0)   // số đơn vị HĐ trong 1 đơn vị đang nhập
+        if (ratio <= 0) return null
+        // Giá nhập trên đơn đã gộp VAT khi chọn "đã gồm VAT" → giá vốn cũng gross-up cho cùng gốc.
         val inclusive = priceType == "inclusive"
-        val gross = d.qty * expandVatPrice(d.price)
-        val preVat = if (inclusive && rate > 0) gross / (1 + rate / 100) else gross
-        val saleNet = preVat / qtyInvoice
-        if (saleNet <= 0) return null
-        val sale = if (inclusive) saleNet * (1 + rate / 100) else saleNet
-        val cost = if (inclusive) costNet * (1 + (cb.costVatRate ?: 0.0) / 100) else costNet
+        val sale = expandVatPrice(d.price)
+        if (sale <= 0) return null
+        val cost = (if (inclusive) costNet * (1 + (cb.costVatRate ?: 0.0) / 100) else costNet) * ratio
         if (sale >= cost - 0.0001) return null
-        return VatPriceIssueDto(d.variantId, cb.itemName, cb.invoiceUnit, sale, cost, cost - sale, priceType)
+        return VatPriceIssueDto(d.variantId, d.productName, unit?.name ?: cb.invoiceUnit, sale, cost, cost - sale, priceType)
     }
 
     // Cảnh báo hiển thị = tính TẠI CHỖ (đổi ngay khi nhập giá, không đợi server).
