@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Checkbox
@@ -344,28 +345,54 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
           },
           modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 64.dp).offset { IntOffset(dpadX.roundToInt(), dpadY.roundToInt()) },
       )
-      // Dialog lịch sử biến thể (mở khi click ảnh/tên).
+      // Dialog báo cáo kiểm kho hôm nay (dưới); click dòng → mở lịch sử (vẽ đè lên).
+      if (reportOpen) StocktakeReportDialog(
+          report, reportLoading,
+          onOpenHistory = { historyVariant = it },
+          onDismiss = { reportOpen = false },
+      )
+      // Dialog lịch sử biến thể (click ảnh/tên hoặc dòng báo cáo) — vẽ TRÊN CÙNG.
       historyVariant?.let { hv ->
           VariantHistoryDialog(variant = hv, onDismiss = { historyVariant = null })
       }
-      // Dialog báo cáo kiểm kho hôm nay.
-      if (reportOpen) StocktakeReportDialog(report, reportLoading, onDismiss = { reportOpen = false })
     }
 }
 
 /** Danh sách sai lệch kiểm kho hôm nay (đã LƯU, dedupe lần đếm cuối, bỏ khớp). */
 @Composable
-private fun StocktakeReportDialog(report: StocktakeReportDto?, loading: Boolean, onDismiss: () -> Unit) {
+private fun StocktakeReportDialog(
+    report: StocktakeReportDto?,
+    loading: Boolean,
+    onOpenHistory: (VariantSearchDto) -> Unit,
+    onDismiss: () -> Unit,
+) {
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            Modifier.fillMaxWidth(0.92f).heightIn(max = 600.dp).clip(RoundedCornerShape(16.dp))
-                .background(AdminColors.Card).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
-                .clickable(enabled = false) {}.padding(16.dp),
+            Modifier.fillMaxWidth(0.95f),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Báo cáo kiểm kho hôm nay", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+          // Nút đóng NGOÀI dialog, phía trên bên phải
+          Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+              Box(
+                  Modifier.align(Alignment.CenterEnd).clip(RoundedCornerShape(50))
+                      .background(Color.White.copy(alpha = 0.12f)).clickable(onClick = onDismiss).padding(6.dp),
+                  contentAlignment = Alignment.Center,
+              ) {
+                  Icon(Icons.Default.Close, contentDescription = "Đóng", tint = AdminColors.Text, modifier = Modifier.size(20.dp))
+              }
+          }
+          Column(
+            Modifier.fillMaxWidth().heightIn(max = 600.dp).clip(RoundedCornerShape(16.dp))
+                .background(AdminColors.Card).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .clickable(enabled = false) {}.padding(horizontal = 4.dp, vertical = 10.dp),
+          ) {
+            Text(
+                "Báo cáo kiểm kho hôm nay", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+            )
             when {
                 loading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = AdminColors.Primary)
@@ -374,28 +401,60 @@ private fun StocktakeReportDialog(report: StocktakeReportDto?, loading: Boolean,
                 else -> {
                     Text(
                         "${report.date} · ${report.summary.discrepancies} sai lệch / ${report.summary.counted} mặt hàng đã đếm",
-                        color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+                        color = AdminColors.TextMuted, fontSize = 12.sp,
+                        // Căn trái theo dòng variant phía dưới (cùng bề rộng 0.97, canh giữa)
+                        modifier = Modifier.fillMaxWidth(0.97f).align(Alignment.CenterHorizontally).padding(top = 6.dp, bottom = 10.dp),
                     )
                     if (report.items.isEmpty()) {
                         Text("Không có sai lệch trong ngày", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
                     } else {
-                        LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(report.items) { it ->
-                                Column(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(AdminColors.Bg)
-                                        .border(1.dp, AdminColors.Border, RoundedCornerShape(10.dp)).padding(10.dp),
-                                ) {
-                                    Text(it.variantName, color = AdminColors.Text, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            "Tồn HT ${trimZeros(it.systemQty)} → Đếm ${trimZeros(it.countedQty)} ${it.unit}",
-                                            color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f),
+                        LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            itemsIndexed(report.items, key = { _, it -> it.variantId }) { i, it ->
+                                Column(Modifier.fillMaxWidth()) {
+                                    // Kẻ ngang ngăn cách giữa các sản phẩm (gom theo SP giống màn kiểm kho)
+                                    if (i > 0 && report.items[i - 1].productId != it.productId) {
+                                        Box(
+                                            Modifier.fillMaxWidth(0.5f).align(Alignment.CenterHorizontally)
+                                                .padding(vertical = 3.dp).height(1.dp).background(AdminColors.Warning),
                                         )
-                                        val neg = it.diff < 0
-                                        Text(
-                                            if (neg) "Thiếu ${trimZeros(abs(it.diff))} ${it.unit}" else "Dư ${trimZeros(it.diff)} ${it.unit}",
-                                            color = if (neg) AdminColors.Danger else AdminColors.Info, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                                        )
+                                        // Gap dưới kẻ ngang bằng gap trên (spacedBy 4 + padding 3)
+                                        Spacer(Modifier.height(4.dp))
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth(0.97f).align(Alignment.CenterHorizontally).heightIn(min = 62.dp)
+                                            .clip(RoundedCornerShape(10.dp)).background(AdminColors.Bg)
+                                            .border(1.dp, AdminColors.Border, RoundedCornerShape(10.dp))
+                                            .clickable(enabled = it.variant != null) { it.variant?.let(onOpenHistory) }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        // Thumb trái (~95% chiều cao dòng chuẩn)
+                                        Box(
+                                            Modifier.size(59.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Card)
+                                                .border(1.dp, AdminColors.Border, RoundedCornerShape(6.dp)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            if (!it.imageUrl.isNullOrBlank()) {
+                                                AsyncImage(model = it.imageUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                                            } else {
+                                                Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(18.dp))
+                                            }
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(it.variantName, color = AdminColors.Text, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    "Tồn HT ${trimZeros(it.systemQty)} → Đếm ${trimZeros(it.countedQty)} ${it.unit}",
+                                                    color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f),
+                                                )
+                                                val neg = it.diff < 0
+                                                Text(
+                                                    if (neg) "Thiếu ${trimZeros(abs(it.diff))} ${it.unit}" else "Dư ${trimZeros(it.diff)} ${it.unit}",
+                                                    color = if (neg) AdminColors.Danger else AdminColors.Info, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -403,10 +462,7 @@ private fun StocktakeReportDialog(report: StocktakeReportDto?, loading: Boolean,
                     }
                 }
             }
-            Text(
-                "Đóng", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                modifier = Modifier.align(Alignment.End).clickable(onClick = onDismiss).padding(top = 12.dp, start = 16.dp, bottom = 4.dp),
-            )
+          }
         }
     }
 }

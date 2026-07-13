@@ -449,6 +449,7 @@ data class StocktakeReportDto(
 data class StocktakeReportSummary(val counted: Int = 0, val discrepancies: Int = 0)
 data class StocktakeReportItemDto(
     @SerializedName("variant_id") val variantId: Long = 0,
+    @SerializedName("product_id") val productId: Long? = null,
     @SerializedName("product_name") val productName: String = "",
     @SerializedName("variant_name") val variantName: String = "",
     val sku: String? = null,
@@ -458,6 +459,8 @@ data class StocktakeReportItemDto(
     val diff: Double = 0.0,
     @SerializedName("counted_at") val countedAt: String? = null,
     val note: String? = null,
+    @SerializedName("image_url") val imageUrl: String? = null,
+    val variant: VariantSearchDto? = null,   // mở dialog Lịch sử biến thể khi click dòng
 )
 
 /** Vai trò + QUYỀN nhân viên vapi khớp theo SĐT (mở module 9chat). Phase 4: dùng

@@ -296,8 +296,9 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         val id = currentOrderId ?: return
         val cust = selectedCustomer ?: return
         if (!canEdit || items.isEmpty()) return
-        // Đọc items TẠI THỜI ĐIỂM CHẠY (không capture priceKey của recomposition cũ).
-        val key = "$priceType|" + items.joinToString("|") { "${it.variantId}:${it.unitId}:${it.qty}:${it.price}" }
+        // Đọc state TẠI THỜI ĐIỂM CHẠY (không capture recomposition cũ). Gồm cả ngày + số PO.
+        val key = "$priceType|$orderDateMs|${poNumber.trim()}|" +
+            items.joinToString("|") { "${it.variantId}:${it.unitId}:${it.qty}:${it.price}" }
         if (key == lastSavedKey) return
         lastSavedKey = key
         autoSaving = true
@@ -319,9 +320,10 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         } finally { autoSaving = false }
     }
 
-    // Lưới an toàn: có thay đổi mà chưa lưu (vd đổi đơn vị, xoá dòng) → lưu sau 900ms.
+    // Lưới an toàn: mọi thay đổi chưa lưu (đơn vị, xoá dòng, NGÀY, số PO) → lưu sau 900ms.
     // Rời ô giá / SL thì đã gọi autoSaveNow() ngay, tới đây key trùng → bỏ qua.
-    LaunchedEffect(priceKey, priceType, currentOrderId) {
+    val itemsKey = items.joinToString("|") { "${it.variantId}:${it.unitId}:${it.qty}:${it.price}" }
+    LaunchedEffect(itemsKey, priceType, currentOrderId, orderDateMs, poNumber) {
         delay(900)
         autoSaveNow()
     }
@@ -1019,7 +1021,13 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
                 DatePickerDialog(
                     onDismissRequest = { datePickerOpen = false },
-                    confirmButton = { TextButton(onClick = { dp.selectedDateMillis?.let { orderDateMs = it }; datePickerOpen = false }) { Text("OK", color = AdminColors.Primary) } },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            dp.selectedDateMillis?.let { orderDateMs = it }
+                            datePickerOpen = false
+                            scope.launch { autoSaveNow() }   // đổi ngày → lưu ngay
+                        }) { Text("OK", color = AdminColors.Primary) }
+                    },
                     dismissButton = { TextButton(onClick = { datePickerOpen = false }) { Text("Huỷ", color = AdminColors.TextMuted) } },
                     colors = DatePickerDefaults.colors(containerColor = AdminColors.Card),
                 ) { DatePicker(state = dp) }
