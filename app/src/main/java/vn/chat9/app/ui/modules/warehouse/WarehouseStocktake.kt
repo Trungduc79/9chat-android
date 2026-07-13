@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +61,7 @@ import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.CategoryDto
 import vn.chat9.app.data.vapi.dto.ProductSearchDto
 import vn.chat9.app.data.vapi.dto.StocktakeItemReq
+import vn.chat9.app.data.vapi.dto.StocktakeReportDto
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
@@ -117,6 +119,10 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
     var focusedFilter by remember { mutableStateOf(-1) }          // D-pad focus: -1 none, 0 dòng SP, 1 SP
     var saving by remember { mutableStateOf(false) }
     var historyVariant by remember { mutableStateOf<VariantSearchDto?>(null) }   // dialog lịch sử
+    // Báo cáo kiểm kho hôm nay (sai lệch đã LƯU).
+    var reportOpen by remember { mutableStateOf(false) }
+    var report by remember { mutableStateOf<StocktakeReportDto?>(null) }
+    var reportLoading by remember { mutableStateOf(false) }
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0      // ẩn D-pad khi bàn phím hiện
 
@@ -175,6 +181,21 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
                 Toast.makeText(context, "Lưu thất bại: ${e.message}", Toast.LENGTH_LONG).show()
             }
             saving = false
+        }
+    }
+
+    // Xem báo cáo kiểm kho hôm nay (sai lệch đã LƯU của kho này).
+    fun openReport() {
+        reportOpen = true
+        reportLoading = true
+        scope.launch {
+            report = try {
+                container.vapi.stocktakeReport(selectedWarehouseId).data
+            } catch (e: Exception) {
+                Toast.makeText(context, "Không tải được báo cáo: ${e.message}", Toast.LENGTH_SHORT).show()
+                null
+            }
+            reportLoading = false
         }
     }
 
@@ -287,6 +308,15 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Đã đếm: $countedN mặt hàng", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Box(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, AdminColors.Primary, RoundedCornerShape(8.dp))
+                    .clickable { openReport() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text("Xem báo cáo", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+            Spacer(Modifier.width(8.dp))
             val canSave = countedN > 0 && !saving
             Box(
                 Modifier.clip(RoundedCornerShape(8.dp))
@@ -318,6 +348,66 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
       historyVariant?.let { hv ->
           VariantHistoryDialog(variant = hv, onDismiss = { historyVariant = null })
       }
+      // Dialog báo cáo kiểm kho hôm nay.
+      if (reportOpen) StocktakeReportDialog(report, reportLoading, onDismiss = { reportOpen = false })
+    }
+}
+
+/** Danh sách sai lệch kiểm kho hôm nay (đã LƯU, dedupe lần đếm cuối, bỏ khớp). */
+@Composable
+private fun StocktakeReportDialog(report: StocktakeReportDto?, loading: Boolean, onDismiss: () -> Unit) {
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.fillMaxWidth(0.92f).heightIn(max = 600.dp).clip(RoundedCornerShape(16.dp))
+                .background(AdminColors.Card).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .clickable(enabled = false) {}.padding(16.dp),
+        ) {
+            Text("Báo cáo kiểm kho hôm nay", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            when {
+                loading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = AdminColors.Primary)
+                }
+                report == null -> Text("Không tải được báo cáo", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                else -> {
+                    Text(
+                        "${report.date} · ${report.summary.discrepancies} sai lệch / ${report.summary.counted} mặt hàng đã đếm",
+                        color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+                    )
+                    if (report.items.isEmpty()) {
+                        Text("Không có sai lệch trong ngày", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                    } else {
+                        LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(report.items) { it ->
+                                Column(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(AdminColors.Bg)
+                                        .border(1.dp, AdminColors.Border, RoundedCornerShape(10.dp)).padding(10.dp),
+                                ) {
+                                    Text(it.variantName, color = AdminColors.Text, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "Tồn HT ${trimZeros(it.systemQty)} → Đếm ${trimZeros(it.countedQty)} ${it.unit}",
+                                            color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f),
+                                        )
+                                        val neg = it.diff < 0
+                                        Text(
+                                            if (neg) "Thiếu ${trimZeros(abs(it.diff))} ${it.unit}" else "Dư ${trimZeros(it.diff)} ${it.unit}",
+                                            color = if (neg) AdminColors.Danger else AdminColors.Info, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Text(
+                "Đóng", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.End).clickable(onClick = onDismiss).padding(top = 12.dp, start = 16.dp, bottom = 4.dp),
+            )
+        }
     }
 }
 

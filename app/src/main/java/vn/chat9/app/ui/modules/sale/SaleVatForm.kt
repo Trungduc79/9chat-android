@@ -287,18 +287,24 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         cardShortages = try { container.vapi.vatStockCheck(id).data?.shortages ?: emptyList() } catch (_: Exception) { emptyList() }
     }
 
-    // Sửa ĐƠN GIÁ → lưu (debounce) + đồng bộ EI; KHÔNG đụng tồn. Giá thấp đã bị chặn ngay lúc
-    // rời ô nhập (cache giá vốn) nên tới đây giá luôn hợp lệ.
+    // Sửa ĐƠN GIÁ → lưu + đồng bộ EI; KHÔNG đụng tồn. Giá thấp đã bị chặn ngay lúc rời ô nhập
+    // (cache giá vốn) nên tới đây giá luôn hợp lệ.
     val priceKey = items.joinToString("|") { "${it.variantId}:${it.price}" }
-    LaunchedEffect(priceKey, priceType, currentOrderId) {
-        val id = currentOrderId ?: return@LaunchedEffect
-        if (!canEdit || items.isEmpty()) return@LaunchedEffect
-        delay(900)
+    var lastSavedKey by remember { mutableStateOf("") }   // trạng thái đã lưu → không lưu trùng
+
+    suspend fun autoSaveNow() {
+        val id = currentOrderId ?: return
+        val cust = selectedCustomer ?: return
+        if (!canEdit || items.isEmpty()) return
+        // Đọc items TẠI THỜI ĐIỂM CHẠY (không capture priceKey của recomposition cũ).
+        val key = "$priceType|" + items.joinToString("|") { "${it.variantId}:${it.unitId}:${it.qty}:${it.price}" }
+        if (key == lastSavedKey) return
+        lastSavedKey = key
         autoSaving = true
         try {
             container.vapi.updateOrder(id, CreateOrderRequest(
                 type = "sale", isInvoiceOnly = true, partyType = "customer",
-                partyId = selectedCustomer?.id ?: return@LaunchedEffect, status = "draft",
+                partyId = cust.id, status = "draft",
                 orderedAt = java.time.Instant.ofEpochMilli(orderDateMs).toString(),
                 reference = poNumber.trim().ifBlank { null },
                 items = items.filter { it.variantId != 0L && it.qty > 0 }
@@ -308,8 +314,16 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             if (linkedVat != null && linkedVat?.signed != true) {
                 try { container.vapi.updateVatDraft(id, VatDraftReq(priceType, true, selectedVatInfoId)) } catch (_: Exception) {}
             }
-        } catch (_: Exception) { /* im lặng — không spam khi gõ */
+        } catch (_: Exception) {
+            lastSavedKey = ""   // lưu hỏng → cho phép thử lại
         } finally { autoSaving = false }
+    }
+
+    // Lưới an toàn: có thay đổi mà chưa lưu (vd đổi đơn vị, xoá dòng) → lưu sau 900ms.
+    // Rời ô giá / SL thì đã gọi autoSaveNow() ngay, tới đây key trùng → bỏ qua.
+    LaunchedEffect(priceKey, priceType, currentOrderId) {
+        delay(900)
+        autoSaveNow()
     }
 
     // Load đơn existing / vừa tạo từ PO.
@@ -803,6 +817,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                         VatItemRow(it, focusCtx, scope, canEdit, displayPrice = displayPrice, pricePlaceholder = costPlaceholder(it),
                             onDelete = { items.removeAt(idx) },
                             onQtyChange = { q -> items[idx] = it.copy(qty = q) },
+                            onQtyCommit = { scope.launch { autoSaveNow() } },
                             onPriceChange = { p -> items[idx] = it.copy(price = p) },
                             // Rời ô giá → so NGAY với giá vốn cache. Bị chặn → trả giá cũ để ô hiển
                             // thị hoàn nguyên, không gửi giá xấu lên server.
@@ -816,7 +831,11 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                     ).show()
                                     items[idx] = it.copy(price = prev)
                                     prev
-                                } else newPrice
+                                } else {
+                                    items[idx] = it.copy(price = newPrice)
+                                    scope.launch { autoSaveNow() }   // hợp lệ → lưu ngay, không chờ debounce
+                                    newPrice
+                                }
                             },
                             onUnitChange = { u ->
                                 val oldU = it.units.firstOrNull { x -> x.id == it.unitId }
@@ -1283,6 +1302,7 @@ private val GOLD_VAT2 = Color(0xFFD4AF37)
 private fun VatItemRow(
     draft: OrderItemDraft, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, canEdit: Boolean, displayPrice: Double? = null,
     onDelete: () -> Unit, onQtyChange: (Double) -> Unit, onPriceChange: (Double) -> Unit, onUnitChange: (VariantUnitDto) -> Unit,
+    onQtyCommit: () -> Unit = {},   // rời ô SL → lưu ngay
     // Rời ô giá: (giá cũ, giá mới) → trả GIÁ ĐƯỢC CHẤP NHẬN. Bị chặn (giá < giá vốn + block_price)
     // → trả giá cũ, ô hiển thị hoàn nguyên theo.
     onPriceCommit: (prevPrice: Double, newPrice: Double) -> Double = { _, new -> new },
@@ -1321,7 +1341,10 @@ private fun VatItemRow(
                             textStyle = TextStyle(color = AdminColors.Text, fontSize = 15.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium),
                             cursorBrush = SolidColor(AdminColors.Primary),
                             modifier = Modifier.width(40.dp).centerOnFocus(focusCtx, scope, "vqty-${draft.variantId}-${draft.unitId}")
-                                .onFocusChanged { st -> if (st.isFocused) { qtyFocused = true; scope.launch { delay(60); qtyTfv = qtyTfv.copy(selection = TextRange(0, qtyTfv.text.length)) } } else qtyFocused = false },
+                                .onFocusChanged { st ->
+                                    if (st.isFocused) { qtyFocused = true; scope.launch { delay(60); qtyTfv = qtyTfv.copy(selection = TextRange(0, qtyTfv.text.length)) } }
+                                    else { qtyFocused = false; onQtyCommit() }
+                                },
                         )
                     }
                     Spacer(Modifier.weight(1f))

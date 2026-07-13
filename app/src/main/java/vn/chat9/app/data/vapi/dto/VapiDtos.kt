@@ -440,6 +440,26 @@ data class StocktakeRequest(
 )
 data class StocktakeResultDto(val count: Int = 0)
 
+// Báo cáo kiểm kho trong ngày (sai lệch, dedupe lần đếm cuối, bỏ khớp).
+data class StocktakeReportDto(
+    val date: String = "",
+    val summary: StocktakeReportSummary = StocktakeReportSummary(),
+    val items: List<StocktakeReportItemDto> = emptyList(),
+)
+data class StocktakeReportSummary(val counted: Int = 0, val discrepancies: Int = 0)
+data class StocktakeReportItemDto(
+    @SerializedName("variant_id") val variantId: Long = 0,
+    @SerializedName("product_name") val productName: String = "",
+    @SerializedName("variant_name") val variantName: String = "",
+    val sku: String? = null,
+    val unit: String = "",
+    @SerializedName("system_qty") val systemQty: Double = 0.0,
+    @SerializedName("counted_qty") val countedQty: Double = 0.0,
+    val diff: Double = 0.0,
+    @SerializedName("counted_at") val countedAt: String? = null,
+    val note: String? = null,
+)
+
 /** Vai trò + QUYỀN nhân viên vapi khớp theo SĐT (mở module 9chat). Phase 4: dùng
  *  `permissions` (code thật từ roles.permissions) trực tiếp, không map cứng. */
 data class StaffRolesDto(

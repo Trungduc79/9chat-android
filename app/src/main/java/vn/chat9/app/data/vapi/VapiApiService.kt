@@ -29,6 +29,7 @@ import vn.chat9.app.data.vapi.dto.PaymentCandidatesDto
 import vn.chat9.app.data.vapi.dto.ProductHistoryDto
 import vn.chat9.app.data.vapi.dto.StaffRolesDto
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
+import vn.chat9.app.data.vapi.dto.StocktakeReportDto
 import vn.chat9.app.data.vapi.dto.StocktakeResultDto
 import vn.chat9.app.data.vapi.dto.CreateOrderItem
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
@@ -226,6 +227,13 @@ interface VapiApiService {
     /** Lưu kiểm kho: áp số đếm thực tế cho 1 kho (điều chỉnh tồn + ghi lịch sử). */
     @POST("v1/stocktake")
     suspend fun submitStocktake(@Body req: StocktakeRequest): VapiResponse<StocktakeResultDto>
+
+    /** Báo cáo kiểm kho trong ngày (sai lệch, dedupe lần đếm cuối, bỏ khớp). date=null → hôm nay. */
+    @GET("v1/stocktake/report")
+    suspend fun stocktakeReport(
+        @Query("warehouse_id") warehouseId: Long?,
+        @Query("date") date: String? = null,
+    ): VapiResponse<StocktakeReportDto>
 
     /** Vai trò nhân viên khớp theo SĐT — mở module 9chat theo vai trò. */
     @GET("v1/staff/roles-by-phone")
