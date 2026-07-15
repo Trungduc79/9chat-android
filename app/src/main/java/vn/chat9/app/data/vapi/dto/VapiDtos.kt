@@ -440,6 +440,80 @@ data class StocktakeRequest(
 )
 data class StocktakeResultDto(val count: Int = 0)
 
+// ===== Phiên kiểm kê (pending + khoá xuất + chốt) =====
+data class StocktakeSessionDto(
+    val id: Long = 0,
+    @SerializedName("warehouse_id") val warehouseId: Long? = null,
+    val status: String = "open",              // open | closed | discarded
+    val note: String? = null,
+    val summary: StocktakeSessionSummary = StocktakeSessionSummary(),
+    val lines: List<StocktakeSessionLineDto> = emptyList(),
+    val analysis: List<StocktakeProductAnalysisDto> = emptyList(),   // engine chẩn đoán (P1)
+)
+data class StocktakeProductAnalysisDto(
+    @SerializedName("product_id") val productId: Long? = null,
+    @SerializedName("product_name") val productName: String = "",
+    val verdict: String = "",
+    val swaps: List<StocktakeSwapDto> = emptyList(),
+    val residuals: List<StocktakeResidualDto> = emptyList(),
+)
+data class StocktakeSwapDto(
+    @SerializedName("shortage_variant_id") val shortageVariantId: Long = 0,   // GIẢM
+    @SerializedName("shortage_name") val shortageName: String = "",
+    @SerializedName("surplus_variant_id") val surplusVariantId: Long = 0,     // TĂNG
+    @SerializedName("surplus_name") val surplusName: String = "",
+    @SerializedName("qty_base") val qtyBase: Double = 0.0,
+    val qty: Double = 0.0,
+    val unit: String = "",
+    val confidence: String = "medium",
+)
+data class StocktakeSwapReq(
+    @SerializedName("shortage_variant_id") val shortageVariantId: Long,
+    @SerializedName("surplus_variant_id") val surplusVariantId: Long,
+    @SerializedName("qty_base") val qtyBase: Double,
+)
+data class StocktakeResidualDto(
+    @SerializedName("variant_id") val variantId: Long = 0,
+    val name: String = "",
+    val kind: String = "shortage",            // shortage | surplus
+    val qty: Double = 0.0,
+    val unit: String = "",
+    val suggestion: String = "",
+    val candidates: List<StocktakeCandidateDto> = emptyList(),
+)
+data class StocktakeCandidateDto(val id: Long = 0, val name: String = "")
+data class StocktakeSessionSummary(
+    val total: Int = 0, val matched: Int = 0, val pending: Int = 0, val resolved: Int = 0,
+)
+data class StocktakeSessionLineDto(
+    val id: Long = 0,
+    @SerializedName("variant_id") val variantId: Long = 0,
+    @SerializedName("product_id") val productId: Long? = null,
+    @SerializedName("product_name") val productName: String? = null,
+    @SerializedName("variant_name") val variantName: String = "",
+    val sku: String? = null,
+    @SerializedName("image_url") val imageUrl: String? = null,
+    val unit: String = "",
+    @SerializedName("unit_id") val unitId: Long? = null,
+    @SerializedName("system_qty") val systemQty: Double = 0.0,
+    @SerializedName("counted_qty") val countedQty: Double = 0.0,
+    val diff: Double = 0.0,
+    val status: String = "pending",           // matched | pending | resolved
+    @SerializedName("resolution_type") val resolutionType: String? = null,
+    @SerializedName("resolution_meta") val resolutionMeta: Map<String, Any?>? = null,
+)
+data class StocktakeResolveReq(
+    val type: String = "manual",              // manual | writeoff | order | purchase
+    val reason: String? = null,
+    @SerializedName("user_id") val userId: Long? = null,
+    @SerializedName("unit_id") val unitId: Long? = null,        // đơn vị của qty allocations
+    val allocations: List<StocktakeAllocReq>? = null,          // order/purchase: chia nhiều KH/NCC
+)
+data class StocktakeAllocReq(
+    @SerializedName("party_id") val partyId: Long,             // order→customer | purchase→supplier
+    val qty: Double,
+)
+
 // Báo cáo kiểm kho trong ngày (sai lệch, dedupe lần đếm cuối, bỏ khớp).
 data class StocktakeReportDto(
     val date: String = "",
@@ -723,6 +797,16 @@ data class VatDraftReq(
 )
 data class VatIncludePhoneReq(val include: Boolean)
 data class SyncEiReq(val from: String? = null, val to: String? = null)
+/** Gửi email HĐ đã ký cho khách; email rỗng → BE tự resolve; send_once=false → lưu email mặc định. */
+data class SendVatEmailReq(
+    val email: String? = null,
+    @SerializedName("send_once") val sendOnce: Boolean? = null,
+)
+data class SendVatEmailRes(
+    val id: Long = 0,
+    val queued: Boolean = false,
+    val recipient: String? = null,
+)
 /** Thêm đơn vị mua (vat_info) cho khách. */
 data class AttachVatInfoReq(
     val type: String = "business",                                   // business | personal

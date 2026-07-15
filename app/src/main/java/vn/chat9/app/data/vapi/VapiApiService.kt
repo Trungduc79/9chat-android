@@ -27,10 +27,15 @@ import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.PayExpenseRequest
 import vn.chat9.app.data.vapi.dto.PaymentCandidatesDto
 import vn.chat9.app.data.vapi.dto.ProductHistoryDto
+import vn.chat9.app.data.vapi.dto.SendVatEmailReq
+import vn.chat9.app.data.vapi.dto.SendVatEmailRes
 import vn.chat9.app.data.vapi.dto.StaffRolesDto
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
 import vn.chat9.app.data.vapi.dto.StocktakeReportDto
 import vn.chat9.app.data.vapi.dto.StocktakeResultDto
+import vn.chat9.app.data.vapi.dto.StocktakeResolveReq
+import vn.chat9.app.data.vapi.dto.StocktakeSessionDto
+import vn.chat9.app.data.vapi.dto.StocktakeSwapReq
 import vn.chat9.app.data.vapi.dto.CreateOrderItem
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
 import vn.chat9.app.data.vapi.dto.AttachVatInfoReq
@@ -235,6 +240,51 @@ interface VapiApiService {
         @Query("date") date: String? = null,
     ): VapiResponse<StocktakeReportDto>
 
+    // ===== Phiên kiểm kê (pending + khoá xuất + chốt) =====
+    /** Mở phiên: khớp commit ngay, lệch → pending (khoá xuất). */
+    @POST("v1/stocktake/sessions")
+    suspend fun openStocktakeSession(@Body req: StocktakeRequest): VapiResponse<StocktakeSessionDto>
+
+    /** Phiên đang MỞ của 1 kho (data=null nếu không có). */
+    @GET("v1/stocktake/sessions/open")
+    suspend fun openStocktakeSessionForWarehouse(
+        @Query("warehouse_id") warehouseId: Long?,
+    ): VapiResponse<StocktakeSessionDto?>
+
+    /** Chi tiết phiên. */
+    @GET("v1/stocktake/sessions/{id}")
+    suspend fun getStocktakeSession(@Path("id") id: Long): VapiResponse<StocktakeSessionDto>
+
+    /** Xử lý 1 dòng lệch (P0: manual — điều chỉnh có lý do). */
+    @POST("v1/stocktake/sessions/{sessionId}/lines/{lineId}/resolve")
+    suspend fun resolveStocktakeLine(
+        @Path("sessionId") sessionId: Long,
+        @Path("lineId") lineId: Long,
+        @Body req: StocktakeResolveReq,
+    ): VapiResponse<StocktakeSessionDto>
+
+    /** Bỏ xử lý dòng → về pending. */
+    @DELETE("v1/stocktake/sessions/{sessionId}/lines/{lineId}/resolve")
+    suspend fun unresolveStocktakeLine(
+        @Path("sessionId") sessionId: Long,
+        @Path("lineId") lineId: Long,
+    ): VapiResponse<StocktakeSessionDto>
+
+    /** Ghép chuyển đổi biến thể (cặp đối xứng, 1 chạm) → resolve cả 2 dòng. */
+    @POST("v1/stocktake/sessions/{id}/swap")
+    suspend fun swapStocktakeSession(
+        @Path("id") id: Long,
+        @Body req: StocktakeSwapReq,
+    ): VapiResponse<StocktakeSessionDto>
+
+    /** Chốt phiên (guard hết pending → áp tồn + gỡ khoá). */
+    @POST("v1/stocktake/sessions/{id}/close")
+    suspend fun closeStocktakeSession(@Path("id") id: Long): VapiResponse<StocktakeSessionDto>
+
+    /** Huỷ phiên (gỡ khoá, không đụng tồn). BE trả {id,status} → map StocktakeSessionDto (id/status). */
+    @POST("v1/stocktake/sessions/{id}/discard")
+    suspend fun discardStocktakeSession(@Path("id") id: Long): VapiResponse<StocktakeSessionDto?>
+
     /** Vai trò nhân viên khớp theo SĐT — mở module 9chat theo vai trò. */
     @GET("v1/staff/roles-by-phone")
     suspend fun staffRolesByPhone(@Query("phone") phone: String): VapiResponse<StaffRolesDto>
@@ -361,6 +411,13 @@ interface VapiApiService {
     /** Ảnh PNG HĐ đã render trên EI (binary) — xem trực tiếp HĐ trên EI. */
     @GET("v1/vat-output-invoices/{id}/preview-image")
     suspend fun vatOutputPreviewImage(@Path("id") id: Long): okhttp3.ResponseBody
+
+    /** Gửi email HĐ (đã ký) cho khách. Body rỗng → BE tự resolve; 422 NO_RECIPIENT_EMAIL nếu KH chưa có email. */
+    @POST("v1/vat-output-invoices/{id}/send-email")
+    suspend fun sendVatOutputEmail(
+        @Path("id") id: Long,
+        @Body body: SendVatEmailReq = SendVatEmailReq(),
+    ): VapiResponse<SendVatEmailRes>
 
     @POST("v1/vat-output-invoices/sync-easyinvoice")
     suspend fun syncEasyInvoice(@Body body: SyncEiReq = SyncEiReq()): VapiResponse<Unit>

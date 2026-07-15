@@ -182,6 +182,12 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
     var headerBusy by remember { mutableStateOf(false) }
     var confirmDeleteVat by remember { mutableStateOf(false) }
 
+    // Gửi email HĐ cho khách (chỉ HĐ đã ký + cấp mã CQT — có PDF chính thức).
+    var recipientDialogOpen by remember { mutableStateOf(false) }   // KH chưa có email → popup nhập
+    var recipientEmail by remember { mutableStateOf("") }
+    var recipientSendOnce by remember { mutableStateOf(false) }     // false = lưu email làm mặc định của khách
+    var recipientSending by remember { mutableStateOf(false) }
+
     // Menu 3 chấm thẻ HĐ VAT (HĐ nháp EI chưa ký): đổi đơn vị mua / tên người mua / SĐT / hình thức giá.
     var vatMenuOpen by remember { mutableStateOf(false) }
     var updatingDraft by remember { mutableStateOf(false) }
@@ -627,6 +633,51 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         }
     }
 
+    // Gửi email HĐ cho khách. Không truyền email → BE tự resolve; KH chưa có email → 422
+    // NO_RECIPIENT_EMAIL → mở popup nhập email người nhận.
+    fun doSendEmail() {
+        val inv = linkedVat ?: return
+        if (!signed) { Toast.makeText(context, "HĐ chưa ký + cấp mã CQT — chưa thể gửi email cho khách.", Toast.LENGTH_LONG).show(); return }
+        if (headerBusy) return
+        scope.launch {
+            headerBusy = true
+            try {
+                container.vapi.sendVatOutputEmail(inv.id)
+                Toast.makeText(context, "Đã gửi email HĐ — kiểm tra hộp thư người nhận sau vài phút.", Toast.LENGTH_LONG).show()
+            } catch (e: retrofit2.HttpException) {
+                val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                val json = try { org.json.JSONObject(body ?: "") } catch (_: Exception) { null }
+                if (json?.optString("code") == "NO_RECIPIENT_EMAIL") {
+                    recipientEmail = ""; recipientSendOnce = false; recipientDialogOpen = true
+                } else {
+                    Toast.makeText(context, json?.optString("error").orEmpty().ifBlank { "Gửi email thất bại (HTTP ${e.code()})" }, Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gửi email thất bại: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            } finally { headerBusy = false }
+        }
+    }
+    // Gửi email với địa chỉ nhập tay; send_once=false → lưu làm email HĐ mặc định của khách.
+    fun submitRecipientEmail() {
+        val inv = linkedVat ?: return
+        val email = recipientEmail.trim()
+        if (email.isBlank()) { Toast.makeText(context, "Nhập email người nhận", Toast.LENGTH_SHORT).show(); return }
+        scope.launch {
+            recipientSending = true
+            try {
+                container.vapi.sendVatOutputEmail(inv.id, SendVatEmailReq(email = email, sendOnce = recipientSendOnce))
+                Toast.makeText(context, "Đã gửi email HĐ — kiểm tra hộp thư người nhận sau vài phút.", Toast.LENGTH_LONG).show()
+                recipientDialogOpen = false
+            } catch (e: retrofit2.HttpException) {
+                val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                val err = try { org.json.JSONObject(body ?: "").optString("error") } catch (_: Exception) { null }
+                Toast.makeText(context, err.orEmpty().ifBlank { "Gửi email thất bại (HTTP ${e.code()})" }, Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gửi email thất bại: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            } finally { recipientSending = false }
+        }
+    }
+
     // Upload PO → tạo đơn nháp → load.
     val poLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -713,6 +764,11 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                     DropdownMenuItem(text = { Text("Sao chép → đơn bán thường (nháp)", color = AdminColors.Text) }, onClick = { headerMenuOpen = false; doCopyToNormal(false) })
                                     HorizontalDivider(color = AdminColors.Border)
                                     DropdownMenuItem(text = { Text("Sao chép → đơn bán thường + duyệt", color = AdminColors.Text) }, onClick = { headerMenuOpen = false; doCopyToNormal(true) })
+                                    // Gửi email HĐ cho khách — CHỈ khi HĐ đã ký + có mã CQT (có PDF chính thức).
+                                    if (signed) {
+                                        HorizontalDivider(color = AdminColors.Border)
+                                        DropdownMenuItem(text = { Text("Gửi email cho khách", color = AdminColors.Text) }, onClick = { headerMenuOpen = false; doSendEmail() })
+                                    }
                                     if (!signed) {
                                         HorizontalDivider(color = AdminColors.Border)
                                         DropdownMenuItem(text = { Text("Xoá HĐ này", color = AdminColors.Danger) }, onClick = { headerMenuOpen = false; confirmDeleteVat = true })
@@ -1009,6 +1065,13 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             onSave = { buyerNameOpen = false; buyerName = it; onUpdateDraft() },
             onClose = { buyerNameOpen = false },
         )
+        if (recipientDialogOpen) VatRecipientEmailOverlay(
+            email = recipientEmail, onEmailChange = { recipientEmail = it },
+            sendOnce = recipientSendOnce, onSendOnceChange = { recipientSendOnce = it },
+            sending = recipientSending,
+            onSend = { submitRecipientEmail() },
+            onClose = { if (!recipientSending) recipientDialogOpen = false },
+        )
         if (pricePickerOpen) VatPricePickerOverlay(
             current = priceType,
             onPick = { pricePickerOpen = false; priceType = it; onUpdateDraft() },
@@ -1100,6 +1163,49 @@ private fun VatBuyerNameOverlay(initial: String, onSave: (String) -> Unit, onClo
                     modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).clickable { onClose() }.padding(vertical = 10.dp))
                 Text("Lưu", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Primary).clickable { onSave(text) }.padding(vertical = 10.dp))
+            }
+        }
+    }
+}
+
+/** Overlay nhập email người nhận khi KH chưa có email trong hệ thống (gửi HĐ đã ký). */
+@Composable
+private fun VatRecipientEmailOverlay(
+    email: String, onEmailChange: (String) -> Unit,
+    sendOnce: Boolean, onSendOnceChange: (Boolean) -> Unit,
+    sending: Boolean, onSend: () -> Unit, onClose: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onClose)) {
+        Column(
+            Modifier.fillMaxWidth().align(Alignment.Center).padding(24.dp).clip(RoundedCornerShape(16.dp))
+                .background(AdminColors.Card).border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                .padding(16.dp).clickable(enabled = false) {},
+        ) {
+            Text("Email người nhận", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "Khách hàng này chưa có email trong hệ thống. Nhập email để gửi HĐ — mặc định email sẽ được lưu làm email hoá đơn mặc định của khách.",
+                color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp),
+            )
+            Box(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 10.dp)) {
+                BasicTextField(
+                    value = email, onValueChange = onEmailChange, singleLine = true, enabled = !sending,
+                    textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp), cursorBrush = SolidColor(AdminColors.Primary),
+                    decorationBox = { inner -> if (email.isEmpty()) Text("name@example.com", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 12.dp).clickable(enabled = !sending) { onSendOnceChange(!sendOnce) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(if (sendOnce) "☑" else "☐", color = if (sendOnce) AdminColors.Primary else AdminColors.TextMuted, fontSize = 16.sp)
+                Text("Chỉ gửi 1 lần (không lưu vào liên hệ)", color = AdminColors.Text, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Huỷ", color = AdminColors.TextMuted, fontSize = 14.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).clickable(enabled = !sending) { onClose() }.padding(vertical = 10.dp))
+                Text(if (sending) "Đang gửi…" else "Gửi", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(AdminColors.Primary).clickable(enabled = !sending) { onSend() }.padding(vertical = 10.dp))
             }
         }
     }
