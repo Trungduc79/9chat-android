@@ -1,6 +1,8 @@
 package vn.chat9.app.ui.modules.sale
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -26,8 +28,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
+import vn.chat9.app.ui.modules.warehouse.ScanPayFlow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
@@ -38,7 +43,11 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +65,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -91,6 +101,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.di.AppContainer
+import vn.chat9.app.data.vapi.dto.ShipPayablePartDto
+import vn.chat9.app.data.vapi.dto.ShipPayablesDto
 import vn.chat9.app.data.vapi.dto.CreateOrderItem
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
 import vn.chat9.app.data.vapi.dto.CustomerDto
@@ -115,7 +127,9 @@ private const val DROPSHIP_WH = -999L
 
 private val moneyFmt: NumberFormat = NumberFormat.getNumberInstance(Locale("vi"))
 private fun fmtMoney(n: Double): String = moneyFmt.format(Math.round(n))
-private fun parseMoney(s: String): Double = s.filter { it.isDigit() }.toDoubleOrNull() ?: 0.0
+// Dùng CHUNG expandMoneyShorthand cho cả nhập lẫn lưu/tổng/QR → 1 hành vi tiền duy nhất
+// (trước đây parseMoney chỉ lọc chữ số, lệch với ô nhập nếu state là chuỗi thô).
+private fun parseMoney(s: String): Double = expandMoneyShorthand(s) ?: 0.0
 private fun trimZeros(n: Double): String = if (n == Math.floor(n)) n.toLong().toString() else n.toString()
 
 /**
@@ -160,7 +174,7 @@ internal fun variantDisplay(v: VariantSearchDto, productName: String): String {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditAnyStatus: Boolean = false, onDebtLockedChange: (Boolean) -> Unit = {}, onDone: () -> Unit) {
+fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditAnyStatus: Boolean = false, onDebtLockedChange: (Boolean) -> Unit = {}, onStatusChange: (String?) -> Unit = {}, onSend: (suspend () -> Unit)? = null, onDone: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -196,10 +210,46 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     // Edit/view existing order: load khi có orderId. canEdit = tạo mới HOẶC draft; allowEditAnyStatus
     // (dialog công nợ) → cho sửa mọi tình trạng trừ đã huỷ.
     var existingStatus by remember { mutableStateOf<String?>(null) }
+    var orderCode by remember { mutableStateOf("") }          // mã đơn (ORD-XXXXXX) → nội dung QR
+    var qrReceiveOpen by remember { mutableStateOf(false) }   // dialog QR thanh toán
     // Cờ khoá đơn non-draft (BE show): đã chốt công nợ (badge) + khoá riêng ship KH/KHO.
     var orderDebtCalc by remember { mutableStateOf<String?>(null) }
     var shipCompanyLocked by remember { mutableStateOf(false) }
     var shipCustomerBankLocked by remember { mutableStateOf(false) }
+
+    // ===== Quét QR trả phí ship (mirror /sale web + /kho) =====
+    // Một luồng dùng chung cho 2 dòng phí, nhưng khoản chi đứng sau khác nhau và
+    // tự đối soát về HAI TRỤC khác nhau (BE phân qua buildSettleLine):
+    //   ship KH  → khoản ứng SHIP_ADV → customer_debt (phải gọi API tra theo khách)
+    //   ship KHO → chi phí SHIP_EXP  → expense (id sẵn ở meta.ship)
+    var scanPayOpen by remember { mutableStateOf(false) }
+    var shipQrIsCompany by remember { mutableStateOf(false) }
+    var shipQrExpenseId by remember { mutableStateOf<Long?>(null) }
+
+    // Tình trạng 2 khoản ship — HỎI BE, không tự suy (xem /orders/{id}/ship-payables).
+    // null = chưa hỏi xong → chặn, vì chưa biết mà vẫn mở là mở đường trả trùng.
+    var shipPayables by remember { mutableStateOf<ShipPayablesDto?>(null) }
+    // Đã giao/nhận xong chưa — ĐIỀU KIỆN BẮT BUỘC để quét mã trả ship: khoản chi
+    // (SHIP_ADV lẫn SHIP_EXP) chỉ được BE tạo lúc fulfill. Đơn nhập kết thúc ở
+    // 'received', đơn bán ở 'delivered'.
+    val isDelivered = existingStatus in listOf("delivered", "received", "completed")
+
+    /**
+     * Chốt chặn TIỀN — mọi điều kiện do BE quyết, ở đây chỉ hiện lý do BE trả về.
+     * Chưa hỏi xong (null) thì CHẶN: chưa biết mà vẫn mở là mở đường trả trùng.
+     *
+     * @return true = chặn.
+     */
+    fun blockShipQr(part: ShipPayablePartDto?): Boolean {
+        if (part == null) {
+            Toast.makeText(context, "Đang kiểm tra tình trạng thanh toán, thử lại sau giây lát", Toast.LENGTH_SHORT).show()
+            return true
+        }
+        if (part.payable) return false
+        Toast.makeText(context, part.reason ?: "Khoản này không trả được", Toast.LENGTH_LONG).show()
+        return true
+    }
+
     // Đơn ĐÃ CHỐT CÔNG NỢ (debt_calc != null) → KHÓA CỨNG, chỉ xem (BE cũng 409 ORDER_LOCKED).
     val debtLocked = orderDebtCalc != null
     val canEdit = !debtLocked && (currentOrderId == null || existingStatus == "draft" ||
@@ -208,6 +258,21 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     val editingNonDraft = allowEditAnyStatus && existingStatus != null && existingStatus != "draft" && existingStatus != "cancelled"
     // Ảnh đính kèm đơn (ảnh xác nhận giao/nhận) + snapshot item để diff khi sửa non-draft.
     var photos by remember { mutableStateOf<List<String>>(emptyList()) }
+    var photoUploading by remember { mutableStateOf(false) }
+    // Đính ảnh cho đơn đã lưu (đặc biệt đơn đã giao chưa có ảnh) — upload rồi prepend.
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        val oid = currentOrderId ?: return@rememberLauncherForActivityResult
+        if (uris.isNotEmpty()) scope.launch {
+            photoUploading = true
+            for (uri in uris) {
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null) container.warehouseRepo.uploadPhoto(oid, bytes)?.url?.let { photos = listOf(it) + photos }
+                } catch (_: Exception) {}
+            }
+            photoUploading = false
+        }
+    }
     var viewerUrl by remember { mutableStateOf<String?>(null) }   // ảnh đang preview (zoom/pan)
     var deliveryDate by remember { mutableStateOf<String?>(null) }   // ngày giao (completed_at) — caption preview
     val originalItems = remember { mutableStateListOf<OrigItemSnap>() }
@@ -225,6 +290,10 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     val density = LocalDensity.current
     val view = LocalView.current
     val scrollState = rememberScrollState()
+    // Vuốt/cuộn NGOÀI vùng list (cuộn form) → bỏ focus ô "+ Sản phẩm" → tắt list + bàn phím.
+    LaunchedEffect(scrollState.isScrollInProgress) {
+        if (scrollState.isScrollInProgress) focusManager.clearFocus()
+    }
     val imeBottomPx = WindowInsets.ime.getBottom(density).toFloat()
     val statusBarPx = WindowInsets.statusBars.getTop(density).toFloat()
     val screenHeightPx = view.rootView.height.toFloat()
@@ -256,10 +325,14 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
         try {
             val o = container.vapi.getOrder(oid).data ?: return@LaunchedEffect
             existingStatus = o.status
+            orderCode = o.code
             orderDebtCalc = o.debtCalc
+            onStatusChange(o.status)                  // badge trạng thái đơn ở header (SaleScreen)
             onDebtLockedChange(o.debtCalc != null)   // badge "Đã chốt công nợ" hiển thị ở header (SaleScreen)
             shipCompanyLocked = o.shipCompanyLocked
             shipCustomerBankLocked = o.shipCustomerBankLocked
+            // Hỏi ngay khi nạp đơn để nút QR hiện đúng trạng thái, không đợi bấm mới báo.
+            shipPayables = runCatching { container.vapi.shipPayables(oid).data }.getOrNull()
             deliveryDate = o.completedAt
             o.party?.let { p ->
                 // Đơn nhập: hiển thị tên rút gọn NCC; đơn bán: tên KH.
@@ -415,6 +488,19 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             autosaveDraft(v.id)
         }
     }
+    // Tap trong dropdown inline: chưa có → thêm; đã có → bỏ chọn (xoá khỏi đơn + xoá item server nếu nháp).
+    fun toggleSaleVariant(v: VariantSearchDto) {
+        val idx = items.indexOfFirst { it.variantId == v.id }
+        if (idx >= 0) {
+            val removed = items[idx]
+            items.removeAt(idx)
+            val oid = currentOrderId
+            if (autosaveEnabled && oid != null && removed.id != null) scope.launch {
+                try { container.vapi.deleteOrderItem(oid, removed.id!!) }
+                catch (e: Exception) { Toast.makeText(context, "Xoá item thất bại: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        } else addVariant(v)
+    }
 
     // Box wrapper: form + pickers nằm CHUNG 1 Box → picker z-stack đè lên form
     // (overlay), không bị đẩy ra ngoài khi SaleOrderForm đặt trong Column của caller.
@@ -539,24 +625,33 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                // Footer: Thêm SP (trái, chỉ canEdit) + Tổng (phải)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (canEdit) OutlinedButton(
-                        onClick = {
-                            if (selectedCustomer == null) Toast.makeText(context, "Chọn khách hàng trước", Toast.LENGTH_SHORT).show()
-                            // Giữ query + productId lần tìm trước → mở lại hiện đúng list đã tìm.
-                            else productPickerOpen = true
-                        },
-                        modifier = Modifier.height(32.dp),                         // -20% so default 40dp
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    ) { Text("+ Thêm SP", color = AdminColors.Primary, fontSize = 13.sp) }
+                val total = items.sumOf { it.qty * it.price }
+                val totalQty = items.sumOf { it.qty }
+                // Dòng tổng (border-top xám): Tổng SL (căn cột SL: lề 67dp + ô 40dp) + Tổng tiền hàng.
+                HorizontalDivider(color = AdminColors.Border)
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(67.dp), contentAlignment = Alignment.CenterEnd) {
+                        Text("Tổng SL:", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
+                    }
+                    Box(Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+                        Text(trimZeros(totalQty), color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    }
                     Spacer(Modifier.weight(1f))
-                    val total = items.sumOf { it.qty * it.price }
                     Text("Tổng tiền hàng ", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
-                    Text("(1)", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
                     Text(": ", color = AdminColors.TextMuted, fontSize = 13.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
                     Text(fmtMoney(total), color = AdminColors.Primary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
+                }
+                // "+ Sản phẩm" ở DÒNG RIÊNG dưới cùng, full width (col-12).
+                if (canEdit) {
+                    Spacer(Modifier.height(8.dp))
+                    VariantSearchInline(
+                        warehouseId = selectedWarehouseId,
+                        selectedIds = items.map { it.variantId }.toSet(),
+                        onToggle = { v -> toggleSaleVariant(v) },
+                        enabled = selectedCustomer != null,
+                        onBlocked = { Toast.makeText(context, "Chọn $partyWord trước", Toast.LENGTH_SHORT).show() },
+                    )
                 }
             }
 
@@ -565,10 +660,37 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             Spacer(Modifier.height(12.dp))
             Card("", vPadding = 6.dp) {
                 // Ship KH/KHO khoá riêng khi BE báo đã báo-chi / ứng CK (dù đơn cho sửa).
-                ShipRow("Phí ship KH", shipCustomer, focusCtx, scope, canEdit && !shipCustomerBankLocked, marker = "(2)", locked = shipCustomerBankLocked) { shipCustomer = it }
-                ShipRow("Phí ship KHO", shipCompany, focusCtx, scope, canEdit && !shipCompanyLocked, locked = shipCompanyLocked) { shipCompany = it }
-                ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit, marker = "(3)") { codAmount = it }
-                ShipRow("Giảm cả đơn", discount, focusCtx, scope, canEdit, marker = "(4)") { discount = it }
+                ShipRow(
+                    "Phí ship KH", shipCustomer, focusCtx, scope,
+                    canEdit && !shipCustomerBankLocked, locked = shipCustomerBankLocked,
+                    onQrClick = {
+                        // expense_id lấy từ BE luôn — không phải tự tra danh sách.
+                        if (!blockShipQr(shipPayables?.customer)) {
+                            shipQrIsCompany = false
+                            shipQrExpenseId = shipPayables?.customer?.expenseId
+                            scanPayOpen = true
+                        }
+                    },
+                    qrEnabled = shipPayables?.customer?.payable == true,
+                    paid = shipPayables?.customer?.paid == true,
+                    paidTxCode = shipPayables?.customer?.paidTxCode,
+                ) { shipCustomer = it }
+                ShipRow(
+                    "Phí ship KHO", shipCompany, focusCtx, scope,
+                    canEdit && !shipCompanyLocked, locked = shipCompanyLocked,
+                    onQrClick = {
+                        if (!blockShipQr(shipPayables?.company)) {
+                            shipQrIsCompany = true
+                            shipQrExpenseId = shipPayables?.company?.expenseId
+                            scanPayOpen = true
+                        }
+                    },
+                    qrEnabled = shipPayables?.company?.payable == true,
+                    paid = shipPayables?.company?.paid == true,
+                    paidTxCode = shipPayables?.company?.paidTxCode,
+                ) { shipCompany = it }
+                ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit) { codAmount = it }
+                ShipRow("Giảm cả đơn", discount, focusCtx, scope, canEdit) { discount = it }
                 // Lý do giảm — chỉ hiện khi có giảm (>0); bỏ trống → BE mặc định "Giảm cả đơn".
                 if (parseMoney(discount) > 0) {
                     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -590,22 +712,34 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                         )
                     }
                 }
-                // Tổng cộng = tổng tiền hàng + ship KH - thu hộ - giảm cả đơn
-                val grandTotal = items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount) - parseMoney(discount)
-                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(0.56f), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Tổng cộng ", color = AdminColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        Text("(1) + (2) - (3) - (4)", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, maxLines = 1, softWrap = false)
-                    }
-                    Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
-                    Spacer(Modifier.width(6.dp))
-                    Row(Modifier.weight(0.44f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
-                        Text(fmtMoney(grandTotal), color = AdminColors.Primary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                        Text(" đ", color = Color(0xFF999900), fontSize = 11.sp)
+            }
+            }   // /if (!isPurchase) — card ship/COD
+
+            // ===== Thẻ Tổng dư nợ + QR thanh toán (tách biệt dưới thẻ phí ship) =====
+            // Tổng dư nợ = tiền hàng + ship KH − thu hộ − giảm cả đơn. Icon QR canh giữa
+            // (cột dấu ":") → mở dialog QR thanh toán cho đơn (chỉ đơn bán đã lưu có khách).
+            if (!isPurchase && currentOrderId != null && selectedCustomer != null) {
+                Spacer(Modifier.height(12.dp))
+                val orderDebt = items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount) - parseMoney(discount)
+                Card("", vPadding = 8.dp) {
+                    // 2 nửa bằng nhau → icon QR ở cột giữa CANH GIỮA (thẳng hàng dấu ":" thẻ trên).
+                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Tổng dư nợ", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.QrCode2,
+                                contentDescription = "Tạo QR thanh toán",
+                                tint = AdminColors.Primary,
+                                modifier = Modifier.size(30.dp).clickable { qrReceiveOpen = true },
+                            )
+                        }
+                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                            Text(fmtMoney(orderDebt), color = AdminColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                            Text(" đ", color = AdminColors.TextMuted, fontSize = 11.sp)
+                        }
                     }
                 }
             }
-            }   // /if (!isPurchase) — card ship/COD
 
             Spacer(Modifier.height(12.dp))
 
@@ -626,12 +760,27 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                 )
             }
 
-            // ===== Ảnh đính kèm đơn (ảnh xác nhận giao/nhận) — chỉ hiện khi có =====
-            if (photos.isNotEmpty()) {
+            // ===== Ảnh đính kèm đơn (ảnh xác nhận giao/nhận) =====
+            // Hiện khi có ảnh HOẶC đơn đã giao (để đính bổ sung cho đơn đã giao chưa có ảnh).
+            val isFulfilled = existingStatus == "delivered" || existingStatus == "completed"
+            if (photos.isNotEmpty() || (isFulfilled && currentOrderId != null)) {
                 Spacer(Modifier.height(12.dp))
-                Text("Ảnh đính kèm (${photos.size})", color = AdminColors.TextMuted, fontSize = 12.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Ảnh đính kèm (${photos.size})", color = AdminColors.TextMuted, fontSize = 12.sp)
+                    if (currentOrderId != null) Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                            .clickable(enabled = !photoUploading) { photoPicker.launch("image/*") }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        if (photoUploading) CircularProgressIndicator(Modifier.size(14.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
+                        else Text("+ Thêm ảnh", color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (photos.isEmpty()) {
+                    Text("Chưa có ảnh — nhấn “Thêm ảnh” để đính.", color = AdminColors.TextMuted, fontSize = 12.sp)
+                } else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     photos.forEach { url ->
                         AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)).clickable { viewerUrl = url })
                     }
@@ -644,14 +793,29 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             // Sửa đơn ĐÃ non-draft (dialog công nợ) → 1 nút "Lưu" (giữ tình trạng, per-item).
             // Tạo mới / draft → Lưu nháp | Xác nhận.
             if (canEdit && editingNonDraft) {
-                Button(
-                    onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), parseMoney(discount), discountReason, existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone, onDraftSaved) { saving = it } },
-                    enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                    else Text("Lưu")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { submit(scope, container, currentOrderId, userId, selectedCustomer, selectedWarehouseId, isPurchase, isDropship, dropshipCustomer?.id, orderDateMs, items, notes, parseMoney(shipCustomer), parseMoney(shipCompany), parseMoney(codAmount), parseMoney(discount), discountReason, existingStatus ?: "confirmed", true, originalItems.toList(), context, onDone, onDraftSaved) { saving = it } },
+                        enabled = !saving && selectedCustomer != null && items.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary),
+                        modifier = if (onSend != null) Modifier.weight(0.8f) else Modifier.fillMaxWidth(),
+                    ) {
+                        if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Text("Lưu")
+                    }
+                    // Nút Send "Gửi đơn" (chỉ đơn bán) — tạo ảnh đơn gửi khách; spinner ngay tại nút khi nhấn.
+                    if (onSend != null) {
+                        var sending by remember { mutableStateOf(false) }
+                        OutlinedButton(
+                            onClick = { scope.launch { sending = true; try { onSend() } finally { sending = false } } },
+                            enabled = !sending,
+                            modifier = Modifier.weight(0.2f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        ) {
+                            if (sending) CircularProgressIndicator(Modifier.size(18.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
+                            else Icon(Icons.AutoMirrored.Filled.Send, "Gửi đơn", tint = AdminColors.Primary, modifier = Modifier.size(18.dp))
+                        }
+                    }
                 }
             } else if (canEdit) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
@@ -677,6 +841,26 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     // Party picker: đơn nhập → chọn NCC (listSuppliers); đơn bán → chọn KH.
     if (customerPickerOpen) {
         CustomerPicker(isPurchase = isPurchase, onPick = { c -> selectedCustomer = c; customerPickerOpen = false }, onClose = { customerPickerOpen = false })
+    }
+    // Dialog QR thanh toán đơn: nội dung CK = mã đơn → CK về tự đối soát đúng đơn/khách.
+    if (qrReceiveOpen) {
+        val debt = (items.sumOf { it.qty * it.price } + parseMoney(shipCustomer) - parseMoney(codAmount) - parseMoney(discount))
+        QrReceiveDialog(
+            amount = debt.toLong().coerceAtLeast(0),
+            customerId = selectedCustomer?.id,
+            onDismiss = { qrReceiveOpen = false },
+        )
+    }
+    // Trả phí ship: quét QR người nhận → tạo mã → lưu ảnh → mở app ngân hàng.
+    if (scanPayOpen) {
+        val raw = if (shipQrIsCompany) shipCompany else shipCustomer
+        ScanPayFlow(
+            expenseId = shipQrExpenseId,
+            kind = if (shipQrIsCompany) "expense" else "advance",
+            amount = parseMoney(raw).toLong().coerceAtLeast(0),
+            note = (if (shipQrIsCompany) "Ship kho chiu $orderCode" else "Tra ship $orderCode").trim(),
+            onDismiss = { scanPayOpen = false },
+        )
     }
     // Dropship picker: khách nhận hàng (giao thẳng) — LUÔN là KH, kể cả đang ở đơn nhập.
     if (dropshipPickerOpen) {
@@ -915,7 +1099,7 @@ private fun ItemRow(
                                 .onFocusChanged { st ->
                                     if (st.isFocused) {
                                         priceFocused = true
-                                        priceTfv = TextFieldValue(if (draft.price > 0) trimZeros(draft.price) else "")
+                                        priceTfv = TextFieldValue(if (draft.price > 0) trimZeros(draft.price) else "0")   // ô = 0 → hiện "0" để select
                                         priceAtFocus = draft.price
                                         scope.launch { delay(60); priceTfv = priceTfv.copy(selection = TextRange(0, priceTfv.text.length)) }
                                     } else if (priceAtFocus != null) {
@@ -964,26 +1148,71 @@ internal fun UnitDropdown(units: List<VariantUnitDto>, selectedId: Long, enabled
 }
 
 @Composable
-private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scope: kotlinx.coroutines.CoroutineScope, enabled: Boolean, marker: String = "", locked: Boolean = false, onChange: (String) -> Unit) {
+private fun ShipRow(
+    label: String,
+    value: String,
+    focusCtx: FocusCenterCtx,
+    scope: kotlinx.coroutines.CoroutineScope,
+    enabled: Boolean,
+    marker: String = "",
+    locked: Boolean = false,
+    /** Có thì dấu ":" đổi thành nút quét QR người nhận để trả tiền (mirror web). */
+    onQrClick: (() -> Unit)? = null,
+    /** Chưa giao thì làm mờ — vẫn bấm được để hiện lý do. */
+    qrEnabled: Boolean = true,
+    /** Khoản phí đã chi/đối soát xong → đổi icon QR sang tích xanh + báo mã giao dịch. */
+    paid: Boolean = false,
+    paidTxCode: String? = null,
+    onChange: (String) -> Unit,
+) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
+        // 2 nửa BẰNG NHAU (weight 1f) → icon / dấu ":" ở cột giữa CANH GIỮA màn hình.
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(label, color = AdminColors.TextMuted, fontSize = 12.sp)
             if (marker.isNotEmpty()) Text(" $marker", color = AdminColors.Text.copy(alpha = 0.39f), fontSize = 11.sp, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light)
             if (locked) Text(" 🔒", fontSize = 11.sp)
         }
-        Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
-        Spacer(Modifier.width(6.dp))
-        Column(Modifier.weight(0.58f)) {
+        Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+            if (paid) {
+                // Đã thanh toán: tích xanh, tap để xem mã giao dịch (thay tooltip title trên web).
+                val ctx = LocalContext.current
+                IconButton(
+                    onClick = { Toast.makeText(ctx, "Khoản phí đã được thanh toán" + (paidTxCode?.let { " $it" } ?: ""), Toast.LENGTH_SHORT).show() },
+                    modifier = Modifier.size(24.dp),
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = "Đã thanh toán", tint = AdminColors.Success, modifier = Modifier.size(16.dp))
+                }
+            } else if (onQrClick != null) {
+                IconButton(onClick = onQrClick, modifier = Modifier.size(24.dp)) {
+                    Icon(
+                        Icons.Default.QrCodeScanner,
+                        contentDescription = "Quét QR người nhận để trả tiền",
+                        tint = if (qrEnabled) AdminColors.TextMuted else AdminColors.TextMuted.copy(alpha = 0.3f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            } else {
+                Text(":", color = AdminColors.TextMuted, fontSize = 12.sp)
+            }
+        }
+        Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Nhập "theo nghìn": tap → RAW + select-all + hint (số đã bung); bung khi blur.
-                var tfv by remember(value) { mutableStateOf(TextFieldValue(value)) }
-                var atFocus by remember { mutableStateOf<String?>(null) }
+                // Nhập "theo nghìn": tap → RAW + select-all + hint; COMMIT LIVE mỗi ký tự (giống web).
                 var focused by remember { mutableStateOf(false) }
+                var tfv by remember { mutableStateOf(TextFieldValue(value)) }
+                var atFocus by remember { mutableStateOf<String?>(null) }
+                // Sync từ parent khi KHÔNG focus (hydrate/đổi ngoài) — không reset con trỏ lúc đang gõ.
+                LaunchedEffect(value) { if (!focused) tfv = TextFieldValue(value) }
                 Box(Modifier.weight(1f)) {
                     NumEditHint(focused, expandMoneyShorthand(tfv.text)?.let { fmtMoney(it) })
                     BasicTextField(
                         value = tfv,
-                        onValueChange = { raw -> val f = raw.text.filter { c -> c.isDigit() || c == '.' || c == ',' }; tfv = if (f == raw.text) raw else TextFieldValue(f, TextRange(f.length)) },
+                        onValueChange = { raw ->
+                            val f = raw.text.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                            val nv = if (f == raw.text) raw else TextFieldValue(f, TextRange(f.length))
+                            tfv = nv
+                            onChange(nv.text)   // commit LIVE (state thô) → tổng/lưu phản ánh ngay; consumer dùng expandMoneyShorthand
+                        },
                         readOnly = !enabled,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
@@ -993,7 +1222,7 @@ private fun ShipRow(label: String, value: String, focusCtx: FocusCenterCtx, scop
                             .onFocusChanged { st ->
                                 if (st.isFocused) {
                                     focused = true; atFocus = tfv.text
-                                    tfv = TextFieldValue(expandMoneyShorthand(tfv.text)?.takeIf { it > 0 }?.let { trimZeros(it) } ?: "")
+                                    tfv = TextFieldValue(expandMoneyShorthand(tfv.text)?.takeIf { it > 0 }?.let { trimZeros(it) } ?: "0")   // ô = 0 → hiện "0" để select
                                     scope.launch { delay(60); tfv = tfv.copy(selection = TextRange(0, tfv.text.length)) }
                                 } else if (atFocus != null) {
                                     focused = false
@@ -1082,6 +1311,7 @@ internal fun VariantPicker(
     selectedIds: Set<Long>,
     onPick: (VariantSearchDto) -> Unit,
     onClose: () -> Unit,
+    topSellers: List<VariantSearchDto> = emptyList(),   // preload khi query rỗng (mirror web: 15 SP bán chạy)
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
@@ -1090,9 +1320,10 @@ internal fun VariantPicker(
     var results by remember { mutableStateOf<List<VariantSearchDto>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
 
-    LaunchedEffect(query, productId) {
-        // Query rỗng + không filter product → hiện variants của 5 SP hay mua.
+    LaunchedEffect(query, productId, topSellers) {
+        // Query rỗng + không filter product → ưu tiên top bán chạy (nếu có), rồi tới variants của 5 SP hay mua.
         if (query.length < 2 && productId == null) {
+            if (topSellers.isNotEmpty()) { results = topSellers; loading = false; return@LaunchedEffect }
             if (suggested.isEmpty()) { results = emptyList(); return@LaunchedEffect }
             loading = true
             val all = mutableListOf<VariantSearchDto>()
@@ -1147,6 +1378,155 @@ internal fun VariantPicker(
                     }
                 }
                 HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.4f))
+            }
+        }
+    }
+}
+
+/**
+ * Ô "+ Sản phẩm" INLINE dùng chung (sale + kho) — mirror web NSelect.
+ * tap 1 → hiện list KHÔNG bàn phím; tap 2 → list + bàn phím + bôi đen; tap item → chọn/bỏ RỒI ĐÓNG luôn
+ * (thêm SP phải nhấn "+ Sản phẩm" lại); cuộn list → tắt bàn phím (giữ list); chạm ngoài (parent clearFocus) → đóng.
+ * Preload 15 SP bán chạy khi query rỗng. dropdownOpen BÁM FOCUS (readOnly khi chưa bật keyboard)
+ * → parent chỉ cần `focusManager.clearFocus()` là đóng, không cần state riêng.
+ * `trailing`: nội dung bên phải cùng dòng input (vd "Tổng SL" ở kho, "Tổng tiền" ở sale).
+ */
+@Composable
+internal fun VariantSearchInline(
+    warehouseId: Long?,
+    selectedIds: Set<Long>,
+    onToggle: (VariantSearchDto) -> Unit,
+    enabled: Boolean = true,
+    onBlocked: () -> Unit = {},
+    trailing: @Composable RowScope.() -> Unit = {},
+) {
+    val context = LocalContext.current
+    val container = (context.applicationContext as App).container
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
+    val dropScroll = rememberScrollState()
+
+    var tfv by remember { mutableStateOf(TextFieldValue("")) }
+    val query = tfv.text
+    var results by remember { mutableStateOf<List<VariantSearchDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var dropdownOpen by remember { mutableStateOf(false) }   // = field focused
+    var keyboardOn by remember { mutableStateOf(false) }     // readOnly = !keyboardOn
+
+    val topSellers = remember { mutableStateListOf<VariantSearchDto>() }
+    LaunchedEffect(Unit) {
+        if (topSellers.isEmpty()) {
+            try { container.vapi.listAllVariants(sort = "top_selling", warehouseId = warehouseId, perPage = 15).data?.let { topSellers.addAll(it) } } catch (_: Exception) {}
+        }
+    }
+    LaunchedEffect(query, dropdownOpen, topSellers.size) {
+        if (!dropdownOpen) return@LaunchedEffect
+        val q = query.trim()
+        if (q.isEmpty()) { results = topSellers.toList(); loading = false; return@LaunchedEffect }
+        loading = true
+        kotlinx.coroutines.delay(280)
+        results = try { container.vapi.listAllVariants(search = q, warehouseId = warehouseId, perPage = 30).data ?: emptyList() } catch (_: Exception) { emptyList() }
+        loading = false
+    }
+    // Double-tap bật bàn phím: đợi readOnly=false (recompose) rồi requestFocus + show IME + bôi đen toàn bộ (gõ đè ngay).
+    LaunchedEffect(keyboardOn) {
+        if (keyboardOn) {
+            runCatching { focusRequester.requestFocus() }
+            keyboardController?.show()
+            if (tfv.text.isNotEmpty()) tfv = tfv.copy(selection = TextRange(0, tfv.text.length))
+        }
+    }
+    // Cuộn dropdown → tắt bàn phím nhưng GIỮ focus → list vẫn mở.
+    LaunchedEffect(dropScroll.isScrollInProgress) {
+        if (dropScroll.isScrollInProgress && keyboardOn) { keyboardOn = false; keyboardController?.hide() }
+    }
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp))
+                    .border(1.dp, if (dropdownOpen) AdminColors.Primary else AdminColors.Border, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 7.dp),
+            ) {
+                Icon(Icons.Default.Add, null, tint = AdminColors.Primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Box(Modifier.weight(1f)) {
+                    BasicTextField(
+                        value = tfv,
+                        onValueChange = { tfv = it },
+                        singleLine = true,
+                        readOnly = !keyboardOn,
+                        textStyle = TextStyle(color = AdminColors.Text, fontSize = 13.sp, lineHeight = 13.sp),
+                        cursorBrush = if (keyboardOn) SolidColor(AdminColors.Primary) else SolidColor(Color.Transparent),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                            .onFocusChanged { dropdownOpen = it.isFocused; if (!it.isFocused) keyboardOn = false },
+                        decorationBox = { inner ->
+                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                if (query.isEmpty()) Text("Sản phẩm — tìm tên / SKU…", color = AdminColors.TextMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                inner()
+                            }
+                        },
+                    )
+                    // Overlay chặn tap mặc định. Tap 1 (chưa mở) = mở list KHÔNG bàn phím;
+                    // tap 2 (đã mở, bàn phím tắt) = bật bàn phím + bôi đen. KHÔNG dùng double-tap.
+                    Box(
+                        Modifier.matchParentSize().pointerInput(enabled) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (!enabled) onBlocked()
+                                    else if (!dropdownOpen) { keyboardOn = false; runCatching { focusRequester.requestFocus() } }
+                                    else if (!keyboardOn) keyboardOn = true
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+            trailing()
+        }
+        if (dropdownOpen) {
+            Box(
+                Modifier.fillMaxWidth().padding(top = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, AdminColors.Primary, RoundedCornerShape(8.dp))
+                    .heightIn(max = 450.dp),
+            ) {
+                when {
+                    loading -> Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary, modifier = Modifier.size(24.dp)) }
+                    results.isEmpty() -> Text("Không có sản phẩm", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
+                    else -> Column(Modifier.verticalScroll(dropScroll)) {
+                        results.forEach { v ->
+                            val picked = v.id in selectedIds
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .pointerInput(v.id) { detectTapGestures { onToggle(v); focusManager.clearFocus() } }   // chọn xong → đóng list + bàn phím; thêm SP phải nhấn "+ Sản phẩm" lại
+                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val img = v.image ?: v.product?.primaryImage?.url
+                                if (img != null) AsyncImage(model = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(6.dp)))
+                                else Box(Modifier.size(50.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Border.copy(alpha = 0.3f)))
+                                Spacer(Modifier.width(8.dp))
+                                // lineHeight sát font-size → chiều cao dòng gần bằng thumb 50dp (giữ nguyên font-size).
+                                Text(variantDisplay(v, v.product?.name ?: ""), color = if (picked) AdminColors.Success else AdminColors.Text, fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                if (picked) { Spacer(Modifier.width(6.dp)); Icon(Icons.Default.Check, "Đã chọn", tint = AdminColors.Success, modifier = Modifier.size(18.dp)) }
+                                Spacer(Modifier.width(8.dp))
+                                // 3 dòng tồn giống VariantPicker: Kho / số (theo đơn vị mặc định) / tên đơn vị
+                                val defUnit = v.units.firstOrNull { it.isDefaultSale } ?: v.units.firstOrNull { it.isBase } ?: v.units.firstOrNull()
+                                val factor = defUnit?.conversionFactor ?: 1.0
+                                val stockInUnit = (v.stockBase ?: 0.0).let { if (factor > 0) it / factor else it }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                    Text("Kho", color = AdminColors.TextMuted, fontSize = 11.sp, lineHeight = 12.sp)
+                                    Text(trimZeros(stockInUnit), color = if (stockInUnit > 0) AdminColors.Primary else AdminColors.TextMuted, fontSize = 14.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium)
+                                    defUnit?.name?.let { Text(it, color = AdminColors.TextMuted, fontSize = 11.sp, lineHeight = 12.sp) }
+                                }
+                            }
+                            HorizontalDivider(color = AdminColors.Border.copy(alpha = 0.4f))
+                        }
+                    }
+                }
             }
         }
     }
