@@ -96,11 +96,22 @@ private fun txTypeTag(tx: MoneyTransactionDto): String = when (tx.purposeLabel) 
     else -> moneyTxTypeLabel(tx.type)
 }
 
-/** "2026-07-08 14:00:00" / ISO → "14:00  08/07/2026". Fallback: chuỗi gốc. */
-private fun fmtTxTime(s: String): String = try {
-    val d = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(s.replace('T', ' ').take(19))
-    SimpleDateFormat("HH:mm  dd/MM/yyyy", Locale.US).format(d!!)
-} catch (_: Exception) { s }
+/**
+ * ISO (UTC offset / Z / +07:00) → "HH:mm  dd/MM/yyyy" theo GIỜ VN. KHÔNG cắt chuỗi
+ * thô (mất offset → lệch giờ). Fallback: chuỗi gốc.
+ */
+private val VN_ZONE = java.time.ZoneId.of("Asia/Ho_Chi_Minh")
+private val txTimeFmt = java.time.format.DateTimeFormatter.ofPattern("HH:mm  dd/MM/yyyy")
+private fun fmtTxTime(s: String): String = runCatching {
+    java.time.OffsetDateTime.parse(s).atZoneSameInstant(VN_ZONE)
+}.recoverCatching {
+    java.time.Instant.parse(s).atZone(VN_ZONE)
+}.recoverCatching {
+    java.time.LocalDateTime.parse(
+        s.replace('T', ' ').take(19),
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+    ).atZone(VN_ZONE)
+}.map { txTimeFmt.format(it) }.getOrDefault(s)
 
 private val CASH_CASHER_TYPES = setOf("petty_cash", "safe")
 

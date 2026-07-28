@@ -32,7 +32,12 @@ import vn.chat9.app.data.vapi.VapiApiService
 import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.ui.explore.AdminColors
 import java.text.NumberFormat
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private val moneyFmt = NumberFormat.getNumberInstance(Locale("vi"))
@@ -66,17 +71,25 @@ private fun txTypeTag(tx: MoneyTransactionDto): String = when (tx.purposeLabel) 
     "Chi phí" -> "Ghi trả phí"; "Chi hộ KH" -> "Tạm ứng"; else -> moneyTxTypeLabel(tx.type)
 }
 
-private fun parseDate(s: String): java.util.Date? = try {
-    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(s.replace('T', ' ').take(19))
-} catch (_: Exception) { null }
+// BE trả date ISO (UTC offset +00:00 / Z, hoặc +07:00). PHẢI đổi sang giờ VN —
+// KHÔNG cắt chuỗi thô (mất offset → lệch giờ). Mirror WarehouseUtil.parseVn.
+private val VN_ZONE = ZoneId.of("Asia/Ho_Chi_Minh")
+private val txTimeFmt = DateTimeFormatter.ofPattern("HH:mm  dd/MM/yyyy")
+private val shareDateFmt = DateTimeFormatter.ofPattern("dd/MM/yyyy - HH:mm")
 
-/** Dòng Ngày trong drawer: "HH:mm  dd/MM/yyyy". */
-private fun fmtTxTime(s: String): String =
-    parseDate(s)?.let { SimpleDateFormat("HH:mm  dd/MM/yyyy", Locale.US).format(it) } ?: s
+private fun parseVn(s: String): ZonedDateTime? = runCatching { OffsetDateTime.parse(s).atZoneSameInstant(VN_ZONE) }
+    .recoverCatching { Instant.parse(s).atZone(VN_ZONE) }
+    .recoverCatching {
+        // Không offset ("yyyy-MM-dd HH:mm:ss") → coi là giờ VN sẵn.
+        LocalDateTime.parse(s.replace('T', ' ').take(19), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).atZone(VN_ZONE)
+    }
+    .getOrNull()
 
-/** Ngày cho text copy/chia sẻ: "dd/MM/yyyy - HH:mm". */
-private fun fmtShareDate(s: String): String =
-    parseDate(s)?.let { SimpleDateFormat("dd/MM/yyyy - HH:mm", Locale.US).format(it) } ?: s
+/** Dòng Ngày trong drawer: "HH:mm  dd/MM/yyyy" theo giờ VN. */
+private fun fmtTxTime(s: String): String = parseVn(s)?.format(txTimeFmt) ?: s
+
+/** Ngày cho text copy/chia sẻ: "dd/MM/yyyy - HH:mm" theo giờ VN. */
+private fun fmtShareDate(s: String): String = parseVn(s)?.format(shareDateFmt) ?: s
 
 /** TK nhận suy từ meta.payee_* → "{số TK} - {tên NH}"; trống → "—". */
 private fun payeeText(t: MoneyTransactionDto, bankShort: String?): String {
