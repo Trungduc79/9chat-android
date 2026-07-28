@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -144,6 +145,7 @@ fun MoneyTxDetailSheet(tx: MoneyTransactionDto, feeLabel: String? = null, onClos
                     HeaderAction(Icons.Default.Share, "Chia sẻ") { shareText(ctx, tx.code, transferText(tx, bankShort)) }
                 }
             }
+            HorizontalDivider(color = AdminColors.Border, thickness = 1.dp)
 
             feeLabel?.let { Row2("Khoản phí", it) }
             Row2("Ngày", fmtTxTime(tx.date))
