@@ -25,11 +25,25 @@ import vn.chat9.app.data.vapi.dto.DebtStatementDto
 import vn.chat9.app.data.vapi.dto.ExpenseCategoryDto
 import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.PayExpenseRequest
+import vn.chat9.app.data.vapi.dto.BankAppDto
 import vn.chat9.app.data.vapi.dto.PaymentCandidatesDto
+import vn.chat9.app.data.vapi.dto.ExpenseBriefDto
+import vn.chat9.app.data.vapi.dto.ShipPayablesDto
+import vn.chat9.app.data.vapi.dto.PendingAdvanceDto
+import vn.chat9.app.data.vapi.dto.QrRefDto
+import vn.chat9.app.data.vapi.dto.QrRefGroupDto
+import vn.chat9.app.data.vapi.dto.QrRefGroupRequest
+import vn.chat9.app.data.vapi.dto.QrRefRequest
+import vn.chat9.app.data.vapi.dto.VietqrLookupDto
+import vn.chat9.app.data.vapi.dto.VietqrLookupRequest
 import vn.chat9.app.data.vapi.dto.ProductHistoryDto
 import vn.chat9.app.data.vapi.dto.SendVatEmailReq
 import vn.chat9.app.data.vapi.dto.SendVatEmailRes
+import vn.chat9.app.data.vapi.dto.StaffDto
 import vn.chat9.app.data.vapi.dto.StaffRolesDto
+import vn.chat9.app.data.vapi.dto.LinkOrderReq
+import vn.chat9.app.data.vapi.dto.StocktakeBuOrderReq
+import vn.chat9.app.data.vapi.dto.StocktakeBuOrderResult
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
 import vn.chat9.app.data.vapi.dto.StocktakeReportDto
 import vn.chat9.app.data.vapi.dto.StocktakeResultDto
@@ -73,6 +87,7 @@ import vn.chat9.app.data.vapi.dto.RecentProductDto
 import vn.chat9.app.data.vapi.dto.SupplierDto
 import vn.chat9.app.data.vapi.dto.SupplierImageDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
+import vn.chat9.app.data.vapi.dto.VietqrBankDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 
 /**
@@ -92,6 +107,7 @@ interface VapiApiService {
         @Query("party_id") partyId: Long? = null,                     // lọc theo KH (dialog đơn của khách)
         @Query("date_from") dateFrom: String? = null,                 // YYYY-MM-DD
         @Query("date_to") dateTo: String? = null,                     // YYYY-MM-DD
+        @Query("search") search: String? = null,                      // mã đơn | id | tên KH/NCC (không dấu OK)
         @Query("per_page") perPage: Int = 100,
     ): VapiResponse<List<OrderDto>>
 
@@ -144,11 +160,26 @@ interface VapiApiService {
     @GET("v1/customers/{id}/vat-info")
     suspend fun listCustomerVatInfo(@Path("id") customerId: Long): VapiResponse<List<VatInfoDto>>
 
+    // Nguồn chung nội dung CK QR nhận tiền (mã định danh + đuôi) — dùng chung với web.
+    @POST("v1/customers/{id}/qr-content")
+    suspend fun customerQrContent(
+        @Path("id") id: Long,
+        @Body body: vn.chat9.app.data.vapi.dto.QrContentReq = vn.chat9.app.data.vapi.dto.QrContentReq(),
+    ): VapiResponse<vn.chat9.app.data.vapi.dto.QrContentDto>
+
     @retrofit2.http.PATCH("v1/orders/{id}/vat-buyer-name")
     suspend fun setVatBuyerName(@Path("id") id: Long, @Body body: VatBuyerNameReq): VapiResponse<Unit>
 
     @GET("v1/orders/{id}")
     suspend fun getOrder(@Path("id") id: Long): VapiResponse<OrderDto>
+
+    /**
+     * Hai khoản ship của đơn còn phải trả không — NGUỒN CHUẨN cho nút quét QR
+     * trả ship. Đừng tự suy từ status/disbursed_at ở client: BE đã gom đủ điều
+     * kiện và trả kèm lý do tiếng Việt để mọi màn hiện y hệt nhau.
+     */
+    @GET("v1/orders/{id}/ship-payables")
+    suspend fun shipPayables(@Path("id") id: Long): VapiResponse<ShipPayablesDto>
 
     /** Mặt hàng đơn (ảnh data-URI + SL) để render ảnh gửi NCC. */
     @GET("v1/orders/{id}/supplier-image-items")
@@ -285,7 +316,38 @@ interface VapiApiService {
     @POST("v1/stocktake/sessions/{id}/discard")
     suspend fun discardStocktakeSession(@Path("id") id: Long): VapiResponse<StocktakeSessionDto?>
 
+    /**
+     * Đếm lại tồn hệ thống cho các dòng CHƯA XỬ LÝ — dùng sau khi đã sửa các đơn
+     * sai (tồn đổi mà không qua fulfill). Biến thể nào tồn đã khớp số đếm tay thì
+     * hết lệch và rời danh sách xử lý sai lệch. Trả về phiên đã cập nhật + `recount`.
+     */
+    @POST("v1/stocktake/sessions/{id}/recount")
+    suspend fun recountStocktakeSession(@Path("id") id: Long): VapiResponse<StocktakeSessionDto>
+
+    /** Tạo đơn bù/nhập bù cho variant lệch (scope products:write — né gate order.create).
+     *  Trả order_id → NV mở màn giao đơn nhập ship/ảnh rồi fulfill. */
+    @POST("v1/stocktake/sessions/{id}/bu-order")
+    suspend fun createStocktakeBuOrder(
+        @Path("id") id: Long,
+        @Body req: StocktakeBuOrderReq,
+    ): VapiResponse<StocktakeBuOrderResult>
+
+    /** Link đơn bù đã giao vào phiên → resolve dòng chờ bù (type='linked', cộng dồn coverage). */
+    @POST("v1/stocktake/sessions/{id}/link-order")
+    suspend fun linkStocktakeBuOrder(
+        @Path("id") id: Long,
+        @Body req: LinkOrderReq,
+    ): VapiResponse<StocktakeSessionDto>
+
     /** Vai trò nhân viên khớp theo SĐT — mở module 9chat theo vai trò. */
+    /**
+     * Danh sách nhân viên — dùng để chọn TK shipper khi trả tiền ship.
+     * LƯU Ý: route này gác 'staff:read' + permission 'user.read'; tài khoản NV kho
+     * thường KHÔNG có 'user.read' nên sẽ nhận 403.
+     */
+    @GET("v1/staff")
+    suspend fun staffList(@Query("per_page") perPage: Int = 100): VapiResponse<List<StaffDto>>
+
     @GET("v1/staff/roles-by-phone")
     suspend fun staffRolesByPhone(@Query("phone") phone: String): VapiResponse<StaffRolesDto>
 
@@ -297,8 +359,13 @@ interface VapiApiService {
         @Query("product_id") productId: Long? = null,
         @Query("category_id") categoryId: Long? = null,
         @Query("warehouse_id") warehouseId: Long? = null,
+        @Query("sort") sort: String? = null,   // "top_selling" → 15 SP bán chạy (preload)
         @Query("per_page") perPage: Int = 30,
     ): VapiResponse<List<VariantSearchDto>>
+
+    /** Chi tiết 1 biến thể theo id (thẻ sản phẩm 9chat → deeplink 9chat://product/{id}). */
+    @GET("v1/variants/{id}")
+    suspend fun getVariant(@retrofit2.http.Path("id") id: Long): VapiResponse<VariantSearchDto>
 
     // Lịch sử kho 1 variant (mới nhất lên đầu). product_id để BE tính sổ tồn luỹ kế.
     @GET("v1/product-history")
@@ -408,6 +475,10 @@ interface VapiApiService {
     @GET("v1/vat-output-invoices/{id}")
     suspend fun getVatOutputInvoice(@Path("id") id: Long): VapiResponse<VatOutputInvoiceDto>
 
+    /** HĐ VAT ĐẦU VÀO (mua) — thẻ invoice dir=in mở chi tiết. */
+    @GET("v1/vat-input-invoices/{id}")
+    suspend fun getVatInputInvoice(@Path("id") id: Long): VapiResponse<vn.chat9.app.data.vapi.dto.VatInputInvoiceDto>
+
     /** Ảnh PNG HĐ đã render trên EI (binary) — xem trực tiếp HĐ trên EI. */
     @GET("v1/vat-output-invoices/{id}/preview-image")
     suspend fun vatOutputPreviewImage(@Path("id") id: Long): okhttp3.ResponseBody
@@ -490,11 +561,25 @@ interface VapiApiService {
 
     // ===== Module Kế toán (Tab Khám phá → Kế toán) — Phase 1: Dòng tiền =====
 
-    /** Danh sách GD tiền (mới nhất trước). Lọc Thu/Chi làm client-side (mirror web). */
+    /**
+     * Danh sách GD tiền (mới nhất trước). Lọc Thu/Chi làm client-side (mirror web).
+     * from/to (yyyy-MM-dd) lọc theo ngày GD server-side; casherId lọc theo sổ quỹ — null thì bỏ qua.
+     */
     @GET("v1/money-transactions")
     suspend fun listMoneyTransactions(
         @Query("per_page") perPage: Int = 80,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+        @Query("casher_id") casherId: Long? = null,
     ): VapiResponse<List<MoneyTransactionDto>>
+
+    /** Danh sách ngân hàng (bin → shortName) — cache client để suy tên NH từ BIN. */
+    @GET("v1/vietqr/banks")
+    suspend fun listBanks(): VapiResponse<List<VietqrBankDto>>
+
+    /** Chi tiết 1 GD tiền (thẻ giao dịch 9chat → deeplink 9chat://transaction/{id}). */
+    @GET("v1/money-transactions/{id}")
+    suspend fun getMoneyTransaction(@Path("id") id: Long): VapiResponse<MoneyTransactionDto>
 
     /** Tạo GD tiền mặt (thu KH / GD pending tiền ra để trả phí). */
     @POST("v1/money-transactions")
@@ -507,6 +592,51 @@ interface VapiApiService {
     /** Phân bổ GD tiền ra đa purpose (hoàn ứng ship = line customer_debt). */
     @POST("v1/money-transactions/{id}/allocate")
     suspend fun allocateMoneyTx(@Path("id") id: Long, @Body body: AllocateRequest): VapiResponse<AllocateResultDto>
+
+    // ===== QR chuyển khoản: trả phí ship bằng cách quét QR người nhận =====
+
+    /** Khoản ứng/chi hộ ship CHƯA chi từ sổ quỹ nào (chặn chốt công nợ khách). */
+    @GET("v1/expenses/advances/pending")
+    suspend fun pendingAdvances(
+        @Query("customer_id") customerId: Long? = null,
+    ): VapiResponse<List<PendingAdvanceDto>>
+
+    /** Đọc 1 khoản chi — dùng để kiểm còn phải trả bao nhiêu trước khi cho quét QR. */
+    @GET("v1/expenses/{id}")
+    suspend fun getExpense(@Path("id") id: Long): VapiResponse<ExpenseBriefDto>
+
+    /**
+     * Xin MÃ ĐỐI SOÁT cho 1 khoản chi (lưu `expenses.meta.qr_ref`).
+     * Mã này đi vào nội dung CK → GD chi về là webhook tự tất toán khoản chi.
+     */
+    @POST("v1/expenses/{id}/qr-ref")
+    suspend fun issueQrRef(
+        @Path("id") id: Long,
+        @Body body: QrRefRequest,
+    ): VapiResponse<QrRefDto>
+
+    /**
+     * Xin MỘT mã dùng chung cho NHIỀU khoản chi → trả gộp bằng 1 lần chuyển khoản.
+     * Khi GD về, matcher gom theo mã rồi tất toán từng khoản ĐÚNG TRỤC của nó
+     * (ứng ship → customer_debt, chi phí → expense) trong cùng một settleMoneyOut.
+     */
+    @POST("v1/expenses/qr-ref-group")
+    suspend fun issueQrRefGroup(
+        @Body body: QrRefGroupRequest,
+    ): VapiResponse<QrRefGroupDto>
+
+    /** Tra TÊN CHỦ TÀI KHOẢN — QR không chứa tên, phải hỏi ngân hàng. */
+    @POST("v1/vietqr/lookup")
+    suspend fun vietqrLookup(@Body body: VietqrLookupRequest): VapiResponse<VietqrLookupDto>
+
+    /**
+     * Danh sách app ngân hàng + deeplink mở app.
+     * Deeplink CHỈ MỞ APP, không mang thông tin chuyển khoản.
+     */
+    @GET("v1/vietqr/app-deeplinks")
+    suspend fun vietqrAppDeeplinks(
+        @Query("platform") platform: String = "android",
+    ): VapiResponse<List<BankAppDto>>
 
     /** GD tiền ra ứng viên hoàn ứng cho 1 khoản ứng (bank|cash): chưa link + khớp tiền + gần ngày. */
     @GET("v1/expenses/{id}/payment-candidates")

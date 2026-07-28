@@ -106,6 +106,7 @@ import vn.chat9.app.data.vapi.dto.ShipPayablesDto
 import vn.chat9.app.data.vapi.dto.CreateOrderItem
 import vn.chat9.app.data.vapi.dto.CreateOrderRequest
 import vn.chat9.app.data.vapi.dto.CustomerDto
+import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.RecentProductDto
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
@@ -117,6 +118,7 @@ import vn.chat9.app.ui.common.NumEditHint
 import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.modules.warehouse.PhotoZoomViewer
+import vn.chat9.app.ui.transaction.MoneyTxDetailSheet
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -229,6 +231,16 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     // Tình trạng 2 khoản ship — HỎI BE, không tự suy (xem /orders/{id}/ship-payables).
     // null = chưa hỏi xong → chặn, vì chưa biết mà vẫn mở là mở đường trả trùng.
     var shipPayables by remember { mutableStateOf<ShipPayablesDto?>(null) }
+    // Tích xanh phí ship đã trả → tap mở chi tiết GD (TK nhận + copy/chia sẻ).
+    var paidDetailTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
+    var paidDetailLabel by remember { mutableStateOf<String?>(null) }
+    fun openPaidTx(txId: Long?, label: String) {
+        val id = txId ?: return
+        scope.launch {
+            runCatching { container.vapi.getMoneyTransaction(id).data }.getOrNull()
+                ?.let { paidDetailTx = it; paidDetailLabel = label }
+        }
+    }
     // Đã giao/nhận xong chưa — ĐIỀU KIỆN BẮT BUỘC để quét mã trả ship: khoản chi
     // (SHIP_ADV lẫn SHIP_EXP) chỉ được BE tạo lúc fulfill. Đơn nhập kết thúc ở
     // 'received', đơn bán ở 'delivered'.
@@ -674,6 +686,7 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                     qrEnabled = shipPayables?.customer?.payable == true,
                     paid = shipPayables?.customer?.paid == true,
                     paidTxCode = shipPayables?.customer?.paidTxCode,
+                    onPaidClick = { openPaidTx(shipPayables?.customer?.paidTxId, "Phí ship KH") },
                 ) { shipCustomer = it }
                 ShipRow(
                     "Phí ship KHO", shipCompany, focusCtx, scope,
@@ -688,6 +701,7 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                     qrEnabled = shipPayables?.company?.payable == true,
                     paid = shipPayables?.company?.paid == true,
                     paidTxCode = shipPayables?.company?.paidTxCode,
+                    onPaidClick = { openPaidTx(shipPayables?.company?.paidTxId, "Phí ship KHO") },
                 ) { shipCompany = it }
                 ShipRow("Thu hộ", codAmount, focusCtx, scope, canEdit) { codAmount = it }
                 ShipRow("Giảm cả đơn", discount, focusCtx, scope, canEdit) { discount = it }
@@ -861,6 +875,10 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
             note = (if (shipQrIsCompany) "Ship kho chiu $orderCode" else "Tra ship $orderCode").trim(),
             onDismiss = { scanPayOpen = false },
         )
+    }
+    // Chi tiết GD đã trả cho khoản ship (tap tích xanh) — drawer dùng chung.
+    paidDetailTx?.let { tx ->
+        MoneyTxDetailSheet(tx = tx, feeLabel = paidDetailLabel, onClose = { paidDetailTx = null })
     }
     // Dropship picker: khách nhận hàng (giao thẳng) — LUÔN là KH, kể cả đang ở đơn nhập.
     if (dropshipPickerOpen) {
@@ -1160,9 +1178,11 @@ private fun ShipRow(
     onQrClick: (() -> Unit)? = null,
     /** Chưa giao thì làm mờ — vẫn bấm được để hiện lý do. */
     qrEnabled: Boolean = true,
-    /** Khoản phí đã chi/đối soát xong → đổi icon QR sang tích xanh + báo mã giao dịch. */
+    /** Khoản phí đã chi/đối soát xong → đổi icon QR sang tích xanh. */
     paid: Boolean = false,
     paidTxCode: String? = null,
+    /** Tap tích xanh → mở chi tiết GD đã trả (có TK nhận + copy/chia sẻ). */
+    onPaidClick: (() -> Unit)? = null,
     onChange: (String) -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1174,10 +1194,13 @@ private fun ShipRow(
         }
         Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
             if (paid) {
-                // Đã thanh toán: tích xanh, tap để xem mã giao dịch (thay tooltip title trên web).
+                // Đã thanh toán: tích xanh, tap để mở chi tiết GD đã trả (TK nhận + copy/chia sẻ).
                 val ctx = LocalContext.current
                 IconButton(
-                    onClick = { Toast.makeText(ctx, "Khoản phí đã được thanh toán" + (paidTxCode?.let { " $it" } ?: ""), Toast.LENGTH_SHORT).show() },
+                    onClick = {
+                        if (onPaidClick != null) onPaidClick()
+                        else Toast.makeText(ctx, "Khoản phí đã được thanh toán" + (paidTxCode?.let { " $it" } ?: ""), Toast.LENGTH_SHORT).show()
+                    },
                     modifier = Modifier.size(24.dp),
                 ) {
                     Icon(Icons.Default.CheckCircle, contentDescription = "Đã thanh toán", tint = AdminColors.Success, modifier = Modifier.size(16.dp))

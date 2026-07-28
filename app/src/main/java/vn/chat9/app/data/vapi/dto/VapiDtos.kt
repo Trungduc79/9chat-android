@@ -6,18 +6,24 @@ import com.google.gson.annotations.SerializedName
  * DTO map JSON vapi. KHÔNG dùng `by lazy` — Gson dùng Unsafe bỏ qua constructor
  * nên lazy-field sẽ null → NPE. Dùng `val` mặc định, hoặc `get()` computed.
  */
-/** Mặt hàng để render ảnh gửi NCC (ảnh data-URI + SL, không giá). */
+/** Mặt hàng + tiền để render ảnh gửi NCC (đơn nhập) hoặc gửi khách (đơn bán). */
 data class SupplierImageDto(
     val title: String = "",
     @SerializedName("order_code") val orderCode: String = "",
     @SerializedName("supplier_short_name") val supplierShortName: String = "",
+    @SerializedName("party_name") val partyName: String = "",           // tên KH cho header ảnh khách
+    @SerializedName("shipping_fee") val shippingFee: Double = 0.0,
+    @SerializedName("cod_collected") val codCollected: Double = 0.0,
+    @SerializedName("discount_amount") val discountAmount: Double = 0.0,
     val items: List<SupplierImageItemDto> = emptyList(),
+    val attachments: List<String> = emptyList(),                        // ảnh giao hàng data-URI
 )
 
 data class SupplierImageItemDto(
     val name: String = "",
     val qty: Double = 0.0,
     val unit: String = "",
+    val price: Double = 0.0,     // đơn giá/đơn vị (× qty = thành tiền) — ảnh khách
     val image: String? = null,   // data:image/...;base64,...
 )
 
@@ -57,6 +63,8 @@ data class OrderDto(
     @SerializedName("vat_include_phone") val vatIncludePhone: Boolean = false,      // SĐT khách hiển thị trên HĐ
     val meta: MetaDto? = null,
     @SerializedName("thumb_url") val thumbUrl: String? = null,       // ảnh đính kèm đầu tiên (BE resolve ở list)
+    @SerializedName("creator_9chat_user_id") val creator9chatUserId: Long? = null, // NV sale tạo đơn (9chat user) — check "đơn của mình"
+    @SerializedName("created_by_user_id") val createdByUserId: Long? = null,        // fallback định danh người tạo
     val items: List<OrderItemDto> = emptyList(),
 ) {
     val isPurchase: Boolean get() = type == "purchase" || type == "supplier_return"
@@ -127,17 +135,32 @@ data class OrderItemDto(
 ) {
     val productName: String get() = snapshot.productName ?: "SP #$variantId"
     val unitName: String get() = snapshot.unitName ?: ""
-    /** "Màu: Đỏ, Size: L" (tên: giá trị). */
-    val variantLabel: String
-        get() = snapshot.variantAttributes
-            ?.entries?.filter { it.value.isNotBlank() }
-            ?.joinToString(", ") { "${it.key}: ${it.value}" } ?: ""
 
     /** Cặp (tên nhóm phân loại, giá trị) — render tên mờ + giá trị trắng như web. */
-    val variantPairs: List<Pair<String, String>>
-        get() = snapshot.variantAttributes
-            ?.entries?.filter { it.value.isNotBlank() }
-            ?.map { it.key to it.value } ?: emptyList()
+    val variantPairs: List<Pair<String, String>> get() = cleanVariantAttrs(snapshot.variantAttributes)
+
+    /** "Màu: Đỏ, Size: L" (tên: giá trị). */
+    val variantLabel: String get() = variantPairs.joinToString(", ") { "${it.first}: ${it.second}" }
+}
+
+/**
+ * Chuẩn hoá variant_attributes về {tên phân loại: giá trị}. Xử lý 2 dạng:
+ *  - Bình thường: variant_attributes CHÍNH là {"Màu":"Xanh"}.
+ *  - Đơn dropship-cascade (snapshot lỗi): variant_attributes = TOÀN BỘ object
+ *    variant (id/sku/stock/price...), attr thật nằm trong key "attributes" (chuỗi
+ *    JSON "{\"Màu\": \"Xanh\"}"). → parse key đó thay vì đổ hết field ra.
+ * isNullOrBlank: Gson nhét value NULL vào Map<String,String> khi JSON null.
+ */
+private fun cleanVariantAttrs(raw: Map<String, String>?): List<Pair<String, String>> {
+    if (raw == null) return emptyList()
+    val nested = raw["attributes"]
+    val src: Map<String, String> = if (nested != null && (raw.containsKey("sku") || raw.containsKey("id"))) {
+        try {
+            val o = org.json.JSONObject(nested)
+            o.keys().asSequence().associateWith { o.optString(it) }
+        } catch (_: Exception) { raw }
+    } else raw
+    return src.entries.filter { !it.value.isNullOrBlank() }.map { it.key to it.value }
 }
 
 /** Response của add/update 1 item ({ item, order }) — cần item.id sau autosave thêm dòng. */
@@ -162,6 +185,18 @@ data class SnapshotDto(
 data class MetaDto(
     val fulfillment: FulfillmentDto? = null,
     @SerializedName("vat_price_type") val vatPriceType: String? = null, // inclusive|exclusive (hình thức giá HĐ đã lưu)
+    // Đơn bù kiểm kho: giao xong tự link phiên (resolve dòng type='linked').
+    @SerializedName("stocktake_bu") val stocktakeBu: Boolean = false,
+    @SerializedName("stocktake_session_id") val stocktakeSessionId: Long? = null,
+    // Phí ship KHO chịu → BE tạo chi phí SHIP_EXP lúc fulfill và ghi id vào đây.
+    val ship: ShipMetaDto? = null,
+)
+
+/** meta.ship — tóm tắt chi phí SHIP_EXP của đơn (chỉ có sau khi đã giao). */
+data class ShipMetaDto(
+    @SerializedName("company_fee") val companyFee: Double? = null,
+    @SerializedName("expense_id") val expenseId: Long? = null,
+    @SerializedName("expense_code") val expenseCode: String? = null,
 )
 
 data class FulfillmentDto(
@@ -220,6 +255,10 @@ data class CasherDto(
     @SerializedName("current_balance") val currentBalance: Double = 0.0,   // số dư hiện tại (auto-sync)
     @SerializedName("is_active") val isActive: Boolean = true,
     @SerializedName("is_default") val isDefault: Boolean = false,
+    @SerializedName("bank_bin") val bankBin: String? = null,               // BIN NH → dựng VietQR
+    @SerializedName("bank_account") val bankAccount: String? = null,       // số TK nhận
+    @SerializedName("bank_name") val bankName: String? = null,
+    @SerializedName("is_default_receive") val isDefaultReceive: Boolean = false,   // TK NH nhận mặc định
     @SerializedName("warehouse_id") val warehouseId: Long? = null,
 )
 
@@ -234,6 +273,7 @@ data class MoneyTransactionDto(
     @SerializedName("casher_id") val casherId: Long? = null,
     @SerializedName("bank_name") val bankName: String? = null,
     @SerializedName("bank_account") val bankAccount: String? = null,
+    @SerializedName("purpose_label") val purposeLabel: String? = null,
     @SerializedName("purpose_detail") val purposeDetail: String? = null,
     val amount: Double = 0.0,
     val code: String = "",
@@ -243,6 +283,20 @@ data class MoneyTransactionDto(
     @SerializedName("debt_calc") val debtCalc: String? = null,
     @SerializedName("money_calc") val moneyCalc: String? = null,
     @SerializedName("auto_matched") val autoMatched: Boolean = false,
+    val meta: MoneyTxMetaDto? = null,          // payee_* đóng dấu khi khớp mã QR trả phí
+)
+
+/** Phần meta cần dùng của GD: TK người nhận (suy ngược "đã trả tới ai"). */
+data class MoneyTxMetaDto(
+    @SerializedName("payee_account") val payeeAccount: String? = null,
+    @SerializedName("payee_bank_bin") val payeeBankBin: String? = null,
+    @SerializedName("payee_name") val payeeName: String? = null,
+)
+
+/** 1 ngân hàng từ GET /v1/vietqr/banks — chỉ giữ field cần để suy tên viết tắt từ BIN. */
+data class VietqrBankDto(
+    val bin: String = "",
+    @SerializedName("shortName") val shortName: String = "",
 )
 
 data class ExpenseCategoryDto(
@@ -449,6 +503,14 @@ data class StocktakeSessionDto(
     val summary: StocktakeSessionSummary = StocktakeSessionSummary(),
     val lines: List<StocktakeSessionLineDto> = emptyList(),
     val analysis: List<StocktakeProductAnalysisDto> = emptyList(),   // engine chẩn đoán (P1)
+    /** Chỉ có ở phản hồi "đếm lại" — BE trả gộp cùng object phiên. */
+    val recount: StocktakeRecountDto? = null,
+)
+
+/** Kết quả đếm lại: bao nhiêu biến thể hết lệch / bao nhiêu chỉ đổi số mà vẫn lệch. */
+data class StocktakeRecountDto(
+    val cleared: Int = 0,
+    val updated: Int = 0,
 )
 data class StocktakeProductAnalysisDto(
     @SerializedName("product_id") val productId: Long? = null,
@@ -513,6 +575,26 @@ data class StocktakeAllocReq(
     @SerializedName("party_id") val partyId: Long,             // order→customer | purchase→supplier
     val qty: Double,
 )
+
+// Tạo đơn bù từ màn kho (né gate order.create) → đơn nháp→duyệt (chưa trừ tồn).
+// NV mở /kho/orders/{id} nhập ship/thu hộ/ảnh rồi giao → trừ tồn + tự link phiên.
+data class StocktakeBuOrderReq(
+    val type: String,                                          // sale | purchase
+    @SerializedName("party_id") val partyId: Long,
+    val note: String? = null,
+    @SerializedName("discount_amount") val discountAmount: Double? = null,   // giảm cả đơn (chỉ sale)
+    val items: List<StocktakeBuItemReq>,
+)
+data class StocktakeBuItemReq(
+    @SerializedName("variant_id") val variantId: Long,
+    @SerializedName("unit_id") val unitId: Long? = null,
+    val qty: Double,
+)
+data class StocktakeBuOrderResult(
+    @SerializedName("order_id") val orderId: Long = 0,
+    @SerializedName("order_code") val orderCode: String? = null,
+)
+data class LinkOrderReq(@SerializedName("order_id") val orderId: Long)
 
 // Báo cáo kiểm kho trong ngày (sai lệch, dedupe lần đếm cuối, bỏ khớp).
 data class StocktakeReportDto(
@@ -698,6 +780,23 @@ data class VatOutputItemDto(
     val total: Double = 0.0,              // thành tiền đã gồm VAT (gross) dòng
 )
 
+/** HĐ VAT đầu vào (mua) — read-only cho thẻ invoice dir=in. Summary (không items). */
+data class VatInputInvoiceDto(
+    val id: Long = 0,
+    val number: String? = null,
+    val series: String? = null,
+    @SerializedName("seller_name") val sellerName: String? = null,
+    @SerializedName("seller_tax_code") val sellerTaxCode: String? = null,
+    val subtotal: Double = 0.0,
+    @SerializedName("vat_amount") val vatAmount: Double = 0.0,
+    val total: Double = 0.0,
+    @SerializedName("issue_date") val issueDate: String? = null,
+    @SerializedName("cqt_status_label") val cqtStatusLabel: String? = null,
+    @SerializedName("cqt_code") val cqtCode: String? = null,
+    @SerializedName("payment_status") val paymentStatus: String? = null,
+    @SerializedName("paid_amount") val paidAmount: Double = 0.0,
+)
+
 /** Kết quả Upload PO → AI tạo HĐ VAT nháp. */
 data class PoDraftResultDto(
     val order: OrderDto? = null,
@@ -732,12 +831,13 @@ data class PoRepricedItemDto(
     val source: String? = null,
 )
 
-/** Mặt hàng trong PO mà AI không khớp được với sản phẩm hệ thống. */
+/** Mặt hàng trong PO mà AI không khớp được với sản phẩm/đơn vị hệ thống. */
 data class PoUnresolvedDto(
     val name: String? = null,
     val code: String? = null,
     val qty: Double? = null,
-    val reason: String? = null,
+    val unit: String? = null,                 // đơn vị PO (khi reason=unit_not_found)
+    val reason: String? = null,               // product_not_found | unit_not_found
 )
 
 /** Ảnh HĐ nháp render từng trang (data URL base64). */
@@ -829,7 +929,7 @@ data class CreateOrderRequest(
     val type: String = "sale",
     @SerializedName("is_invoice_only") val isInvoiceOnly: Boolean? = null, // đơn ảo HĐ VAT (không trừ kho)
     @SerializedName("party_type") val partyType: String = "customer",
-    @SerializedName("party_id") val partyId: Long,
+    @SerializedName("party_id") val partyId: Long? = null,                  // null cho đơn NHÁP chưa chọn khách
     val status: String = "draft",                                          // draft | confirmed
     @SerializedName("ordered_at") val orderedAt: String? = null,           // ngày đơn (ISO)
     @SerializedName("warehouse_id") val warehouseId: Long? = null,         // kho bán → NV kho đó thấy
@@ -840,7 +940,7 @@ data class CreateOrderRequest(
     @SerializedName("discount_reason") val discountReason: String? = null,  // lý do giảm cả đơn
     @SerializedName("dropship_customer_id") val dropshipCustomerId: Long? = null, // đơn nhập giao thẳng → KH nhận
     val reference: String? = null,                                          // số PO của khách (HĐ VAT)
-    val items: List<CreateOrderItem>,
+    val items: List<CreateOrderItem>? = null,                               // null → BE giữ nguyên item (update draft) / rỗng khi tạo nháp
     val notes: String? = null,
     @SerializedName("created_by_user_id") val createdByUserId: Long? = null, // 9chat user id
 )
@@ -991,4 +1091,134 @@ data class PnLOrderDetailDto(
     @SerializedName("net_profit") val netProfit: Double = 0.0,
     @SerializedName("net_margin_percent") val netMarginPercent: Double = 0.0,
     val items: List<PnLOrderItemDto> = emptyList(),
+)
+
+// ===== QR chuyển khoản: trả phí ship bằng cách quét QR người nhận =====
+
+/** Khoản ứng/chi hộ ship chưa chi từ sổ quỹ nào (GET v1/expenses/advances/pending). */
+data class PendingAdvanceDto(
+    @SerializedName("advance_id") val advanceId: Long,
+    @SerializedName("code") val code: String? = null,
+    @SerializedName("customer_id") val customerId: Long? = null,
+    @SerializedName("order_id") val orderId: Long? = null,
+    @SerializedName("order_code") val orderCode: String? = null,
+    @SerializedName("amount") val amount: Double? = null,
+    @SerializedName("remaining") val remaining: Double? = null,
+    @SerializedName("description") val description: String? = null,
+)
+
+/**
+ * Một khoản ship còn phải trả không — BE quyết, client KHÔNG tự suy.
+ * `reason` là câu tiếng Việt hiện nguyên văn khi payable=false.
+ */
+data class ShipPayablePartDto(
+    @SerializedName("fee") val fee: Double = 0.0,
+    @SerializedName("expense_id") val expenseId: Long? = null,
+    @SerializedName("code") val code: String? = null,
+    @SerializedName("remaining") val remaining: Double? = null,
+    @SerializedName("payable") val payable: Boolean = false,
+    @SerializedName("paid") val paid: Boolean = false,                 // đã chi/đối soát xong
+    @SerializedName("paid_tx_id") val paidTxId: Long? = null,          // id giao dịch tất toán (mở chi tiết)
+    @SerializedName("paid_tx_code") val paidTxCode: String? = null,    // mã giao dịch tất toán
+    @SerializedName("reason") val reason: String? = null,
+)
+
+data class ShipGroupPayableDto(
+    @SerializedName("payable") val payable: Boolean = false,
+    @SerializedName("total") val total: Double? = null,
+    @SerializedName("reason") val reason: String? = null,
+)
+
+/** Nguồn chung nội dung CK QR nhận tiền của KH — POST /v1/customers/{id}/qr-content. */
+data class QrContentReq(@SerializedName("ensure_code") val ensureCode: Boolean = true)
+data class QrContentDto(
+    @SerializedName("identity_code") val identityCode: String? = null,
+    @SerializedName("content") val content: String = "",
+    @SerializedName("suffix") val suffix: String = "",
+    @SerializedName("created") val created: Boolean = false,
+)
+
+/** Nguồn chuẩn cho nút quét QR trả ship — xem GET /v1/orders/{id}/ship-payables. */
+data class ShipPayablesDto(
+    @SerializedName("delivered") val delivered: Boolean = false,
+    @SerializedName("customer") val customer: ShipPayablePartDto = ShipPayablePartDto(),
+    @SerializedName("company") val company: ShipPayablePartDto = ShipPayablePartDto(),
+    @SerializedName("group") val group: ShipGroupPayableDto = ShipGroupPayableDto(),
+)
+
+/**
+ * Khoản chi — chỉ lấy phần cần để quyết định CÓ CHO TRẢ TIẾP hay không.
+ *
+ * `remaining_amount` là accessor phía server, đã gom đủ mọi đường tất toán:
+ * status paid/reimbursed → 0, ứng ship có disbursed_at → 0, còn lại =
+ * amount − paid_amount. Nên chỉ cần nhìn con số này, KHÔNG tự suy từ status
+ * (status mang nhiều trục nghĩa khác nhau).
+ */
+data class ExpenseBriefDto(
+    @SerializedName("id") val id: Long,
+    @SerializedName("code") val code: String? = null,
+    @SerializedName("status") val status: String? = null,
+    @SerializedName("remaining_amount") val remainingAmount: Double? = null,
+)
+
+/** Body xin mã đối soát. `amount` để server đối chiếu với số tiền GD khi về. */
+data class QrRefRequest(
+    @SerializedName("amount") val amount: Double? = null,
+    @SerializedName("note") val note: String? = null,
+)
+
+/** `content` = chuỗi nội dung CK đã ghép "<MÃ> <diễn giải>" — dùng nguyên văn. */
+data class QrRefDto(
+    @SerializedName("ref") val ref: String,
+    @SerializedName("content") val content: String,
+)
+
+/**
+ * Nhân viên — chỉ lấy phần cần để dựng QR trả tiền ship.
+ * bank_bin + bank_account có thể null (chưa khai báo) → lọc bỏ trước khi hiện.
+ */
+data class StaffDto(
+    @SerializedName("id") val id: Long,
+    @SerializedName("name") val name: String? = null,
+    @SerializedName("employee_code") val employeeCode: String? = null,
+    @SerializedName("bank_bin") val bankBin: String? = null,
+    @SerializedName("bank_account") val bankAccount: String? = null,
+    @SerializedName("bank_name") val bankName: String? = null,
+    @SerializedName("account_holder") val accountHolder: String? = null,
+)
+
+/** Body xin MỘT mã dùng chung cho NHIỀU khoản chi → trả gộp 1 lần chuyển khoản. */
+data class QrRefGroupRequest(
+    @SerializedName("expense_ids") val expenseIds: List<Long>,
+    @SerializedName("note") val note: String? = null,
+)
+
+/**
+ * `total` = tổng server tự chốt từ remaining_amount của từng khoản. QR PHẢI mang
+ * đúng số này: matcher so tổng, lệch là bỏ qua để khớp tay.
+ */
+data class QrRefGroupDto(
+    @SerializedName("ref") val ref: String,
+    @SerializedName("content") val content: String,
+    @SerializedName("total") val total: Double,
+)
+
+data class VietqrLookupRequest(
+    @SerializedName("bin") val bin: String,
+    @SerializedName("account_number") val accountNumber: String,
+)
+
+data class VietqrLookupDto(
+    @SerializedName("account_name") val accountName: String? = null,
+)
+
+/** App ngân hàng + deeplink mở app. `autofill` 1 = mở thẳng màn quét mã. */
+data class BankAppDto(
+    @SerializedName("appId") val appId: String,
+    @SerializedName("appName") val appName: String? = null,
+    @SerializedName("bankName") val bankName: String? = null,
+    @SerializedName("appLogo") val appLogo: String? = null,
+    @SerializedName("monthlyInstall") val monthlyInstall: Long? = null,
+    @SerializedName("deeplink") val deeplink: String,
+    @SerializedName("autofill") val autofill: Int? = null,
 )

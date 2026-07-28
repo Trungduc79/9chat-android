@@ -20,13 +20,19 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePickerDefaults
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,9 +41,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -51,6 +61,7 @@ import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.PayExpenseRequest
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
+import vn.chat9.app.ui.transaction.MoneyTxDetailSheet
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -58,6 +69,9 @@ import java.util.Locale
 
 private val moneyFmt = NumberFormat.getNumberInstance(Locale("vi"))
 private fun fmtMoney(n: Double): String = moneyFmt.format(n.toLong())
+
+private val apiDayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)   // from/to gửi BE
+private val btnDayFmt = SimpleDateFormat("dd/MM", Locale("vi"))     // nhãn nút lọc
 
 private fun casherTypeLabel(t: String): String = when (t) {
     "main" -> "Tài khoản chính"; "bank_account" -> "Tài khoản ngân hàng"
@@ -71,10 +85,21 @@ private fun moneyTxTypeLabel(t: String): String = when (t) {
     "cash_withdrawal" -> "Rút tiền mặt"; else -> t
 }
 
-/** "2026-07-08 14:00:00" / ISO → "14:00 08/07". Fallback: chuỗi gốc. */
+/**
+ * GD tiền ra trả tiền ship hiện type sup_bank_out ("Trả NCC (bank)"). Đổi nhãn theo
+ * mục đích thực (settlements.purpose_label do BE dựng): chi phí → "Ghi trả phí",
+ * chi hộ/ứng khách → "Tạm ứng". Mục đích khác giữ nguyên nhãn theo type.
+ */
+private fun txTypeTag(tx: MoneyTransactionDto): String = when (tx.purposeLabel) {
+    "Chi phí" -> "Ghi trả phí"
+    "Chi hộ KH" -> "Tạm ứng"
+    else -> moneyTxTypeLabel(tx.type)
+}
+
+/** "2026-07-08 14:00:00" / ISO → "14:00  08/07/2026". Fallback: chuỗi gốc. */
 private fun fmtTxTime(s: String): String = try {
     val d = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(s.replace('T', ' ').take(19))
-    SimpleDateFormat("HH:mm dd/MM", Locale.US).format(d!!)
+    SimpleDateFormat("HH:mm  dd/MM/yyyy", Locale.US).format(d!!)
 } catch (_: Exception) { s }
 
 private val CASH_CASHER_TYPES = setOf("petty_cash", "safe")
@@ -87,6 +112,7 @@ private val CASH_CASHER_TYPES = setOf("petty_cash", "safe")
  * Sheet dùng overlay Box tự vẽ (KHÔNG ModalBottomSheet) → ở CÙNG window nên không bật
  * thanh điều hướng thiết bị + không vuốt-xuống-tắt; chỉ đóng bằng scrim/nút.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountingCashflowTab() {
     val context = LocalContext.current
@@ -99,12 +125,23 @@ fun AccountingCashflowTab() {
     var loading by remember { mutableStateOf(true) }
     var refreshTick by remember { mutableStateOf(0) }
     var dirFilter by remember { mutableStateOf("all") }   // all|in|out
+    // Lọc theo khoảng thời gian (ngày GD) — null = không lọc.
+    var startDateMs by remember { mutableStateOf<Long?>(null) }
+    var endDateMs by remember { mutableStateOf<Long?>(null) }
+    var datePickerOpen by remember { mutableStateOf(false) }
+    // Lọc theo sổ quỹ: chọn 1 chip → 30 GD gần nhất của sổ đó; null = tất cả (80 GD).
+    var selectedCasherId by remember { mutableStateOf<Long?>(null) }
 
-    LaunchedEffect(refreshTick) {
+    LaunchedEffect(refreshTick, startDateMs, endDateMs, selectedCasherId) {
         loading = true
         try {
             cashers = container.vapi.listCashers(1, 100).data ?: emptyList()
-            txs = container.vapi.listMoneyTransactions(80).data ?: emptyList()
+            txs = container.vapi.listMoneyTransactions(
+                if (selectedCasherId != null) 30 else 80,
+                startDateMs?.let { apiDayFmt.format(Date(it)) },
+                endDateMs?.let { apiDayFmt.format(Date(it)) },
+                selectedCasherId,
+            ).data ?: emptyList()
         } catch (_: Exception) {}
         loading = false
     }
@@ -124,17 +161,41 @@ fun AccountingCashflowTab() {
                 Text("Tổng số dư quỹ hiện tại", color = AdminColors.TextMuted, fontSize = 11.sp)
                 Text("${fmtMoney(totalBalance)} đ", color = AdminColors.Text, fontSize = 24.sp, fontWeight = FontWeight.Medium)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    cashers.forEach { c ->
-                        Column(Modifier.clip(RoundedCornerShape(6.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    // Chip sổ quỹ vừa hiện số dư vừa là bộ lọc: click → 30 GD gần nhất của sổ đó.
+                    // Xếp theo số dư giảm dần (trái → phải).
+                    cashers.sortedByDescending { it.currentBalance }.forEach { c ->
+                        val sel = selectedCasherId == c.id
+                        Column(
+                            Modifier.clip(RoundedCornerShape(6.dp))
+                                .background(if (sel) AdminColors.Primary.copy(alpha = 0.12f) else AdminColors.Bg)
+                                .border(1.dp, if (sel) AdminColors.Primary else Color.Transparent, RoundedCornerShape(6.dp))
+                                .clickable { selectedCasherId = if (sel) null else c.id }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
                             Text(c.name, color = AdminColors.TextMuted, fontSize = 11.sp, maxLines = 1)
                             Text("${fmtMoney(c.currentBalance)} đ", color = AdminColors.Text, fontSize = 13.sp)
                         }
                     }
                 }
+                if (selectedCasherId != null) {
+                    val name = cashers.firstOrNull { it.id == selectedCasherId }?.name ?: ""
+                    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("30 GD gần nhất của: $name", color = AdminColors.Primary, fontSize = 11.sp)
+                        Text(
+                            "Bỏ lọc", color = AdminColors.Primary, fontSize = 11.sp,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.clickable { selectedCasherId = null },
+                        )
+                    }
+                }
             }
 
-            // ===== Lọc chiều tiền =====
-            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // ===== Lọc chiều tiền + khoảng thời gian =====
+            Row(
+                Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 listOf("all" to "Tất cả", "in" to "Thu", "out" to "Chi").forEach { (key, label) ->
                     val sel = dirFilter == key
                     Text(
@@ -144,6 +205,21 @@ fun AccountingCashflowTab() {
                             .clickable { dirFilter = key }.padding(horizontal = 14.dp, vertical = 5.dp),
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                val hasRange = startDateMs != null || endDateMs != null
+                val rangeLabel = when {
+                    startDateMs != null && endDateMs != null -> "${btnDayFmt.format(Date(startDateMs!!))}–${btnDayFmt.format(Date(endDateMs!!))}"
+                    startDateMs != null -> "Từ ${btnDayFmt.format(Date(startDateMs!!))}"
+                    endDateMs != null -> "Đến ${btnDayFmt.format(Date(endDateMs!!))}"
+                    else -> "Khoảng ngày"
+                }
+                Text(
+                    rangeLabel, color = if (hasRange) AdminColors.Primary else AdminColors.TextMuted, fontSize = 12.sp, maxLines = 1,
+                    modifier = Modifier.clip(RoundedCornerShape(999.dp))
+                        .background(if (hasRange) AdminColors.Primary.copy(alpha = 0.12f) else Color.Transparent)
+                        .border(1.dp, if (hasRange) AdminColors.Primary else AdminColors.Border, RoundedCornerShape(999.dp))
+                        .clickable { datePickerOpen = true }.padding(horizontal = 12.dp, vertical = 5.dp),
+                )
             }
 
             // ===== Danh sách GD =====
@@ -172,29 +248,9 @@ fun AccountingCashflowTab() {
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
         ) { Icon(Icons.Default.Add, "Tạo giao dịch tiền mặt") }
 
-        // ===== Overlay chi tiết GD (read-only) =====
+        // ===== Overlay chi tiết GD (read-only) — drawer DÙNG CHUNG với tích xanh ship ở đơn hàng =====
         detailTx?.let { tx ->
-            AccSheet(tx.code.ifBlank { "Giao dịch" }, onClose = { detailTx = null }) {
-                DetailRow("Loại", moneyTxTypeLabel(tx.type))
-                DetailRow(
-                    "Số tiền",
-                    (if (tx.direction == "in") "+" else if (tx.direction == "out") "−" else "") + "${fmtMoney(tx.amount)} đ",
-                    if (tx.direction == "in") AdminColors.Success else AdminColors.Danger,
-                )
-                DetailRow("Ngày", fmtTxTime(tx.date))
-                casherOf(tx.casherId)?.let { DetailRow("Sổ quỹ", "${it.name} (${casherTypeLabel(it.type)})") }
-                if (!tx.bankName.isNullOrBlank() || !tx.bankAccount.isNullOrBlank())
-                    DetailRow("Ngân hàng", "${tx.bankName ?: ""} ${tx.bankAccount ?: ""}".trim())
-                if (!tx.purposeDetail.isNullOrBlank()) DetailRow("Đã phân bổ", tx.purposeDetail!!, AdminColors.Primary)
-                Spacer(Modifier.height(4.dp))
-                Text("Nội dung", color = AdminColors.TextMuted, fontSize = 12.sp)
-                Text(tx.description ?: tx.reference ?: "—", color = AdminColors.Text, fontSize = 14.sp)
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (!tx.debtCalc.isNullOrBlank()) MiniTag("Đã chốt công nợ", AdminColors.Danger)
-                    if (!tx.moneyCalc.isNullOrBlank()) MiniTag("Đã chốt sổ quỹ", AdminColors.Danger)
-                    if (tx.autoMatched) MiniTag("Tự đối soát", AdminColors.Success)
-                }
-            }
+            MoneyTxDetailSheet(tx = tx, onClose = { detailTx = null })
         }
 
         // ===== Overlay menu chọn loại GD =====
@@ -234,6 +290,52 @@ fun AccountingCashflowTab() {
                 },
             )
         }
+
+        // ===== Dialog chọn khoảng ngày (M3 DateRangePicker) =====
+        // Dùng lại mẫu overflow-safe của SaleOrdersList: bỏ title/mode-toggle, headline
+        // 1 dòng no-wrap → không tràn màn hình điện thoại.
+        if (datePickerOpen) {
+            val rangeState = rememberDateRangePickerState(
+                initialSelectedStartDateMillis = startDateMs,
+                initialSelectedEndDateMillis = endDateMs,
+            )
+            val headFmt = SimpleDateFormat("dd/MM/yyyy", Locale("vi"))
+            MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
+                DatePickerDialog(
+                    onDismissRequest = { datePickerOpen = false },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            startDateMs = rangeState.selectedStartDateMillis
+                            endDateMs = rangeState.selectedEndDateMillis
+                            datePickerOpen = false
+                        }) { Text("OK", color = AdminColors.Primary) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = {
+                            startDateMs = null; endDateMs = null; datePickerOpen = false
+                        }) { Text("Xoá lọc", color = AdminColors.TextMuted) }
+                    },
+                    colors = DatePickerDefaults.colors(containerColor = AdminColors.Card),
+                ) {
+                    DateRangePicker(
+                        state = rangeState,
+                        modifier = Modifier.weight(1f),
+                        title = {},
+                        showModeToggle = false,
+                        headline = {
+                            val s = rangeState.selectedStartDateMillis
+                            val e = rangeState.selectedEndDateMillis
+                            Text(
+                                text = (s?.let { headFmt.format(Date(it)) } ?: "Bắt đầu") + "  –  " + (e?.let { headFmt.format(Date(it)) } ?: "Kết thúc"),
+                                color = AdminColors.Text, fontSize = 16.sp, maxLines = 1, softWrap = false,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -241,29 +343,36 @@ fun AccountingCashflowTab() {
 private fun TxRow(tx: MoneyTransactionDto, casherName: String?, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         Box(
-            Modifier.size(8.dp).clip(CircleShape).background(
+            Modifier.padding(top = 5.dp).size(8.dp).clip(CircleShape).background(
                 when (tx.direction) { "in" -> AdminColors.Success; "out" -> AdminColors.Danger; else -> Color(0xFFE2A03F) },
             ),
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(tx.code, color = AdminColors.TextMuted, fontSize = 11.sp)
-                Text(moneyTxTypeLabel(tx.type), color = AdminColors.TextMuted, fontSize = 11.sp)
+            // Dòng trên: giờ + badge (trái), số tiền (phải).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(fmtTxTime(tx.date), color = AdminColors.TextMuted, fontSize = 11.sp)
+                Spacer(Modifier.width(6.dp))
+                // Badge phân loại: nền mờ xám giống NTag trên web. Giảm chiều cao nền ~25% bằng
+                // includeFontPadding=false + padding dọc 1dp (không ép lineHeight để không cắt dấu).
+                Text(
+                    txTypeTag(tx), color = AdminColors.TextMuted, fontSize = 11.sp,
+                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(AdminColors.Border).padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    (if (tx.direction == "in") "+" else if (tx.direction == "out") "−" else "") + fmtMoney(tx.amount),
+                    color = when (tx.direction) { "in" -> AdminColors.Success; "out" -> AdminColors.Danger; else -> AdminColors.Text },
+                    fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                )
             }
-            Text(tx.description ?: tx.reference ?: casherName ?: "—", color = AdminColors.TextMuted, fontSize = 12.sp, maxLines = 1)
-        }
-        Spacer(Modifier.width(8.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                (if (tx.direction == "in") "+" else if (tx.direction == "out") "−" else "") + fmtMoney(tx.amount),
-                color = when (tx.direction) { "in" -> AdminColors.Success; "out" -> AdminColors.Danger; else -> AdminColors.Text },
-                fontSize = 14.sp, fontWeight = FontWeight.Medium,
-            )
-            Text(fmtTxTime(tx.date), color = AdminColors.TextMuted, fontSize = 11.sp)
+            Spacer(Modifier.height(5.dp))
+            // Nội dung chuyển khoản: full width, 1 dòng, tràn thì cắt (…).
+            Text(tx.description ?: tx.reference ?: casherName ?: "—", color = AdminColors.TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
