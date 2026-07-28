@@ -142,7 +142,7 @@ fun MoneyTxDetailSheet(tx: MoneyTransactionDto, feeLabel: String? = null, onClos
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     HeaderAction(Icons.Default.ContentCopy, "Copy") { copyText(ctx, transferText(tx, bankShort)) }
-                    HeaderAction(Icons.Default.Share, "Chia sẻ") { shareText(ctx, tx.code, transferText(tx, bankShort)) }
+                    HeaderAction(Icons.Default.Share, "Chia sẻ") { shareText(ctx, transferText(tx, bankShort)) }
                 }
             }
             HorizontalDivider(color = AdminColors.Border, thickness = 1.dp)
@@ -223,10 +223,9 @@ private fun copyText(ctx: Context, text: String) {
     Toast.makeText(ctx, "Đã copy thông tin chuyển khoản", Toast.LENGTH_SHORT).show()
 }
 
-private fun shareText(ctx: Context, title: String, text: String) {
+private fun shareText(ctx: Context, text: String) {
     val send = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, title)
         putExtra(Intent.EXTRA_TEXT, text)
     }
     ctx.startActivity(Intent.createChooser(send, "Chia sẻ"))
