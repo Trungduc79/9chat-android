@@ -160,7 +160,19 @@ fun LoginScreen(
                             error = res.message ?: "Đăng nhập thất bại"
                         }
                     } catch (e: Exception) {
-                        error = "Lỗi kết nối server"
+                        android.util.Log.e("Login", "Error", e)
+                        // Lộ mã lỗi thật để chẩn đoán: HTTP code + body nếu là lỗi
+                        // server, ngược lại tên exception + message (phân biệt lỗi
+                        // mạng / SSL / parse JSON).
+                        error = when (e) {
+                            is retrofit2.HttpException -> {
+                                val body = runCatching {
+                                    e.response()?.errorBody()?.string()
+                                }.getOrNull().orEmpty().take(300)
+                                "HTTP ${e.code()} ${e.message()} $body".trim()
+                            }
+                            else -> "${e.javaClass.simpleName}: ${e.message ?: "(no message)"}"
+                        }
                     }
                     isLoading = false
                 }
