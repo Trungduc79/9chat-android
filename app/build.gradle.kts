@@ -27,6 +27,11 @@ fun signingProp(key: String, env: String): String? =
 // Build local không truyền → giữ 1 / "1.0" như cũ.
 val ciVerCode: Int = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
 val ciVerName: String = (project.findProperty("verName") as String?) ?: "1.0"
+// Chỉ build qua pipeline (CI / deploy-local.sh) mới truyền -PverCode → mới bật
+// in-app updater. Build tay (Android Studio, không -PverCode) → tắt, tránh app
+// nhắc "cần update" vô nghĩa (versionCode fallback=1 < bản trên VPS) và tránh
+// tải đè bản cũ lên bản test.
+val isPipelineBuild: Boolean = project.hasProperty("verCode")
 
 android {
     namespace = "vn.chat9.app"
@@ -45,6 +50,8 @@ android {
         buildConfigField("String", "SOCKET_URL", "\"https://9chat.vn\"")
         // Manifest cập nhật (tự-host). App đọc file này lúc mở để biết có bản mới.
         buildConfigField("String", "UPDATE_MANIFEST_URL", "\"https://9chat.vn/app/version.json\"")
+        // Chỉ bản pipeline mới tự kiểm tra cập nhật (xem isPipelineBuild).
+        buildConfigField("boolean", "AUTO_UPDATE_ENABLED", "$isPipelineBuild")
         // vapi gateway (backend nghiệp vụ — khác 9chat). Key embed từ local.properties.
         buildConfigField("String", "VAPI_BASE_URL", "\"https://vapi.vn/api/\"")
         buildConfigField("String", "VAPI_API_KEY", "\"$vapiApiKey\"")

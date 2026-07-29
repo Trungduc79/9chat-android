@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import vn.chat9.app.BuildConfig
 
 /**
  * Kiểm tra bản cập nhật khi app mở và hiện hộp thoại nếu có bản mới.
@@ -19,6 +20,10 @@ import androidx.compose.ui.platform.LocalContext
  */
 @Composable
 fun UpdateGate() {
+    // Build tay (Android Studio, không -PverCode) không kiểm tra cập nhật —
+    // versionCode fallback=1 luôn nhỏ hơn bản trên VPS nên sẽ nhắc update nhầm.
+    if (!BuildConfig.AUTO_UPDATE_ENABLED) return
+
     val context = LocalContext.current
     var info by remember { mutableStateOf<UpdateInfo?>(null) }
     var dismissed by remember { mutableStateOf(false) }
