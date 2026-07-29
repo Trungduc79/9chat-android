@@ -886,6 +886,8 @@ data class VatCostBasisDto(
     @SerializedName("tax_rate") val taxRate: Double = 0.0,
     @SerializedName("cost_net") val costNet: Double? = null,
     @SerializedName("cost_vat_rate") val costVatRate: Double? = null,
+    @SerializedName("total_in") val totalIn: Double = 0.0,        // tổng đã nhập thế giới VAT (đơn vị HĐ)
+    @SerializedName("depleted") val depleted: Boolean = false,    // cost_net=null nhưng ĐÃ nhập (xuất hết lô)
 )
 data class VatCostBasisListDto(val items: List<VatCostBasisDto> = emptyList())
 

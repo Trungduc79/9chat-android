@@ -259,9 +259,19 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
 
     // Cảnh báo hiển thị = tính TẠI CHỖ (đổi ngay khi nhập giá, không đợi server).
     val cardPriceIssues: List<VatPriceIssueDto> = items.mapNotNull { localPriceIssue(it) }
-    // Dòng chưa từng nhập HĐ VAT → không so được giá (hiện nhãn vàng, không chặn).
-    val noCostItems: List<String> = items.filter { it.variantId != 0L && costBasis[it.variantId]?.costNet == null }
-        .map { it.productName }
+    // Không so được giá vốn VAT (nhãn vàng, không chặn) — tách 2 trường hợp khác hẳn:
+    //  - neverPurchased: CHƯA từng nhập SP đó (không lô nào).
+    //  - depleted: ĐÃ nhập nhưng XUẤT HẾT lô (tồn VAT = 0) → kèm tổng đã nhập cho rõ.
+    val neverPurchasedNames: List<String> = items.filter {
+        val cb = if (it.variantId != 0L) costBasis[it.variantId] else null
+        cb != null && cb.costNet == null && !cb.depleted
+    }.map { it.productName }
+    val depletedItems: List<Triple<String, Double, String>> = items.filter {
+        it.variantId != 0L && costBasis[it.variantId]?.depleted == true
+    }.map { d ->
+        val cb = costBasis[d.variantId]
+        Triple(d.productName, cb?.totalIn ?: 0.0, cb?.invoiceUnit ?: "")
+    }
     var eiPreviewUrl by remember { mutableStateOf<String?>(null) }                          // ảnh HĐ trên EI (data URL) để xem full-screen
     var eiLoadingPreview by remember { mutableStateOf(false) }
 
@@ -977,7 +987,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                 else Text("Xem HĐ EI (ký phát hành)")
                             }
                             if (cardPriceIssues.isNotEmpty()) PriceIssueBox(cardPriceIssues, priceType, Modifier.fillMaxWidth().padding(top = 10.dp))
-                            if (noCostItems.isNotEmpty()) NoCostBox(noCostItems, Modifier.fillMaxWidth().padding(top = 10.dp))
+                            if (neverPurchasedNames.isNotEmpty() || depletedItems.isNotEmpty()) NoCostBox(neverPurchasedNames, depletedItems, Modifier.fillMaxWidth().padding(top = 10.dp))
                             if (cardShortages.isNotEmpty()) ShortageBox(cardShortages, Modifier.fillMaxWidth().padding(top = 10.dp))
                         }
                     }
@@ -1007,7 +1017,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                         Spacer(Modifier.height(12.dp))
                         // Giá xuất < giá nhập — cảnh báo ngay khi sửa giá, chưa cần tạo HĐ nháp.
                         if (cardPriceIssues.isNotEmpty()) PriceIssueBox(cardPriceIssues, priceType, Modifier.fillMaxWidth().padding(bottom = 10.dp))
-                        if (noCostItems.isNotEmpty()) NoCostBox(noCostItems, Modifier.fillMaxWidth().padding(bottom = 10.dp))
+                        if (neverPurchasedNames.isNotEmpty() || depletedItems.isNotEmpty()) NoCostBox(neverPurchasedNames, depletedItems, Modifier.fillMaxWidth().padding(bottom = 10.dp))
                         Button(
                             onClick = { openPreview() }, enabled = canEdit && !saving && selectedCustomer != null && items.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(containerColor = AdminColors.Primary), modifier = Modifier.fillMaxWidth(),
@@ -1339,12 +1349,26 @@ private fun PriceIssueBox(issues: List<VatPriceIssueDto>, priceType: String, mod
 
 /** Box "chưa có giá nhập" — VÀNG: mặt hàng chưa từng nhập HĐ VAT → không so được giá (không chặn). */
 @Composable
-private fun NoCostBox(names: List<String>, modifier: Modifier = Modifier) {
+private fun NoCostBox(neverPurchased: List<String>, depleted: List<Triple<String, Double, String>>, modifier: Modifier = Modifier) {
     val amber = Color(0xFFF2C94C)
+    val vn = java.util.Locale("vi", "VN")
     Column(modifier.clip(RoundedCornerShape(8.dp)).border(0.6.dp, amber.copy(alpha = 0.4f), RoundedCornerShape(8.dp)).background(amber.copy(alpha = 0.08f)).padding(8.dp)) {
-        Text("⚠ Chưa có giá nhập (thế giới VAT)", color = amber, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(4.dp))
-        Text("${names.joinToString(", ")} — không kiểm tra được giá xuất.", color = AdminColors.TextMuted, fontSize = 11.sp)
+        // ĐÃ nhập nhưng xuất hết lô (tồn VAT = 0) — kèm tổng đã nhập.
+        if (depleted.isNotEmpty()) {
+            Text("⚠ Hết tồn nhập VAT (đã xuất hết lô)", color = amber, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(4.dp))
+            depleted.forEach { (name, totalIn, unit) ->
+                Text("$name — đã xuất hết ${String.format(vn, "%,.0f", totalIn)} $unit, không còn lô để so giá xuất.",
+                    color = AdminColors.TextMuted, fontSize = 11.sp)
+            }
+        }
+        // Chưa từng nhập SP đó thế giới VAT.
+        if (neverPurchased.isNotEmpty()) {
+            if (depleted.isNotEmpty()) Spacer(Modifier.height(6.dp))
+            Text("⚠ Chưa từng nhập (thế giới VAT)", color = amber, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(4.dp))
+            Text("${neverPurchased.joinToString(", ")} — không kiểm tra được giá xuất.", color = AdminColors.TextMuted, fontSize = 11.sp)
+        }
     }
 }
 
