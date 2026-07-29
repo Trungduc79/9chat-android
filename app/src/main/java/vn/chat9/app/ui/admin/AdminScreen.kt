@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.admin
 
+import vn.chat9.app.ui.common.dialogGlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -241,6 +242,7 @@ private fun ManageUserRolesDialog(
 ) {
     val currentRoleIds = user.roles.map { it.id }.toSet()
     AlertDialog(
+        modifier = Modifier.dialogGlow(),
         onDismissRequest = onDismiss,
         title = { Text("Role của ${user.username}") },
         text = {
@@ -405,6 +407,7 @@ private fun CreateInviteDialog(
     var rolePickerOpen by remember { mutableStateOf(false) }
 
     AlertDialog(
+        modifier = Modifier.dialogGlow(),
         onDismissRequest = onDismiss,
         title = { Text("Tạo link mời") },
         text = {
@@ -465,6 +468,7 @@ private fun CreateInviteDialog(
 
     if (rolePickerOpen) {
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { rolePickerOpen = false },
             title = { Text("Chọn role") },
             text = {
@@ -495,6 +499,7 @@ private fun CreateInviteDialog(
 private fun InviteCreatedDialog(invite: InviteCreated, onDismiss: () -> Unit) {
     val context = LocalContext.current
     AlertDialog(
+        modifier = Modifier.dialogGlow(),
         onDismissRequest = onDismiss,
         title = { Text("Đã tạo link mời") },
         text = {

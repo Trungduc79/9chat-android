@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.modules.warehouse
 
+import vn.chat9.app.ui.common.dialogGlow
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -89,8 +91,11 @@ import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.DeliveredItem
 import vn.chat9.app.data.vapi.dto.FulfillRequest
+import vn.chat9.app.data.vapi.dto.LinkOrderReq
 import vn.chat9.app.data.vapi.dto.OrderDto
 import vn.chat9.app.data.vapi.dto.OrderItemDto
+import vn.chat9.app.data.vapi.dto.ShipPayablePartDto
+import vn.chat9.app.data.vapi.dto.ShipPayablesDto
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import vn.chat9.app.ui.common.NumEditHint
@@ -131,6 +136,19 @@ fun WarehouseOrderDetail(
     var datePickerOpen by remember { mutableStateOf(false) }
     // Drop-ship: hỏi xác nhận giao kèm đơn bán liên kết trước khi fulfill.
     var dropshipConfirmOpen by remember { mutableStateOf(false) }
+    // Trả phí ship KH: quét QR người nhận → tự tạo mã, lưu ảnh, mở app ngân hàng.
+    // Quét QR trả ship — dùng CHUNG cho 2 dòng phí nhưng khoản chi đứng sau khác
+    // nhau: ship KH = khoản ứng SHIP_ADV (trục customer_debt), ship KHO = chi phí
+    // SHIP_EXP (trục expense). BE tự phân trục qua buildSettleLine.
+    var scanPayOpen by remember { mutableStateOf(false) }
+    var shipQrIsCompany by remember { mutableStateOf(false) }
+    var shipQrExpenseId by remember { mutableStateOf<Long?>(null) }
+
+    // Tình trạng 2 khoản ship — HỎI BE, không tự suy. Đã đối soát/thanh toán rồi
+    // thì khoá hẳn nút QR (quét tiếp là trả lần hai). Hỏi ngay lúc nạp đơn để nút
+    // hiện đúng trạng thái, không đợi bấm mới báo — bấm rồi mới báo thì camera đã
+    // bật, người dùng tưởng hỏng. null = chưa hỏi xong.
+    var shipPayables by remember { mutableStateOf<ShipPayablesDto?>(null) }
 
     LaunchedEffect(orderId) {
         loading = true; order = null
@@ -146,6 +164,8 @@ fun WarehouseOrderDetail(
             confirmDateMs = dateStr?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
                 ?: System.currentTimeMillis()
             photos = repo.photos(orderId)
+
+            shipPayables = runCatching { container.vapi.shipPayables(orderId).data }.getOrNull()
         } catch (_: Exception) {
             Toast.makeText(ctx, "Không tải được đơn", Toast.LENGTH_SHORT).show()
         }
@@ -156,6 +176,29 @@ fun WarehouseOrderDetail(
     val isPurchase = o?.isPurchase == true
     val consumesStock = !isPurchase
     val canFulfill = o?.status == "confirmed"
+
+    // Đã giao/nhận xong chưa — ĐIỀU KIỆN BẮT BUỘC để quét mã trả tiền ship: khoản
+    // chi (SHIP_ADV lẫn SHIP_EXP) chỉ được BE tạo lúc fulfill, quét trước mốc này
+    // thì không có mã đối soát. Đơn nhập kết thúc ở 'received', đơn bán 'delivered'.
+    val isDelivered = o?.status in listOf("delivered", "received", "completed")
+
+    /**
+     * Chốt chặn TIỀN — mọi điều kiện do BE quyết, ở đây chỉ hiện lý do BE trả về.
+     *
+     * Chưa hỏi xong (null) thì CHẶN thay vì cho qua: chưa biết mà vẫn mở là mở
+     * đường trả trùng; bắt chờ một nhịp rẻ hơn nhiều so với đòi lại tiền.
+     *
+     * @return true = chặn.
+     */
+    fun blockShipQr(part: ShipPayablePartDto?): Boolean {
+        if (part == null) {
+            Toast.makeText(ctx, "Đang kiểm tra tình trạng thanh toán, thử lại sau giây lát", Toast.LENGTH_SHORT).show()
+            return true
+        }
+        if (part.payable) return false
+        Toast.makeText(ctx, part.reason ?: "Khoản này không trả được", Toast.LENGTH_LONG).show()
+        return true
+    }
 
     fun blocked(it: OrderItemDto): Boolean {
         val s = it.stockUnit ?: return false
@@ -215,6 +258,12 @@ fun WarehouseOrderDetail(
                         completedAt = confirmDateMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
                     ),
                 )
+                // Đơn bù kiểm kho: giao xong → link vào phiên (resolve dòng chờ bù type='linked').
+                val stMeta = ord.meta
+                if (stMeta?.stocktakeBu == true && stMeta.stocktakeSessionId != null) {
+                    try { container.vapi.linkStocktakeBuOrder(stMeta.stocktakeSessionId, LinkOrderReq(ord.id)) }
+                    catch (_: Exception) {}   // fail-open: đơn đã giao; NV link tay ở phiên nếu lỗi
+                }
                 val base = if (isPurchase) "Đã xác nhận nhập hàng" else "Đã xác nhận giao hàng"
                 // Drop-ship cascade: nhận đơn nhập → BE tự giao đơn bán liên kết. Báo cho NV.
                 val linked = res?.order?.linkedOrder
@@ -235,6 +284,8 @@ fun WarehouseOrderDetail(
                 } catch (_: Exception) { "" to "" }
                 val msg = when (code) {
                     "DROPSHIP_SALE_VIA_PURCHASE" -> "Đơn bán giao thẳng (drop-ship) — xác nhận qua đơn NHẬP liên kết, không xác nhận riêng."
+                    // Biến thể đang khoá do kiểm kê → chưa giao được (dùng message BE có kèm tên mặt hàng).
+                    "STOCK_LOCKED_BY_STOCKTAKE" -> msgStr.ifBlank { "Mặt hàng đang kiểm kê — chưa giao hàng được. Chốt phiên kiểm kê trước." }
                     else -> msgStr.ifBlank { "Xác nhận thất bại (HTTP ${e.code()})" }
                 }
                 Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
@@ -335,7 +386,7 @@ fun WarehouseOrderDetail(
                         Text("ẢNH", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(55.dp))
                         Spacer(Modifier.width(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Text("MẶT HÀNG", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("MẶT HÀNG", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
                             if (canFulfill) {
                                 Spacer(Modifier.width(6.dp))
                                 Text("SL", fontSize = 11.sp, color = C.TextMuted, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.width(56.dp))
@@ -378,13 +429,38 @@ fun WarehouseOrderDetail(
 
             // Phí ship + Thu hộ — KHÔNG header, mỗi hàng = label(5):(1)input(6), border-bottom only.
             // Đơn bán: 3 hàng + quỹ COD khi >0. Đơn nhập: 1 hàng Phí ship KHO.
-            if (canFulfill) {
+            // Hiện cả khi ĐÃ GIAO (chỉ xem) — nếu chỉ hiện lúc canFulfill thì thẻ
+            // biến mất đúng lúc giao xong, mà đó mới là lúc được phép quét QR trả
+            // tiền → nút sẽ không bao giờ với tới được. Mirror web: thẻ luôn render,
+            // chỉ đổi ô-nhập ↔ text.
+            if (canFulfill || isDelivered) {
                 Surface(shape = RoundedCornerShape(12.dp), color = C.Card, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        if (!isPurchase) ShipFieldRow("Phí ship KH", shipCustomer, focusCenterCtx) { shipCustomer = it }
-                        ShipFieldRow("Phí ship KHO", shipCompany, focusCenterCtx) { shipCompany = it }
+                        if (!isPurchase) ShipFieldRow(
+                            "Phí ship KH", shipCustomer, focusCenterCtx,
+                            onQrClick = {
+                                // expense_id lấy từ BE luôn — không phải tự tra danh sách.
+                                if (blockShipQr(shipPayables?.customer)) return@ShipFieldRow
+                                shipQrIsCompany = false
+                                shipQrExpenseId = shipPayables?.customer?.expenseId
+                                scanPayOpen = true
+                            },
+                            readOnly = !canFulfill,
+                            qrEnabled = shipPayables?.customer?.payable == true,
+                        ) { shipCustomer = it }
+                        ShipFieldRow(
+                            "Phí ship KHO", shipCompany, focusCenterCtx,
+                            onQrClick = {
+                                if (blockShipQr(shipPayables?.company)) return@ShipFieldRow
+                                shipQrIsCompany = true
+                                shipQrExpenseId = shipPayables?.company?.expenseId
+                                scanPayOpen = true
+                            },
+                            readOnly = !canFulfill,
+                            qrEnabled = shipPayables?.company?.payable == true,
+                        ) { shipCompany = it }
                         if (!isPurchase) {
-                            ShipFieldRow("Thu hộ", codAmount, focusCenterCtx) { codAmount = it }
+                            ShipFieldRow("Thu hộ", codAmount, focusCenterCtx, readOnly = !canFulfill) { codAmount = it }
                         }
                     }
                 }
@@ -481,10 +557,24 @@ fun WarehouseOrderDetail(
         }
     }
 
+    // Trả phí ship: quét QR người nhận → tạo mã → lưu ảnh → mở app ngân hàng.
+    if (scanPayOpen) {
+        val raw = if (shipQrIsCompany) shipCompany else shipCustomer
+        val code = order?.code.orEmpty()
+        ScanPayFlow(
+            expenseId = shipQrExpenseId,
+            kind = if (shipQrIsCompany) "expense" else "advance",
+            amount = raw.filter { it.isDigit() }.toLongOrNull() ?: 0L,
+            note = (if (shipQrIsCompany) "Ship kho chiu $code" else "Tra ship $code").trim(),
+            onDismiss = { scanPayOpen = false },
+        )
+    }
+
     // Drop-ship: hỏi xác nhận giao kèm đơn bán liên kết (BE cascade nhập + giao atomic).
     if (dropshipConfirmOpen) {
         val cust = order?.dropshipCustomer ?: "khách hàng"
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { dropshipConfirmOpen = false },
             title = { Text("Xác nhận giao đơn liên quan", color = C.Text) },
             text = {
@@ -818,13 +908,35 @@ private object ThousandsVisualTransformation : VisualTransformation {
     }
 }
 
+/** Nhóm nghìn cho chuỗi chỉ-digit — cùng quy tắc với ThousandsVisualTransformation. */
+private fun groupThousands(digits: String): String {
+    val sb = StringBuilder(digits.length + digits.length / 3)
+    for (i in digits.indices) {
+        sb.append(digits[i])
+        val remaining = digits.length - i - 1
+        if (remaining > 0 && remaining % 3 == 0) sb.append('.')
+    }
+    return sb.toString()
+}
+
 /**
  * Hàng nhập tiền VND theo style web: label(weight 0.42) ":" input(weight 0.58)
  * — input bare có border-BOTTOM only, text căn phải, "đ" suffix; compact ~24dp.
  * Hiển thị tự tách hàng nghìn (1.000.000); state vẫn chỉ digit.
  */
 @Composable
-private fun ShipFieldRow(label: String, value: String, focusCtx: FocusCenterCtx, onChange: (String) -> Unit) {
+internal fun ShipFieldRow(
+    label: String,
+    value: String,
+    focusCtx: FocusCenterCtx,
+    /** Có thì dấu ":" đổi thành nút QR (mirror web) — quét QR người nhận để trả tiền. */
+    onQrClick: (() -> Unit)? = null,
+    /** Đơn đã giao → phí đã chốt, chỉ xem (mirror web: v-if="canFulfill" input : text). */
+    readOnly: Boolean = false,
+    /** Chưa giao thì làm mờ nút QR — vẫn bấm được để hiện lý do. */
+    qrEnabled: Boolean = true,
+    onChange: (String) -> Unit,
+) {
     var fieldYInWindow by remember { mutableStateOf(0f) }
     var fieldHeightPx by remember { mutableStateOf(0f) }
     val scope = rememberCoroutineScope()
@@ -833,9 +945,42 @@ private fun ShipFieldRow(label: String, value: String, focusCtx: FocusCenterCtx,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
     ) {
         Text(label, fontSize = 12.sp, color = C.TextMuted, modifier = Modifier.weight(0.42f))
-        Text(":", fontSize = 12.sp, color = C.TextMuted)
+        // Hộp CỐ ĐỊNH cho cả hai: IconButton rộng 24dp còn ":" chỉ ~4dp, để tự do
+        // thì cột số tiền xê dịch giữa dòng có QR và dòng không có.
+        Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+            if (onQrClick != null) {
+                IconButton(onClick = onQrClick, modifier = Modifier.size(24.dp)) {
+                    Icon(
+                        Icons.Default.QrCodeScanner,
+                        contentDescription = "Quét QR người nhận để trả tiền",
+                        tint = if (qrEnabled) C.TextMuted else C.TextMuted.copy(alpha = 0.3f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            } else {
+                Text(":", fontSize = 12.sp, color = C.TextMuted)
+            }
+        }
         Spacer(Modifier.width(6.dp))
         Column(modifier = Modifier.weight(0.58f)) {
+            if (readOnly) {
+                // Đơn đã giao: phí chốt rồi, chỉ xem — bỏ luôn gạch chân, giống
+                // nhánh v-else của web (text căn phải, không phải ô nhập).
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                ) {
+                    Text(
+                        if (value.isEmpty()) "—" else groupThousands(value),
+                        fontSize = 14.sp,
+                        color = C.Text,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text("đ", fontSize = 11.sp, color = C.TextMuted, modifier = Modifier.padding(start = 4.dp))
+                }
+                return@Column
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicTextField(
                     value = value,

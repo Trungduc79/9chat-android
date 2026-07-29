@@ -122,6 +122,34 @@ object DeepLinkRouter {
                 val token = params.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
                 AppDestination.AcceptInvite(token)
             }
+            // Thẻ nghiệp vụ (business card) → màn chi tiết. Định tuyến theo quyền
+            // xảy ra ở lớp render (OrderRoute). Entity sau: debt/invoice/... thêm ở đây.
+            "order" -> {
+                val id = params.firstOrNull()?.toLongOrNull() ?: return null
+                AppDestination.OrderDetail(orderId = id)
+            }
+            // 9chat://invoice/{out|in}/{id}
+            "invoice" -> {
+                val dir = params.getOrNull(0)?.takeIf { it == "out" || it == "in" } ?: return null
+                val id = params.getOrNull(1)?.toLongOrNull() ?: return null
+                AppDestination.InvoiceDetail(dir = dir, id = id)
+            }
+            // 9chat://debt/{customer|supplier}/{id}
+            "debt" -> {
+                val pt = params.getOrNull(0)?.takeIf { it == "customer" || it == "supplier" } ?: return null
+                val id = params.getOrNull(1)?.toLongOrNull() ?: return null
+                AppDestination.DebtDetail(partyType = pt, id = id)
+            }
+            // 9chat://product/{variantId}
+            "product" -> {
+                val id = params.firstOrNull()?.toLongOrNull() ?: return null
+                AppDestination.ProductDetail(variantId = id)
+            }
+            // 9chat://transaction/{moneyTxId}
+            "transaction" -> {
+                val id = params.firstOrNull()?.toLongOrNull() ?: return null
+                AppDestination.TransactionDetail(id = id)
+            }
             else -> null
         }
     }

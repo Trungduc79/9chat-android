@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.modules.warehouse
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
@@ -13,11 +14,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -41,6 +48,7 @@ fun WarehouseOrdersList(
     error: String?,
     warehouseName: String?,
     onOpenOrder: (Long, List<Long>) -> Unit,
+    onDeleteDraft: (Long) -> Unit = {},
     onTabDelta: (Int) -> Unit,
     onExitModule: () -> Unit,
 ) {
@@ -63,7 +71,30 @@ fun WarehouseOrdersList(
                 ScrollableCenter { CircularProgressIndicator(color = AdminColors.Primary) }
             list.isEmpty() -> ScrollableCenter { Text(error ?: "Không có đơn", color = AdminColors.TextMuted) }
             else -> LazyColumn(contentPadding = PaddingValues(12.dp)) {
-                items(list, key = { it.id }) { o -> OrderCard(o, tab) { onOpenOrder(o.id, list.map { it.id }) } }
+                items(list, key = { it.id }) { o ->
+                    if (o.status == "draft") {
+                        // Đơn nháp: vuốt trái >40% để xoá (row-swipe consume → không đổi tab).
+                        var offsetX by remember(o.id) { mutableStateOf(0f) }
+                        var rowW by remember(o.id) { mutableStateOf(1f) }
+                        Box(
+                            Modifier.fillMaxWidth().onSizeChanged { rowW = it.width.toFloat() }
+                                .pointerInput(o.id) {
+                                    detectHorizontalDragGestures(
+                                        onDragEnd = { if (-offsetX > rowW * 0.4f) onDeleteDraft(o.id) else offsetX = 0f },
+                                    ) { _, d -> offsetX = (offsetX + d).coerceAtMost(0f) }
+                                },
+                        ) {
+                            Box(Modifier.matchParentSize().padding(bottom = 12.dp).clip(RoundedCornerShape(12.dp)).background(AdminColors.Danger.copy(alpha = 0.25f)), contentAlignment = Alignment.CenterEnd) {
+                                Text("Xoá", color = AdminColors.Danger, fontSize = 14.sp, modifier = Modifier.padding(end = 20.dp))
+                            }
+                            Box(Modifier.offset { IntOffset(offsetX.toInt(), 0) }) {
+                                OrderCard(o, tab) { onOpenOrder(o.id, list.map { it.id }) }
+                            }
+                        }
+                    } else {
+                        OrderCard(o, tab) { onOpenOrder(o.id, list.map { it.id }) }
+                    }
+                }
             }
         }
     }
@@ -104,10 +135,12 @@ private fun ScrollableCenter(content: @Composable () -> Unit) {
 @Composable
 private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
     val (tagText, tagColor) = when {
+        o.status == "draft" -> "Nháp — thêm hàng" to AdminColors.Danger
         tab == 2 -> (if (isPurchaseOrder(o)) "Đã nhập" else "Đã giao") to AdminColors.Success
         isPurchaseOrder(o) -> "Nhập kho" to AdminColors.Success
         else -> "Xuất kho" to AdminColors.Warning
     }
+    val displayName = if (o.status == "draft" && (o.party?.id ?: 0L) == 0L) "Đơn nháp — chỉ ảnh" else o.partyName
     val dateStr = if (tab == 2) fmtDate(o.completedAt) else fmtDate(o.orderedAt)
 
     Surface(
@@ -116,7 +149,7 @@ private fun OrderCard(o: OrderDto, tab: Int, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(o.partyName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = partyColor(o.party), modifier = Modifier.weight(1f))
+                Text(displayName, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = partyColor(o.party), modifier = Modifier.weight(1f))
                 Text(dateStr, fontSize = 11.sp, color = AdminColors.TextMuted)
                 Spacer(Modifier.width(8.dp))
                 Text(o.code, fontSize = 11.sp, color = AdminColors.Primary, fontWeight = FontWeight.Medium)

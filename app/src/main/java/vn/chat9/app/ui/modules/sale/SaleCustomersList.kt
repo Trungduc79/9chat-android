@@ -1,6 +1,8 @@
 package vn.chat9.app.ui.modules.sale
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -9,7 +11,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,12 +22,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import vn.chat9.app.App
+import vn.chat9.app.R
 import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
@@ -99,6 +106,30 @@ fun SaleCustomersList(listState: LazyListState = rememberLazyListState()) {
                         if (debt != 0.0) Column(horizontalAlignment = Alignment.End) {
                             Text("Công nợ", color = AdminColors.TextMuted, fontSize = 11.sp)
                             Text("${fmt.format(debt.toLong())} đ", color = if (debt > 0) AdminColors.Danger else AdminColors.Success, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                        // Liên hệ nhanh (chỉ khi có SĐT): Zalo (trái) + gọi điện (phải, ngoài cùng)
+                        c.phone?.takeIf { it.isNotBlank() }?.let { phone ->
+                            Spacer(Modifier.width(8.dp))
+                            Image(
+                                painter = painterResource(R.drawable.zalo_icon),
+                                contentDescription = "Nhắn Zalo",
+                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).clickable {
+                                    try {
+                                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse("https://zalo.me/${phone.filter { ch -> ch.isDigit() }}")))
+                                    } catch (_: Exception) {}
+                                },
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Box(
+                                Modifier.size(36.dp).clip(CircleShape).background(AdminColors.Success.copy(alpha = 0.15f)).clickable {
+                                    try {
+                                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_DIAL,
+                                            android.net.Uri.parse("tel:${phone.replace(" ", "")}")))
+                                    } catch (_: Exception) {}
+                                },
+                                contentAlignment = Alignment.Center,
+                            ) { Icon(Icons.Default.Phone, "Gọi", tint = AdminColors.Success, modifier = Modifier.size(18.dp)) }
                         }
                     }
                 }

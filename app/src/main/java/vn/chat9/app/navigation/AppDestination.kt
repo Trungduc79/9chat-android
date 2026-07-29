@@ -55,6 +55,21 @@ sealed class AppDestination {
     /** Timeline / stories feed (same as Home(TIMELINE) but standalone route). */
     data object Timeline : AppDestination()
 
+    /** Chi tiết đơn hàng (read-only) — mở từ thẻ order trong chat (deeplink 9chat://order/{id}). */
+    data class OrderDetail(val orderId: Long) : AppDestination()
+
+    /** Chi tiết HĐ VAT (read-only) — thẻ invoice. dir = "out" (bán) | "in" (mua). */
+    data class InvoiceDetail(val dir: String, val id: Long) : AppDestination()
+
+    /** Sổ chi tiết công nợ 1 đối tác — thẻ debt. partyType = "customer" | "supplier". */
+    data class DebtDetail(val partyType: String, val id: Long) : AppDestination()
+
+    /** Chi tiết sản phẩm (read-only) — thẻ product. id = product_variant id. */
+    data class ProductDetail(val variantId: Long) : AppDestination()
+
+    /** Chi tiết giao dịch ngân hàng (read-only) — thẻ transaction. id = money_transaction id. */
+    data class TransactionDetail(val id: Long) : AppDestination()
+
     /** Phase 2 — Admin screen: gán role + mời nhân viên. Chỉ user có
      *  `staff.assign_role` / `staff.invite` / `system.permission_manage`
      *  mới thấy entry vào (gate ở AccountScreen). */

@@ -13,6 +13,21 @@ val vapiApiKey: String = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }.getProperty("VAPI_API_KEY", "")
 
+// Thông tin ký release. Ưu tiên keystore.properties (build LOCAL, gitignored),
+// fallback sang biến môi trường (CI). Nếu KHÔNG có gì → release ký bằng debug key
+// (cho ai build thử không có keystore, KHÔNG dùng để phát hành).
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun signingProp(key: String, env: String): String? =
+    keystoreProps.getProperty(key) ?: System.getenv(env)
+
+// versionCode/Name tự tăng khi CI truyền -PverCode / -PverName (dùng run_number).
+// Build local không truyền → giữ 1 / "1.0" như cũ.
+val ciVerCode: Int = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
+val ciVerName: String = (project.findProperty("verName") as String?) ?: "1.0"
+
 android {
     namespace = "vn.chat9.app"
     compileSdk = 36
@@ -21,16 +36,34 @@ android {
         applicationId = "vn.chat9.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = ciVerCode
+        versionName = ciVerName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "API_BASE_URL", "\"https://9chat.vn/api/v1/\"")
         buildConfigField("String", "SOCKET_URL", "\"https://9chat.vn\"")
+        // Manifest cập nhật (tự-host). App đọc file này lúc mở để biết có bản mới.
+        buildConfigField("String", "UPDATE_MANIFEST_URL", "\"https://9chat.vn/app/version.json\"")
         // vapi gateway (backend nghiệp vụ — khác 9chat). Key embed từ local.properties.
         buildConfigField("String", "VAPI_BASE_URL", "\"https://vapi.vn/api/\"")
         buildConfigField("String", "VAPI_API_KEY", "\"$vapiApiKey\"")
+    }
+
+    // Ký release bằng key thật nếu có (keystore.properties LOCAL hoặc env CI).
+    // Thiếu → bỏ qua, release rơi về debug signing (chỉ để build thử).
+    val hasReleaseSigning = signingProp("storePassword", "KEYSTORE_PASSWORD") != null
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(
+                    signingProp("storeFile", "KEYSTORE_FILE") ?: "9chat-release.jks"
+                )
+                storePassword = signingProp("storePassword", "KEYSTORE_PASSWORD")
+                keyAlias = signingProp("keyAlias", "KEY_ALIAS")
+                keyPassword = signingProp("keyPassword", "KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -44,6 +77,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
@@ -89,6 +125,15 @@ dependencies {
 
     // Image loading
     implementation(libs.coil.compose)
+
+    // QR chuyen khoan: sinh OFFLINE (khong goi API ben thu 3 vi payload chua so TK
+    // + so tien + noi dung), quet bang ML Kit, camera preview bang CameraX.
+    implementation(libs.zxing.core)
+    implementation(libs.mlkit.barcode)
+    implementation(libs.camera.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
 
     // DI will use manual singleton pattern (Hilt incompatible with AGP 9.x)
 

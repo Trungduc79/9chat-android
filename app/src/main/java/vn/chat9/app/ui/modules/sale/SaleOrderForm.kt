@@ -302,16 +302,19 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
     val density = LocalDensity.current
     val view = LocalView.current
     val scrollState = rememberScrollState()
-    // Vuốt/cuộn NGOÀI vùng list (cuộn form) → bỏ focus ô "+ Sản phẩm" → tắt list + bàn phím.
+    // TRUE khi centerOnFocus đang tự cuộn ô vừa focus vào giữa → KHÔNG coi là cuộn tay.
+    val autoScrolling = remember { mutableStateOf(false) }
+    // Vuốt/cuộn TAY (cuộn form) → bỏ focus ô "+ Sản phẩm" → tắt list + bàn phím.
+    // Loại trừ auto-scroll của centerOnFocus, nếu không ô vừa tap bị clearFocus ngay (tap tự out focus).
     LaunchedEffect(scrollState.isScrollInProgress) {
-        if (scrollState.isScrollInProgress) focusManager.clearFocus()
+        if (scrollState.isScrollInProgress && !autoScrolling.value) focusManager.clearFocus()
     }
     val imeBottomPx = WindowInsets.ime.getBottom(density).toFloat()
     val statusBarPx = WindowInsets.statusBars.getTop(density).toFloat()
     val screenHeightPx = view.rootView.height.toFloat()
     val appBarPx = with(density) { 48.dp.toPx() }   // SaleScreen app bar
     val imeBottomState = rememberUpdatedState(imeBottomPx)
-    val focusCtx = FocusCenterCtx(scrollState, screenHeightPx, statusBarPx, appBarPx, imeBottomState)
+    val focusCtx = FocusCenterCtx(scrollState, screenHeightPx, statusBarPx, appBarPx, imeBottomState, autoScrolling)
     // Đẩy layout lên = 80% chiều cao bàn phím khi IME mở (Đức 2026-05-29).
     val pushUpDp = with(density) { (imeBottomPx * 0.8f).toDp() }
 
@@ -1915,6 +1918,9 @@ data class FocusCenterCtx(
     val statusBarPx: Float,
     val appBarPx: Float,
     val imeBottomState: androidx.compose.runtime.State<Float>,
+    // TRUE trong lúc centerOnFocus tự cuộn (auto) → cha bỏ qua, không clearFocus (nếu không thì
+    // ô vừa tap bị tắt bàn phím ngay vì auto-scroll cũng bật isScrollInProgress). Default cho consumer khác.
+    val autoScrolling: androidx.compose.runtime.MutableState<Boolean> = androidx.compose.runtime.mutableStateOf(false),
 )
 
 /**
@@ -1935,7 +1941,11 @@ internal fun Modifier.centerOnFocus(ctx: FocusCenterCtx, scope: kotlinx.coroutin
                 val bottom = ctx.screenHeightPx - ctx.imeBottomState.value
                 val target = (top + bottom) / 2f - h / 2f
                 val delta = y - target
-                if (delta > 0f) runCatching { ctx.scrollState.animateScrollBy(delta) }
+                if (delta > 0f) {
+                    ctx.autoScrolling.value = true
+                    try { runCatching { ctx.scrollState.animateScrollBy(delta) } }
+                    finally { ctx.autoScrolling.value = false }
+                }
             }
         }
 }

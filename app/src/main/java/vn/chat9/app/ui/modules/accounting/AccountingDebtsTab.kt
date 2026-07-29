@@ -68,6 +68,7 @@ import kotlinx.coroutines.withContext
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.*
 import vn.chat9.app.ui.common.partyColor
+import androidx.compose.foundation.layout.statusBarsPadding
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.modules.sale.SaleOrderForm
@@ -1182,6 +1183,41 @@ private fun ShipAdvancePayDialog(
                 }
             }
             Text("Đóng", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.align(Alignment.End).padding(top = 12.dp).clickable(onClick = onDismiss))
+        }
+    }
+}
+
+/**
+ * Điểm vào sổ công nợ từ deep-link thẻ debt (9chat://debt/{partyType}/{id}).
+ * Fetch overview lấy đối tác (tên/màu/số dư) rồi tái dùng [AccountingDebtDetail].
+ * Không thấy trong overview (số dư 0 / chưa hoạt động) → dựng tối thiểu từ statement.
+ * Gate quyền đã chặn ở MainActivity.navigateTo (debt.read/update).
+ */
+@Composable
+fun DebtRoute(partyType: String, partyId: Long, onClose: () -> Unit) {
+    val container = (LocalContext.current.applicationContext as App).container
+    var party by remember(partyType, partyId) { mutableStateOf<DebtOverviewRowDto?>(null) }
+    var loading by remember(partyType, partyId) { mutableStateOf(true) }
+
+    LaunchedEffect(partyType, partyId) {
+        val row = runCatching {
+            container.vapi.debtOverview(partyType).data?.rows?.firstOrNull { it.partyId == partyId }
+        }.getOrNull()
+        party = row ?: runCatching {
+            val st = container.vapi.debtStatement(partyType, partyId).data
+            DebtOverviewRowDto(partyType = partyType, partyId = partyId, name = "Đối tác #$partyId", balance = st?.closingBalance ?: 0.0)
+        }.getOrNull() ?: DebtOverviewRowDto(partyType = partyType, partyId = partyId, name = "Đối tác #$partyId")
+        loading = false
+    }
+
+    // Standalone (deep-link) không có AccountingScreen cha bọc → tự trừ status bar.
+    val p = party
+    Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
+        when {
+            loading || p == null -> Box(Modifier.fillMaxSize()) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color(0xFF3E1F91))
+            }
+            else -> AccountingDebtDetail(p, onBack = onClose)
         }
     }
 }

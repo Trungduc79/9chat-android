@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.chat
 
+import vn.chat9.app.ui.common.dialogGlow
 import android.content.ContentResolver
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -331,6 +332,7 @@ private fun RenameGroupDialog(
 ) {
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
+        modifier = Modifier.dialogGlow(),
         onDismissRequest = onDismiss,
         title = { Text("Đặt tên nhóm") },
         text = {
@@ -378,6 +380,7 @@ private fun AddMemberDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.dialogGlow(),
         onDismissRequest = onDismiss,
         title = { Text("Thêm thành viên") },
         text = {

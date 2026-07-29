@@ -39,6 +39,7 @@ import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 import vn.chat9.app.ui.explore.AdminColors
+import vn.chat9.app.ui.modules.warehouse.VariantHistoryDialog
 
 /**
  * Tab Sản phẩm (Android) — port web SaleProductsView. Search biến thể (70%) +
@@ -54,6 +55,8 @@ fun SaleProductsList(listState: LazyListState = rememberLazyListState()) {
     var loading by remember { mutableStateOf(false) }
     var warehouses by remember { mutableStateOf<List<WarehouseDto>>(emptyList()) }
     var selectedWarehouseId by remember { mutableStateOf<Long?>(null) }
+    // Tap variant → dialog lịch sử kho (dùng chung của màn kiểm kho).
+    var historyVariant by remember { mutableStateOf<VariantSearchDto?>(null) }
 
     suspend fun load() {
         loading = true
@@ -115,7 +118,7 @@ fun SaleProductsList(listState: LazyListState = rememberLazyListState()) {
                                     Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f)))
                                 }
                             }
-                            VariantRow(v, stockColor)
+                            VariantRow(v, stockColor, onClick = { historyVariant = v })
                         }
                     }
                 }
@@ -123,6 +126,9 @@ fun SaleProductsList(listState: LazyListState = rememberLazyListState()) {
             AdminScrollTopButton(listState)
         }
     }
+
+    // Dialog lịch sử biến thể (Dialog nổi — đặt ngoài Column).
+    historyVariant?.let { VariantHistoryDialog(variant = it, onDismiss = { historyVariant = null }) }
 }
 
 // Palette màu tồn theo kho — đều nổi, tương phản tốt trên nền tối.
@@ -136,7 +142,7 @@ private val WAREHOUSE_STOCK_COLORS = listOf(
 )
 
 @Composable
-private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.graphics.Color) {
+private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
     val units = v.units
     val defUnit = units.firstOrNull { it.isDefaultSale } ?: units.firstOrNull { it.isBase } ?: units.firstOrNull()
     val factor = defUnit?.conversionFactor ?: 1.0
@@ -147,7 +153,7 @@ private fun VariantRow(v: VariantSearchDto, stockColor: androidx.compose.ui.grap
 
     Row(
         // Giảm chiều cao thẻ tối đa (thumb giữ 55dp → padding vertical 0, chỉ horizontal).
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).padding(horizontal = 4.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Card).clickable { onClick() }.padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Thumb 62dp (+5% so 59). Padding vertical 0 → chiều cao thẻ = thumb.

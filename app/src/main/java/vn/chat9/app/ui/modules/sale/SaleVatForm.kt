@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.modules.sale
 
+import vn.chat9.app.ui.common.dialogGlow
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.widget.Toast
@@ -581,6 +582,17 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         }
     }
 
+    // Chọn đơn vị mua cho HĐ:
+    //  1) ghi nhớ làm mặc định cho khách (BE tự bỏ default cũ) → lần tạo HĐ sau tự chọn đơn vị này.
+    //  2) đơn ĐÃ có HĐ nháp EI → đẩy đơn vị mới xuống HĐ (updateVatDraft) để mở lại KHÔNG bị
+    //     refreshLinkedVat kéo về đơn vị cũ đã lưu trên HĐ.
+    fun selectVatInfo(id: Long) {
+        selectedVatInfoId = id
+        val cust = selectedCustomer ?: return
+        scope.launch { try { container.vapi.setCustomerVatInfoDefault(cust.id, id) } catch (_: Exception) {} }
+        if (linkedVat != null) onUpdateDraft()
+    }
+
     // Sao chép sang HĐ VAT nháp mới → mở luôn đơn mới trong form.
     fun doCopyOrder() {
         val id = currentOrderId ?: return
@@ -697,10 +709,18 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                 val res = container.vapi.poDraft(part, custPart).data
                 val newId = res?.order?.id
                 if (newId == null) { Toast.makeText(context, "Không đọc được PO", Toast.LENGTH_SHORT).show(); return@launch }
-                val unresolvedCount = res.unresolved?.size ?: 0
+                // Tách lý do chưa khớp: sai SP (thêm alias SP) vs sai đơn vị (thêm đơn vị đồng nghĩa cho SP).
+                val unresolved = res.unresolved ?: emptyList()
+                val nProd = unresolved.count { it.reason == "product_not_found" }
+                val nUnit = unresolved.count { it.reason == "unit_not_found" }
+                val nOther = unresolved.size - nProd - nUnit
                 val msg = buildString {
                     append(res.matchedCustomer?.name?.let { "Khách: $it" } ?: "Chưa khớp khách")
-                    if (unresolvedCount > 0) append(" · $unresolvedCount mặt hàng chưa nhận diện")
+                    val parts = mutableListOf<String>()
+                    if (nProd > 0) parts += "$nProd chưa khớp SP"
+                    if (nUnit > 0) parts += "$nUnit sai đơn vị"
+                    if (nOther > 0) parts += "$nOther chưa nhận diện"
+                    if (parts.isNotEmpty()) append(" · " + parts.joinToString(", "))
                 }
                 Toast.makeText(context, "Đã tạo HĐ nháp từ PO. $msg", Toast.LENGTH_LONG).show()
                 items.clear(); currentOrderId = newId   // trigger reload
@@ -982,7 +1002,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                         Spacer(Modifier.height(10.dp))
                         Text("Xuất HĐ cho (đơn vị mua)", color = AdminColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(4.dp))
-                        VatInfoDropdown(vatInfos, selectedVatInfoId, canEdit) { selectedVatInfoId = it }
+                        VatInfoDropdown(vatInfos, selectedVatInfoId, canEdit) { selectVatInfo(it) }
                         if (selectedCustomer != null && vatInfos.isEmpty()) Text("⚠ Khách chưa có MST — nhấn \"+ Thêm đơn vị\".", color = Color(0xFFE2A03F), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
                         Spacer(Modifier.height(12.dp))
                         // Giá xuất < giá nhập — cảnh báo ngay khi sửa giá, chưa cần tạo HĐ nháp.
@@ -1024,9 +1044,9 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                 scope.launch {
                     try {
                         val v = container.vapi.attachCustomerVatInfo(cust.id, req).data
-                        loadVatInfo(cust.id, autoSelect = false); selectedVatInfoId = v?.id; addVatOpen = false
+                        loadVatInfo(cust.id, autoSelect = false); addVatOpen = false
+                        v?.id?.let { selectVatInfo(it) }   // đơn vị vừa thêm → mặc định + đẩy lên HĐ nháp nếu có
                         Toast.makeText(context, "Đã thêm đơn vị mua", Toast.LENGTH_SHORT).show()
-                        if (linkedVat != null) onUpdateDraft()   // HĐ nháp EI đang có → đẩy đơn vị mới lên EI
                     } catch (_: Exception) { Toast.makeText(context, "Thêm đơn vị mua thất bại", Toast.LENGTH_SHORT).show() }
                 }
             },
@@ -1056,7 +1076,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         // Menu HĐ nháp: đổi đơn vị mua / tên người mua / hình thức giá → push lại EI qua onUpdateDraft.
         if (unitPickerOpen) VatUnitPickerOverlay(
             list = vatInfos, selectedId = selectedVatInfoId,
-            onPick = { unitPickerOpen = false; selectedVatInfoId = it; onUpdateDraft() },
+            onPick = { unitPickerOpen = false; selectVatInfo(it) },
             onAddNew = { unitPickerOpen = false; addVatOpen = true },
             onClose = { unitPickerOpen = false },
         )
@@ -1101,6 +1121,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
         if (vatBlocked != null) {
             MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
                 AlertDialog(
+                    modifier = Modifier.dialogGlow(),
                     onDismissRequest = { vatBlocked = null },
                     confirmButton = { TextButton(onClick = { vatBlocked = null }) { Text("Đã hiểu", color = AdminColors.Primary) } },
                     title = { Text("Chưa thể phát hành hóa đơn", color = AdminColors.Text) },

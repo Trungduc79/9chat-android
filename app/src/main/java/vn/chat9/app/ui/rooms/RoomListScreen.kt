@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.rooms
 
+import vn.chat9.app.ui.common.dialogGlow
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -421,6 +422,7 @@ fun RoomListScreen(
 
     confirmDelete?.let { target ->
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { confirmDelete = null },
             title = { Text("Xoá cuộc trò chuyện") },
             text = { Text("Ẩn cuộc trò chuyện này khỏi danh sách của bạn? Các thành viên khác không bị ảnh hưởng.") },
@@ -529,6 +531,7 @@ fun RoomListScreen(
     // Bulk delete confirm dialog
     if (confirmBulkDelete) {
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { confirmBulkDelete = false },
             title = { Text("Xoá ${selectedRoomIds.size} cuộc trò chuyện") },
             text = { Text("Ẩn ${selectedRoomIds.size} cuộc trò chuyện đã chọn khỏi danh sách của bạn? Các thành viên khác không bị ảnh hưởng.") },
@@ -836,6 +839,15 @@ fun RoomItem(
             "location" -> "$sender: Vị trí"
             "recalled" -> "$sender: Đã thu hồi tin nhắn"
             "call" -> "$sender: Cuộc gọi"
+            "action_confirm" -> {
+                val t = try { org.json.JSONObject(msg.content ?: "{}").optString("title") } catch (_: Exception) { "" }
+                "$sender: 🤖 ${t.ifBlank { "Yêu cầu xác nhận" }}"
+            }
+            "order", "debt", "invoice", "product", "task", "transaction" -> {
+                val d = try { org.json.JSONObject(msg.content ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+                val lbl = mapOf("order" to "Đơn hàng", "debt" to "Công nợ", "invoice" to "Hóa đơn", "product" to "Sản phẩm", "task" to "Công việc", "transaction" to "Giao dịch")[msg.type] ?: "Thẻ"
+                "$sender: 📋 ${d.optString("code").ifBlank { d.optString("title").ifBlank { lbl } }}"
+            }
             else -> "$sender: ${msg.content ?: ""}"
         }
     } ?: "Chưa có tin nhắn"

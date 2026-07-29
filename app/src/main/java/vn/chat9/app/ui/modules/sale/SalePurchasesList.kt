@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.modules.sale
 
+import vn.chat9.app.ui.common.dialogGlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -223,6 +224,7 @@ fun SalePurchasesList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState 
     // Dialog xác nhận xoá đơn nhập (chỉ nháp/đã duyệt).
     pendingDelete?.let { del ->
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { pendingDelete = null },
             title = { Text("Xoá đơn nhập", color = AdminColors.Text) },
             text = { Text("Xoá đơn ${del.code} (${del.partyName})? Không hoàn tác được.", color = AdminColors.TextMuted) },

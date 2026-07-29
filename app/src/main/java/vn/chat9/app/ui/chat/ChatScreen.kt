@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.chat
 
+import vn.chat9.app.ui.common.dialogGlow
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -97,7 +98,7 @@ import vn.chat9.app.util.UrlUtils
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Boolean = false, onBack: () -> Unit, onVoiceCall: () -> Unit = {}, onVideoCall: () -> Unit = {}, onUserWall: (Int) -> Unit = {}, onChatOptions: () -> Unit = {}, onRoomChanged: () -> Unit = {}) {
+fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Boolean = false, onBack: () -> Unit, onVoiceCall: () -> Unit = {}, onVideoCall: () -> Unit = {}, onUserWall: (Int) -> Unit = {}, onChatOptions: () -> Unit = {}, onRoomChanged: () -> Unit = {}, onOpenDeeplink: (String) -> Unit = {}) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val container = (context.applicationContext as App).container
@@ -106,6 +107,10 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
     val listState = rememberLazyListState()
 
     var messages by remember { mutableStateOf<List<Message>>(emptyList()) }
+    // action_confirm: action_key → status (confirmed|rejected|expired) cập nhật
+    // tức thì từ realtime action_resolved / lạc quan sau khi bấm. Bubble đọc để
+    // khoá panel không cần refetch.
+    val resolvedActions = remember { mutableStateMapOf<String, String>() }
     // When non-null, a full-screen image gallery opens with every image
     // message in the chat, centred on this message id. Tap any image bubble
     // to set it; GalleryViewerDialog builds the swipeable list from
@@ -814,6 +819,16 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
             } catch (_: Exception) {}
         }
 
+        // vapi chốt tin action_confirm → khoá panel + hiện badge tức thì.
+        val actionResolvedListener: (Array<Any>) -> Unit = { args ->
+            try {
+                val json = args[0] as JSONObject
+                val key = json.optString("action_id")
+                val st = json.optString("status")
+                if (key.isNotBlank() && st.isNotBlank()) resolvedActions[key] = st
+            } catch (_: Exception) {}
+        }
+
         container.socket.on("message", messageListener)
         container.socket.on("message_pinned", pinListener)
         container.socket.on("message_unpinned", unpinListener)
@@ -822,6 +837,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
         container.socket.on("stop_typing", stopTypingListener)
         container.socket.on("MESSAGE_REACTION_UPDATE", reactionListener)
         container.socket.on("error", errorListener)
+        container.socket.on("action_resolved", actionResolvedListener)
 
         onDispose {
             container.socket.off("message", messageListener)
@@ -832,6 +848,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
             container.socket.off("stop_typing", stopTypingListener)
             container.socket.off("MESSAGE_REACTION_UPDATE", reactionListener)
             container.socket.off("error", errorListener)
+            container.socket.off("action_resolved", actionResolvedListener)
         }
     }
 
@@ -2387,6 +2404,34 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
                                         onSwipeReply = if (multiSelectMode) null else {{ if (msg.type != "recalled") replyToMessage = msg }},
                                         onClick = if (multiSelectMode) {{ selectedMessageIds = if (isSelected) selectedMessageIds - msg.id else selectedMessageIds + msg.id }} else null,
                                         onImageClick = if (multiSelectMode) null else { idxInMsg -> galleryClick = msg.id to idxInMsg },
+                                        onOpenBizCard = { deeplink ->
+                                            // Định tuyến qua deep-link (từ content thẻ) → DeepLinkRouter.
+                                            onOpenDeeplink(deeplink)
+                                        },
+                                        resolvedActionStatus = if (msg.type == "action_confirm") {
+                                            val key = try { JSONObject(msg.content ?: "{}").optString("action_id") } catch (_: Exception) { "" }
+                                            resolvedActions[key]
+                                        } else null,
+                                        onActionRespond = { msgId, key, decision, values ->
+                                            // Lạc quan khoá ngay; action-respond.php cũng patch content bền.
+                                            resolvedActions[key] = if (decision == "confirm") "confirmed" else "rejected"
+                                            scope.launch {
+                                                try {
+                                                    val body = mutableMapOf<String, Any>(
+                                                        "message_id" to msgId, "action_key" to key, "decision" to decision,
+                                                    )
+                                                    if (values.isNotEmpty()) body["values"] = values
+                                                    val res = container.api.respondActionConfirm(body)
+                                                    if (!res.success) {
+                                                        resolvedActions.remove(key)
+                                                        Toast.makeText(context, res.message ?: "Không gửi được phản hồi", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                } catch (_: Exception) {
+                                                    resolvedActions.remove(key)
+                                                    Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
                                         showQuickReact = !multiSelectMode && msg.type != "call" && msg.type != "recalled" && (
                                             msg.type in listOf("image", "file", "video", "audio", "contact", "location") ||
                                             (!isMine && msg.id == (messages.lastOrNull { it.user_id != currentUserId }?.id)) ||
@@ -2655,6 +2700,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
     // Delete confirm dialog
     if (showDeleteConfirm && selectedMessageIds.isNotEmpty()) {
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { showDeleteConfirm = false },
             text = {
                 Text(
@@ -2985,7 +3031,7 @@ fun ChatScreen(room: Room, scrollToMessageId: Int? = null, startWithSearch: Bool
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, displayName: String = message.username ?: "", replyDisplayName: String = message.reply_message?.username ?: "", isHighlighted: Boolean = false, searchHighlight: String = "", deliveryStatus: String? = null, timeConfig: TimeDisplayConfig = TimeDisplayConfig(true, TimePosition.INSIDE_BUBBLE, TimeStyle.NORMAL), friendIds: Set<Int> = emptySet(), sentRequestIds: Set<Int> = emptySet(), onSendFriendRequest: ((Int) -> Unit)? = null, onNavigateToUser: ((Int) -> Unit)? = null, onLongPress: () -> Unit = {}, onReplyClick: ((Int) -> Unit)? = null, onSwipeReply: (() -> Unit)? = null, onClick: (() -> Unit)? = null, showQuickReact: Boolean = false, onQuickReact: ((String, Offset) -> Unit)? = null, onReactionPillClick: ((Int) -> Unit)? = null, onCallback: ((Boolean) -> Unit)? = null, onImageClick: ((Int) -> Unit)? = null) {
+fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, displayName: String = message.username ?: "", replyDisplayName: String = message.reply_message?.username ?: "", isHighlighted: Boolean = false, searchHighlight: String = "", deliveryStatus: String? = null, timeConfig: TimeDisplayConfig = TimeDisplayConfig(true, TimePosition.INSIDE_BUBBLE, TimeStyle.NORMAL), friendIds: Set<Int> = emptySet(), sentRequestIds: Set<Int> = emptySet(), onSendFriendRequest: ((Int) -> Unit)? = null, onNavigateToUser: ((Int) -> Unit)? = null, onLongPress: () -> Unit = {}, onReplyClick: ((Int) -> Unit)? = null, onSwipeReply: (() -> Unit)? = null, onClick: (() -> Unit)? = null, showQuickReact: Boolean = false, onQuickReact: ((String, Offset) -> Unit)? = null, onReactionPillClick: ((Int) -> Unit)? = null, onCallback: ((Boolean) -> Unit)? = null, onImageClick: ((Int) -> Unit)? = null, resolvedActionStatus: String? = null, onActionRespond: ((Int, String, String, Map<String, String>) -> Unit)? = null, onOpenBizCard: ((String) -> Unit)? = null) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Track reaction button center for effect spawn
     var reactBtnCenter by remember { mutableStateOf(Offset.Zero) }
@@ -3666,6 +3712,22 @@ fun MessageBubble(message: Message, isSent: Boolean, currentUserId: Int = 0, dis
                 }
                 "url" -> {
                     UrlPreviewCard(url = message.content.orEmpty())
+                }
+                "order", "debt", "invoice", "product", "task", "transaction" -> {
+                    BusinessCardBubble(
+                        message = message,
+                        onOpen = { deeplink -> onOpenBizCard?.invoke(deeplink) },
+                    )
+                }
+                "action_confirm" -> {
+                    ActionConfirmBubble(
+                        message = message,
+                        currentUserId = currentUserId,
+                        resolvedStatusOverride = resolvedActionStatus,
+                        onRespond = { msgId, key, decision, values ->
+                            onActionRespond?.invoke(msgId, key, decision, values)
+                        },
+                    )
                 }
                 else -> {
                     if (searchHighlight.isNotBlank() && message.content?.contains(searchHighlight, ignoreCase = true) == true) {

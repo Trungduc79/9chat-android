@@ -160,6 +160,10 @@ interface VapiApiService {
     @GET("v1/customers/{id}/vat-info")
     suspend fun listCustomerVatInfo(@Path("id") customerId: Long): VapiResponse<List<VatInfoDto>>
 
+    // Đặt đơn vị mua mặc định cho khách (BE tự bỏ default cũ) → HĐ VAT mới tự chọn đơn vị này.
+    @retrofit2.http.PATCH("v1/customers/{id}/vat-info/{vatInfoId}/default")
+    suspend fun setCustomerVatInfoDefault(@Path("id") customerId: Long, @Path("vatInfoId") vatInfoId: Long): VapiResponse<Unit>
+
     // Nguồn chung nội dung CK QR nhận tiền (mã định danh + đuôi) — dùng chung với web.
     @POST("v1/customers/{id}/qr-content")
     suspend fun customerQrContent(

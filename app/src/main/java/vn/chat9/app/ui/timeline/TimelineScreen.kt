@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.timeline
 
+import vn.chat9.app.ui.common.dialogGlow
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -276,6 +277,7 @@ private fun StoryItem(
 
     if (showDeleteConfirm) {
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("Xóa nhật ký") },
             text = { Text("Bạn có chắc muốn xóa nhật ký này?") },
@@ -312,6 +314,7 @@ private fun CreateStoryDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.dialogGlow(),
         onDismissRequest = onDismiss,
         title = { Text("Tạo nhật ký", fontWeight = FontWeight.Bold) },
         text = {

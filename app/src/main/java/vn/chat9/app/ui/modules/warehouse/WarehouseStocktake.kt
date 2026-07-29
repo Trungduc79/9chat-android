@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,6 +65,11 @@ import vn.chat9.app.data.vapi.dto.ProductSearchDto
 import vn.chat9.app.data.vapi.dto.StocktakeItemReq
 import vn.chat9.app.data.vapi.dto.StocktakeReportDto
 import vn.chat9.app.data.vapi.dto.StocktakeRequest
+import vn.chat9.app.data.vapi.dto.StocktakeResolveReq
+import vn.chat9.app.data.vapi.dto.StocktakeSessionDto
+import vn.chat9.app.data.vapi.dto.StocktakeSessionLineDto
+import vn.chat9.app.data.vapi.dto.StocktakeSwapDto
+import vn.chat9.app.data.vapi.dto.StocktakeSwapReq
 import vn.chat9.app.data.vapi.dto.VariantSearchDto
 import vn.chat9.app.data.vapi.dto.WarehouseDto
 import vn.chat9.app.ui.explore.AdminColors
@@ -80,7 +86,12 @@ import vn.chat9.app.ui.explore.AdminPullToRefresh
  * "Lưu kiểm kho" tạm disable: chờ BE bút toán điều chỉnh kho.
  */
 @Composable
-fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
+fun WarehouseStocktake(
+    warehouseId: Long?,
+    warehouseName: String?,
+    dpadVisible: Boolean = true,
+    onHideDpad: () -> Unit = {},
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
@@ -124,6 +135,14 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
     var reportOpen by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<StocktakeReportDto?>(null) }
     var reportLoading by remember { mutableStateOf(false) }
+    // Phiên xử lý sai lệch (pending → resolve manual → chốt).
+    var sessionOpen by remember { mutableStateOf(false) }
+    var session by remember { mutableStateOf<StocktakeSessionDto?>(null) }
+    var sessionBusy by remember { mutableStateOf(false) }
+    var reasonLine by remember { mutableStateOf<StocktakeSessionLineDto?>(null) }   // dialog nhập lý do
+    var reasonMode by remember { mutableStateOf("manual") }                         // "manual" | "writeoff"
+    var buLine by remember { mutableStateOf<StocktakeSessionLineDto?>(null) }       // dialog đơn bù
+    var buMode by remember { mutableStateOf("order") }                              // "order" (KH) | "purchase" (NCC)
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0      // ẩn D-pad khi bàn phím hiện
 
@@ -171,17 +190,128 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
         scope.launch {
             saving = true
             try {
-                val res = container.vapi.submitStocktake(
+                val s = container.vapi.openStocktakeSession(
                     StocktakeRequest(warehouseId = selectedWarehouseId, userId = container.tokenManager.user?.id?.toLong(), items = items),
-                )
-                Toast.makeText(context, "Đã lưu kiểm kho: ${res.data?.count ?: 0} mặt hàng", Toast.LENGTH_SHORT).show()
+                ).data
                 counts.clear()
-                persistCounts(selectedWarehouseId) // lưu xong → xoá cache
-                load()
+                persistCounts(selectedWarehouseId) // đã vào phiên → xoá cache đếm
+                when {
+                    s == null -> Toast.makeText(context, "Lưu thất bại", Toast.LENGTH_LONG).show()
+                    s.status == "closed" -> {   // khớp hết → tự chốt
+                        Toast.makeText(context, "Đã lưu kiểm kho: khớp hết", Toast.LENGTH_SHORT).show(); load()
+                    }
+                    else -> {                    // có lệch → mở màn xử lý (tồn giữ nguyên, biến thể khoá xuất)
+                        session = s; sessionOpen = true
+                        Toast.makeText(context, "${s.summary.pending} mặt hàng sai lệch cần xử lý", Toast.LENGTH_SHORT).show()
+                    }
+                }
             } catch (e: Exception) {
                 Toast.makeText(context, "Lưu thất bại: ${e.message}", Toast.LENGTH_LONG).show()
             }
             saving = false
+        }
+    }
+
+    // Xử lý sai lệch: resolve manual / bỏ / chốt / huỷ phiên.
+    fun resolveLine(line: StocktakeSessionLineDto, type: String, reason: String) {
+        val s = session ?: return
+        scope.launch {
+            sessionBusy = true
+            try {
+                session = container.vapi.resolveStocktakeLine(
+                    s.id, line.id,
+                    StocktakeResolveReq(type = type, reason = reason.ifBlank { null }, userId = container.tokenManager.user?.id?.toLong()),
+                ).data
+                reasonLine = null
+            } catch (e: Exception) { Toast.makeText(context, "Xử lý thất bại: ${e.message}", Toast.LENGTH_SHORT).show() }
+            sessionBusy = false
+        }
+    }
+    fun undoResolve(line: StocktakeSessionLineDto) {
+        val s = session ?: return
+        scope.launch {
+            sessionBusy = true
+            try { session = container.vapi.unresolveStocktakeLine(s.id, line.id).data }
+            catch (e: Exception) { Toast.makeText(context, "Bỏ xử lý thất bại: ${e.message}", Toast.LENGTH_SHORT).show() }
+            sessionBusy = false
+        }
+    }
+    fun applySwap(swap: StocktakeSwapDto) {
+        val s = session ?: return
+        scope.launch {
+            sessionBusy = true
+            try {
+                session = container.vapi.swapStocktakeSession(
+                    s.id, StocktakeSwapReq(shortageVariantId = swap.shortageVariantId, surplusVariantId = swap.surplusVariantId, qtyBase = swap.qtyBase),
+                ).data
+                Toast.makeText(context, "Đã ghép chuyển đổi biến thể", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) { Toast.makeText(context, "Chuyển đổi thất bại: ${e.message}", Toast.LENGTH_SHORT).show() }
+            sessionBusy = false
+        }
+    }
+    fun closeSession() {
+        val s = session ?: return
+        scope.launch {
+            sessionBusy = true
+            try {
+                container.vapi.closeStocktakeSession(s.id)
+                Toast.makeText(context, "Đã chốt phiên — tồn đã cập nhật, gỡ khoá xuất", Toast.LENGTH_SHORT).show()
+                session = null; sessionOpen = false; load()
+            } catch (e: Exception) { Toast.makeText(context, "Chốt thất bại: ${e.message}", Toast.LENGTH_LONG).show() }
+            sessionBusy = false
+        }
+    }
+    /**
+     * Đếm lại tồn hệ thống cho các dòng chưa xử lý.
+     *
+     * Dùng sau khi đã sửa các đơn bán/nhập sai (tồn đổi mà KHÔNG qua fulfill):
+     * biến thể nào tồn đã khớp số đếm tay thì hết lệch và tự rời danh sách.
+     */
+    fun recountSession() {
+        val s = session ?: return
+        scope.launch {
+            sessionBusy = true
+            try {
+                val fresh = container.vapi.recountStocktakeSession(s.id).data
+                if (fresh != null) session = fresh
+                val r = fresh?.recount
+                val msg = when {
+                    r == null -> "Đã đếm lại"
+                    r.cleared > 0 -> "Hết lệch ${r.cleared} biến thể"
+                    r.updated > 0 -> "Cập nhật số ${r.updated} biến thể — vẫn còn lệch"
+                    else -> "Đã đếm lại — tồn không đổi"
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Đếm lại thất bại: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            sessionBusy = false
+        }
+    }
+
+    fun discardSession() {
+        val s = session ?: return
+        scope.launch {
+            sessionBusy = true
+            try {
+                container.vapi.discardStocktakeSession(s.id)
+                Toast.makeText(context, "Đã huỷ phiên — gỡ khoá xuất, tồn giữ nguyên", Toast.LENGTH_SHORT).show()
+                session = null; sessionOpen = false
+            } catch (e: Exception) { Toast.makeText(context, "Huỷ thất bại: ${e.message}", Toast.LENGTH_LONG).show() }
+            sessionBusy = false
+        }
+    }
+
+    // Nhấn tên/ảnh biến thể trong dialog xử lý → mở lịch sử xuất nhập biến thể đó.
+    // Ưu tiên biến thể đã nạp ở list kiểm kho; không có (đã lọc SL=0) → fetch theo product_id.
+    fun openLineHistory(l: StocktakeSessionLineDto) {
+        variants.firstOrNull { it.id == l.variantId }?.let { historyVariant = it; return }
+        scope.launch {
+            val fetched = runCatching {
+                container.vapi.listAllVariants(productId = l.productId, warehouseId = selectedWarehouseId, perPage = 100).data
+            }.getOrNull()?.firstOrNull { it.id == l.variantId }
+            if (fetched != null) historyVariant = fetched
+            else Toast.makeText(context, "Không có lịch sử biến thể", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -217,6 +347,10 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
     LaunchedEffect(query) { delay(280); load() }
     // Khôi phục cache số đếm khi mở / đổi kho.
     LaunchedEffect(selectedWarehouseId) { loadCounts(selectedWarehouseId) }
+    // Phiên kiểm kê đang MỞ của kho (cho tiếp tục xử lý dở).
+    LaunchedEffect(selectedWarehouseId) {
+        session = try { container.vapi.openStocktakeSessionForWarehouse(selectedWarehouseId).data } catch (_: Exception) { null }
+    }
 
     val currentWh = warehouses.firstOrNull { it.id == selectedWarehouseId }
     val selectedCat = categories.firstOrNull { it.id == categoryId }
@@ -282,6 +416,28 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
             )
         }
 
+        // Banner: có phiên kiểm kê chưa chốt (biến thể lệch đang khoá xuất) → tiếp tục.
+        session?.let { s ->
+            if (!sessionOpen && s.status == "open") {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(8.dp)).background(AdminColors.Warning.copy(alpha = 0.12f))
+                        .border(1.dp, AdminColors.Warning.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        .clickable { sessionOpen = true }.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = AdminColors.Warning, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Phiên kiểm kê chưa chốt · ${s.summary.pending} sai lệch chờ xử lý (biến thể lệch đang khoá xuất)",
+                        color = AdminColors.Text, fontSize = 12.sp, modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Tiếp tục", color = AdminColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+
         AdminPullToRefresh(
             isRefreshing = loading,
             onRefresh = { query = ""; searchOpen = false; categoryId = null; productId = null; scope.launch { load() } },
@@ -329,28 +485,81 @@ fun WarehouseStocktake(warehouseId: Long?, warehouseName: String?) {
             }
         }
       }
-      // D-pad điều hướng — gần thanh Lưu; ẩn khi bàn phím hiện, hiện lại khi tắt.
-      if (!imeVisible) DPad(
-          onDirection = { dir ->
-              when (dir) {
-                  DpadDir.LEFT -> moveFocus(-1)
-                  DpadDir.RIGHT -> moveFocus(1)
-                  DpadDir.UP -> cycleValue(-1)
-                  DpadDir.DOWN -> cycleValue(1)
-              }
-          },
-          onDrag = { dx, dy ->
-              dpadX = (dpadX + dx).coerceIn(0f, maxDpadX)
-              dpadY = (dpadY + dy).coerceIn(minDpadY, 0f)
-          },
-          modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 64.dp).offset { IntOffset(dpadX.roundToInt(), dpadY.roundToInt()) },
-      )
+      // D-pad điều hướng — gần thanh Lưu; ẩn khi bàn phím hiện hoặc khi tắt qua menu 3 chấm / dấu X.
+      if (dpadVisible && !imeVisible) Box(
+          Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 64.dp).offset { IntOffset(dpadX.roundToInt(), dpadY.roundToInt()) },
+      ) {
+          DPad(
+              onDirection = { dir ->
+                  when (dir) {
+                      DpadDir.LEFT -> moveFocus(-1)
+                      DpadDir.RIGHT -> moveFocus(1)
+                      DpadDir.UP -> cycleValue(-1)
+                      DpadDir.DOWN -> cycleValue(1)
+                  }
+              },
+              onDrag = { dx, dy ->
+                  dpadX = (dpadX + dx).coerceIn(0f, maxDpadX)
+                  dpadY = (dpadY + dy).coerceIn(minDpadY, 0f)
+              },
+          )
+          // Dấu X đỏ góc phải-trên vòng D-pad → ẩn nhanh.
+          Box(
+              Modifier.align(Alignment.TopEnd).offset(x = (-28).dp, y = 28.dp)
+                  .size(30.dp).clip(RoundedCornerShape(50)).background(AdminColors.Danger)
+                  .clickable { onHideDpad() },
+              contentAlignment = Alignment.Center,
+          ) {
+              Icon(Icons.Default.Close, contentDescription = "Ẩn D-pad", tint = AdminColors.White, modifier = Modifier.size(18.dp))
+          }
+      }
       // Dialog báo cáo kiểm kho hôm nay (dưới); click dòng → mở lịch sử (vẽ đè lên).
       if (reportOpen) StocktakeReportDialog(
           report, reportLoading,
           onOpenHistory = { historyVariant = it },
           onDismiss = { reportOpen = false },
       )
+      // Dialog xử lý sai lệch kiểm kê (pending → resolve manual → chốt).
+      if (sessionOpen) StocktakeResolveDialog(
+          session = session, busy = sessionBusy,
+          onResolveClick = { reasonMode = "manual"; reasonLine = it },
+          onWriteoffClick = { reasonMode = "writeoff"; reasonLine = it },
+          onBuClick = { line, mode -> buMode = mode; buLine = line },
+          onSwap = { applySwap(it) },
+          onUndo = { undoResolve(it) },
+          onOpenHistory = { openLineHistory(it) },
+          onClose = { closeSession() },
+          onDiscard = { discardSession() },
+          onRecount = { recountSession() },
+          onDismiss = { sessionOpen = false },
+      )
+      // Dialog nhập lý do (manual / writeoff) — vẽ TRÊN dialog xử lý.
+      reasonLine?.let { rl ->
+          StocktakeReasonDialog(
+              line = rl, busy = sessionBusy, mode = reasonMode,
+              suggestedReason = buildStocktakeHints(session)[rl.variantId]?.reason,
+              onConfirm = { reason -> resolveLine(rl, reasonMode, reason) },
+              onDismiss = { reasonLine = null },
+          )
+      }
+      // Màn tạo đơn bù (order = KH / purchase = NCC) — full-screen, lấy đúng UI màn giao đơn.
+      // Vẽ TRÊN dialog xử lý (opaque, phủ hết); Hủy/Xong → về lại dialog xử lý.
+      val curSession = session
+      val bl = buLine
+      if (bl != null && curSession != null) {
+          WarehouseBuOrderScreen(
+              session = curSession,
+              mode = if (buMode == "order") "order" else "purchase",
+              warehouseName = warehouseName,
+              initialLineId = bl.id,   // dòng đã bấm → điền SL, dòng khác = 0
+              onCancel = { buLine = null },
+              onDone = { updated ->
+                  buLine = null
+                  if (updated != null) session = updated
+                  else scope.launch { runCatching { container.vapi.getStocktakeSession(curSession.id).data }.getOrNull()?.let { session = it } }
+              },
+          )
+      }
       // Dialog lịch sử biến thể (click ảnh/tên hoặc dòng báo cáo) — vẽ TRÊN CÙNG.
       historyVariant?.let { hv ->
           VariantHistoryDialog(variant = hv, onDismiss = { historyVariant = null })
@@ -401,9 +610,8 @@ private fun StocktakeReportDialog(
                 else -> {
                     Text(
                         "${report.date} · ${report.summary.discrepancies} sai lệch / ${report.summary.counted} mặt hàng đã đếm",
-                        color = AdminColors.TextMuted, fontSize = 12.sp,
-                        // Căn trái theo dòng variant phía dưới (cùng bề rộng 0.97, canh giữa)
-                        modifier = Modifier.fillMaxWidth(0.97f).align(Alignment.CenterHorizontally).padding(top = 6.dp, bottom = 10.dp),
+                        color = AdminColors.TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 10.dp),
                     )
                     if (report.items.isEmpty()) {
                         Text("Không có sai lệch trong ngày", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
@@ -463,6 +671,279 @@ private fun StocktakeReportDialog(
                 }
             }
           }
+        }
+    }
+}
+
+/** Gợi ý chẩn đoán (P1) theo biến thể: text hiển thị + lý do gợi ý (pre-fill). */
+private data class StkHint(val text: String, val reason: String)
+private fun buildStocktakeHints(session: StocktakeSessionDto?): Map<Long, StkHint> {
+    val map = HashMap<Long, StkHint>()
+    for (p in session?.analysis ?: emptyList()) {
+        for (s in p.swaps) {
+            map[s.shortageVariantId] = StkHint(
+                "Nghi nhầm biến thể: chuyển đổi với \"${s.surplusName}\" (thừa ${trimZeros(s.qty)} ${s.unit})",
+                "Nghi giao/nhận nhầm biến thể với \"${s.surplusName}\"",
+            )
+            map[s.surplusVariantId] = StkHint(
+                "Nghi nhầm biến thể: chuyển đổi với \"${s.shortageName}\" (thiếu ${trimZeros(s.qty)} ${s.unit})",
+                "Nghi giao/nhận nhầm biến thể với \"${s.shortageName}\"",
+            )
+        }
+        for (r in p.residuals) {   // residual ghi đè (phần chưa giải thích bằng swap)
+            if (r.kind == "shortage") {
+                val cand = r.candidates.joinToString(", ") { it.name }
+                map[r.variantId] = StkHint(
+                    "Thiếu lẻ — nghi quên đơn bán / thất thoát" + if (cand.isNotBlank()) " · KH gần mua: $cand" else "",
+                    "Nghi thiếu đơn bán / thất thoát",
+                )
+            } else {
+                map[r.variantId] = StkHint("Thừa lẻ — nghi quên đơn nhập / hoàn hàng", "Nghi thừa — quên đơn nhập / hoàn hàng")
+            }
+        }
+    }
+    return map
+}
+
+/** Màn xử lý sai lệch kiểm kê: gom SP, resolve manual (điều chỉnh có lý do), chốt/huỷ phiên. */
+@Composable
+private fun StocktakeResolveDialog(
+    session: StocktakeSessionDto?,
+    busy: Boolean,
+    onResolveClick: (StocktakeSessionLineDto) -> Unit,
+    onWriteoffClick: (StocktakeSessionLineDto) -> Unit,
+    onBuClick: (StocktakeSessionLineDto, String) -> Unit,
+    onSwap: (StocktakeSwapDto) -> Unit,
+    onUndo: (StocktakeSessionLineDto) -> Unit,
+    onOpenHistory: (StocktakeSessionLineDto) -> Unit,
+    onClose: () -> Unit,
+    onDiscard: () -> Unit,
+    onRecount: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val lines = session?.lines?.filter { it.status != "matched" } ?: emptyList()
+    val pending = session?.summary?.pending ?: 0
+    val hints = buildStocktakeHints(session)
+    // Swap 1 chạm: cặp đối xứng tin cậy CAO → map biến thể → swap.
+    val swaps = HashMap<Long, StocktakeSwapDto>()
+    for (p in session?.analysis ?: emptyList()) for (s in p.swaps) if (s.confidence == "high") {
+        swaps[s.shortageVariantId] = s; swaps[s.surplusVariantId] = s
+    }
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(Modifier.fillMaxWidth(0.95f), horizontalAlignment = Alignment.CenterHorizontally) {
+            // Nút đóng ngoài dialog, trên bên phải.
+            Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Box(
+                    Modifier.align(Alignment.CenterEnd).clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.12f)).clickable(onClick = onDismiss).padding(6.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Default.Close, "Đóng", tint = AdminColors.Text, modifier = Modifier.size(20.dp)) }
+            }
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 620.dp).clip(RoundedCornerShape(16.dp))
+                    .background(AdminColors.Card).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                    .clickable(enabled = false) {}.padding(horizontal = 4.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    "Xử lý sai lệch kiểm kê", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+                )
+                if (session != null) {
+                    Text(
+                        "$pending chờ xử lý · ${session.summary.resolved} đã xử lý · ${session.summary.matched} khớp · biến thể lệch đang khoá xuất",
+                        color = AdminColors.TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 8.dp),
+                    )
+                    if (lines.isEmpty()) {
+                        Text("Không có sai lệch", color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                    } else {
+                        LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            itemsIndexed(lines, key = { _, it -> it.id }) { i, l ->
+                                Column(Modifier.fillMaxWidth()) {
+                                    if (i > 0 && lines[i - 1].productId != l.productId) {
+                                        Box(
+                                            Modifier.fillMaxWidth(0.5f).align(Alignment.CenterHorizontally)
+                                                .padding(vertical = 3.dp).height(1.dp).background(AdminColors.Warning),
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth(0.97f).align(Alignment.CenterHorizontally).heightIn(min = 58.dp)
+                                            .clip(RoundedCornerShape(10.dp)).background(AdminColors.Bg)
+                                            .border(1.dp, AdminColors.Border, RoundedCornerShape(10.dp))
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Box(
+                                            Modifier.size(46.dp).clip(RoundedCornerShape(6.dp)).background(AdminColors.Card)
+                                                .border(1.dp, AdminColors.Border, RoundedCornerShape(6.dp))
+                                                .clickable { onOpenHistory(l) },   // ảnh → lịch sử xuất nhập biến thể
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            if (!l.imageUrl.isNullOrBlank()) AsyncImage(model = l.imageUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                                            else Icon(Icons.Default.Inventory2, null, tint = AdminColors.TextMuted, modifier = Modifier.size(18.dp))
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            // Tên biến thể → mở lịch sử xuất nhập biến thể (giống list kiểm kho).
+                                            Text(l.variantName, color = AdminColors.Text, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable { onOpenHistory(l) })
+                                            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    "Tồn HT ${trimZeros(l.systemQty)} → Đếm ${trimZeros(l.countedQty)} ${l.unit}",
+                                                    color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f),
+                                                )
+                                                val neg = l.diff < 0
+                                                Text(
+                                                    if (neg) "Thiếu ${trimZeros(abs(l.diff))} ${l.unit}" else "Dư ${trimZeros(l.diff)} ${l.unit}",
+                                                    color = if (neg) AdminColors.Danger else AdminColors.Info, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                                                )
+                                            }
+                                            if (l.status == "resolved" && !(l.resolutionMeta?.get("reason") as? String).isNullOrBlank()) {
+                                                Text("Lý do: ${l.resolutionMeta?.get("reason")}", color = AdminColors.TextMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                                            } else if (l.status != "resolved") {
+                                                hints[l.variantId]?.let { h ->
+                                                    Text("💡 ${h.text}", color = AdminColors.Warning, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        if (l.status == "resolved") {
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text("Đã xử lý", color = AdminColors.Success, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                                Text("Bỏ", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.clickable(enabled = !busy) { onUndo(l) }.padding(top = 2.dp))
+                                            }
+                                        } else {
+                                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                swaps[l.variantId]?.let { sw ->
+                                                    Box(
+                                                        Modifier.clip(RoundedCornerShape(8.dp)).background(AdminColors.Info.copy(alpha = 0.15f))
+                                                            .border(1.dp, AdminColors.Info, RoundedCornerShape(8.dp))
+                                                            .clickable(enabled = !busy) { onSwap(sw) }.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    ) { Text("Chuyển đổi", color = AdminColors.Info, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+                                                }
+                                                // Đơn bán bù: dòng THIẾU (nghi quên xuất đơn KH).
+                                                if (l.diff < 0) Box(
+                                                    Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, AdminColors.Success.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                                                        .clickable(enabled = !busy) { onBuClick(l, "order") }.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                ) { Text("Đơn bù", color = AdminColors.Success, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+                                                // Nhập bù: dòng THỪA (nghi quên nhập / hoàn hàng).
+                                                if (l.diff > 0) Box(
+                                                    Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, AdminColors.Info.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                                                        .clickable(enabled = !busy) { onBuClick(l, "purchase") }.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                ) { Text("Nhập bù", color = AdminColors.Info, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+                                                Box(
+                                                    Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, AdminColors.Primary, RoundedCornerShape(8.dp))
+                                                        .clickable(enabled = !busy) { onResolveClick(l) }.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                ) { Text("Xử lý", color = AdminColors.Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+                                                // Thất thoát: chỉ dòng THIẾU (ghi lỗ giá vốn khi chốt).
+                                                if (l.diff < 0) Box(
+                                                    Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, AdminColors.Danger.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                                        .clickable(enabled = !busy) { onWriteoffClick(l) }.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                ) { Text("Thất thoát", color = AdminColors.Danger, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Footer: huỷ phiên / chốt phiên.
+                    Row(Modifier.fillMaxWidth().padding(top = 10.dp, start = 6.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, AdminColors.Danger.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                .clickable(enabled = !busy) { onDiscard() }.padding(horizontal = 12.dp, vertical = 8.dp),
+                        ) { Text("Huỷ phiên", color = AdminColors.Danger, fontSize = 13.sp) }
+                        Spacer(Modifier.width(8.dp))
+                        // Đếm lại: sau khi sửa đơn sai, tồn đã đổi → đối chiếu lại,
+                        // biến thể nào khớp rồi thì rời danh sách xử lý sai lệch.
+                        Box(
+                            Modifier.clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, AdminColors.Border, RoundedCornerShape(8.dp))
+                                .clickable(enabled = !busy) { onRecount() }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                "Đếm lại",
+                                color = if (busy) AdminColors.TextMuted.copy(alpha = 0.5f) else AdminColors.TextMuted,
+                                fontSize = 13.sp,
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        val canClose = pending == 0 && !busy
+                        Box(
+                            Modifier.clip(RoundedCornerShape(8.dp))
+                                .background(if (canClose) AdminColors.Primary else AdminColors.Primary.copy(alpha = 0.3f))
+                                .clickable(enabled = canClose) { onClose() }.padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                if (pending > 0) "Còn $pending chưa xử lý" else "Chốt phiên",
+                                color = if (canClose) AdminColors.White else AdminColors.White.copy(alpha = 0.5f),
+                                fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Dialog nhập lý do điều chỉnh (manual resolve). */
+@Composable
+private fun StocktakeReasonDialog(
+    line: StocktakeSessionLineDto,
+    busy: Boolean,
+    mode: String = "manual",
+    suggestedReason: String?,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // Pre-fill: lý do đã ghi > gợi ý engine > rỗng.
+    var reason by remember { mutableStateOf((line.resolutionMeta?.get("reason") as? String) ?: suggestedReason ?: "") }
+    val neg = line.diff < 0
+    val writeoff = mode == "writeoff"
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.fillMaxWidth(0.9f).clip(RoundedCornerShape(16.dp)).background(AdminColors.Card)
+                .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .clickable(enabled = false) {}.padding(16.dp),
+        ) {
+            Text(if (writeoff) "Ghi thất thoát / hao hụt" else "Điều chỉnh tồn có lý do", color = AdminColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "${line.variantName} · ${if (neg) "Thiếu ${trimZeros(abs(line.diff))}" else "Dư ${trimZeros(line.diff)}"} ${line.unit}",
+                color = AdminColors.TextMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp),
+            )
+            Text(
+                if (writeoff) "Khi chốt phiên, tồn giảm về số đếm và ghi một khoản LỖ = giá vốn số hàng thiếu (phi tiền mặt)."
+                else "Khi chốt phiên, tồn sẽ áp về ${trimZeros(line.countedQty)} ${line.unit}.",
+                color = if (writeoff) AdminColors.Danger else AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+            )
+            Box(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg)
+                    .border(1.dp, AdminColors.Border, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                BasicTextField(
+                    value = reason, onValueChange = { reason = it },
+                    textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp),
+                    cursorBrush = SolidColor(AdminColors.Primary),
+                    decorationBox = { inner -> if (reason.isEmpty()) Text(if (writeoff) "Nguyên nhân thất thoát (mất, hỏng, vỡ...)" else "Lý do (đếm lại, điều chỉnh...)", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                Text("Huỷ", color = AdminColors.TextMuted, fontSize = 14.sp, modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 12.dp, vertical = 6.dp))
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (writeoff) AdminColors.Danger else AdminColors.Primary)
+                        .clickable(enabled = !busy) { onConfirm(reason) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                ) { Text(if (writeoff) "Ghi thất thoát" else "Xác nhận", color = AdminColors.White, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
+            }
         }
     }
 }

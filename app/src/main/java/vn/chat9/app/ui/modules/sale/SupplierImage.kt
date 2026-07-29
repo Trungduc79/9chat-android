@@ -161,6 +161,193 @@ fun renderSupplierBitmap(data: SupplierImageDto, dateStr: String, note: String):
     return bmp
 }
 
+/**
+ * Render ảnh "gửi khách" (mirror web SaleOrderFormView.renderCustomerImage): header
+ * (KH · ngày · mã), mỗi dòng [ảnh][tên · SL đơn-vị × đơn-giá … thành-tiền căn phải],
+ * bảng tiền (tiền hàng/ship/thu hộ/giảm → Tổng cộng), ảnh xác nhận giao hàng full-width,
+ * khung viền bo góc bao ngoài. Vẽ theo web-unit rồi scale ×2. Constants copy y hệt web.
+ *
+ * @param includeAttach false = bỏ ảnh giao hàng khỏi ảnh đơn
+ * @return (bitmap, attachTopRatio) — attachTopRatio (0..1 theo chiều cao) để đặt nút × (null nếu không có ảnh)
+ */
+fun renderCustomerBitmap(
+    data: SupplierImageDto, custName: String, dateStr: String, includeAttach: Boolean,
+): Triple<Bitmap, Float?, Float?> {
+    val s = 2f
+    val w = 600f
+    val padX = 20f; val padTop = 84f; val padBottom = 24f
+    val imgS = 107f; val gapIT = 16f; val rowGap = 8f; val rowH = imgS
+    val tx = padX + imgS + gapIT
+    val twMax = w - tx - padX
+    val nameSize = 24f; val lineH = 32f; val priceGap = 8f; val priceH = 26f
+    val colQty = 80f; val colUnit = 55f; val colMul = 25f; val colPrice = 100f
+
+    val items = data.items
+
+    fun paint(size: Float, color: Int, tf: Typeface = Typeface.DEFAULT, align: Paint.Align = Paint.Align.LEFT) =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = size; this.color = color; typeface = tf; isSubpixelText = true; textAlign = align }
+    val bold = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    val italic = Typeface.create(Typeface.SANS_SERIF, Typeface.ITALIC)
+    val mono = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+
+    val namePaint = paint(nameSize, Color.parseColor("#222222"))
+    val nameLines = items.map { wrapLines(it.name, twMax, 2, namePaint) }
+
+    // Bảng tiền: dòng hiện có.
+    data class MLine(val label: String, val amt: Double, val sign: String, val deduct: Boolean)
+    val goods = items.sumOf { it.qty * it.price }
+    val moneyLines = mutableListOf(MLine("Tổng tiền hàng", goods, "", false))
+    if (data.shippingFee > 0) moneyLines.add(MLine("Phí ship", data.shippingFee, "", false))
+    if (data.codCollected > 0) moneyLines.add(MLine("Thu tiền mặt", data.codCollected, "−", true))
+    if (data.discountAmount > 0) moneyLines.add(MLine("Giảm cả đơn", data.discountAmount, "−", true))
+    val grand = goods + data.shippingFee - data.codCollected - data.discountAmount
+    val moneyBorderGap = 12f; val moneyGapTop = 38f; val moneyLineH = 34f
+    val dividerGapAbove = 10f; val dividerGapBelow = 16f; val totalLineH = 40f
+    val moneyBlockH = moneyGapTop + moneyLines.size * moneyLineH + dividerGapAbove + dividerGapBelow + totalLineH
+
+    // Ảnh giao hàng — decode trước để tính chiều cao thật.
+    val maxAttW = w - padX * 2; val attGap = 14f
+    val attBmps = if (includeAttach) data.attachments.mapNotNull { decodeDataUri(it) } else emptyList()
+    data class Att(val bmp: Bitmap, val dw: Float, val dh: Float)
+    val atts = attBmps.filter { it.width > 0 && it.height > 0 }
+        .map { Att(it, maxAttW, it.height * (maxAttW / it.width)) }
+    val attGapTop = 24f; val attLabelH = 26f; val attLabelGap = 10f
+    val attContentH = if (atts.isNotEmpty()) atts.sumOf { it.dh.toDouble() }.toFloat() + (atts.size - 1) * attGap else 0f
+    val attBlockH = if (atts.isNotEmpty()) attGapTop + attLabelH + attLabelGap + attContentH else 0f
+
+    val itemsH = items.size * rowH + (items.size - 1).coerceAtLeast(0) * rowGap
+    val h = padTop + itemsH + moneyBlockH + attBlockH + padBottom
+
+    // Khung viền bao ngoài: 3px đệm ngoài + viền 1px + 3px đệm trong.
+    val fr = 7f
+    val cw = w + fr * 2; val ch = h + fr * 2
+
+    val bmp = Bitmap.createBitmap((cw * s).toInt(), (ch * s).toInt(), Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    c.scale(s, s)
+    c.drawColor(Color.WHITE)
+    val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#a3a3a3"); strokeWidth = 1f }
+    c.drawRoundRect(RectF(3.5f, 3.5f, cw - 3.5f, ch - 3.5f), 20f, 20f, framePaint)
+    c.translate(fr, fr)
+
+    fun drawTopC(text: String, x: Float, topY: Float, p: Paint) = c.drawText(text, x, topY - p.fontMetrics.ascent, p)
+    fun measure(text: String, p: Paint) = p.measureText(text)
+
+    // Header: KH · | · ngày · | · mã (mã xanh mono).
+    val titlePaint = paint(24f, Color.parseColor("#111111"), bold)
+    val sepPaint = paint(24f, Color.parseColor("#c2c2c2"), bold)
+    val codePaint = paint(22f, Color.parseColor("#2f6df6"), mono)
+    val sep = "  |  "
+    val wName = measure(custName, titlePaint); val wSep = measure(sep, titlePaint)
+    val wDate = measure(dateStr, titlePaint); val wCode = measure(data.orderCode, codePaint)
+    var hx = (w - (wName + wSep + wDate + wSep + wCode)) / 2f
+    drawTopC(custName, hx, 26f, titlePaint); hx += wName
+    drawTopC(sep, hx, 26f, sepPaint); hx += wSep
+    drawTopC(dateStr, hx, 26f, titlePaint); hx += wDate
+    drawTopC(sep, hx, 26f, sepPaint); hx += wSep
+    drawTopC(data.orderCode, hx, 27f, codePaint)
+
+    val grayLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#e5e5e5"); strokeWidth = 1f }
+    c.drawLine(padX, padTop - 14f, w - padX, padTop - 14f, grayLine)
+
+    val phPaint = paint(13f, Color.parseColor("#bbbbbb")).apply { textAlign = Paint.Align.CENTER }
+    val qtyPaint = paint(24f, Color.parseColor("#111111"), bold, Paint.Align.CENTER)
+    val unitPaint = paint(19f, Color.parseColor("#808080"), italic, Paint.Align.CENTER)
+    val mulPaint = paint(20f, Color.parseColor("#aaaaaa"), Typeface.DEFAULT, Paint.Align.CENTER)
+    val pricePaint = paint(22f, Color.parseColor("#333333"), bold, Paint.Align.CENTER)
+    val lineTotalPaint = paint(24f, Color.parseColor("#111111"), bold, Paint.Align.RIGHT)
+
+    items.forEachIndexed { i, it ->
+        val y = padTop + i * (rowH + rowGap)
+        c.save()
+        c.clipPath(Path().apply { addRoundRect(RectF(padX, y, padX + imgS, y + imgS), 5f, 5f, Path.Direction.CW) })
+        c.drawColor(Color.parseColor("#f4f4f4"))
+        val im = decodeDataUri(it.image)
+        if (im != null) {
+            val sc = minOf(imgS / im.width, imgS / im.height)
+            val dw = im.width * sc; val dh = im.height * sc
+            c.drawBitmap(im, null, RectF(padX + (imgS - dw) / 2, y + (imgS - dh) / 2, padX + (imgS + dw) / 2, y + (imgS + dh) / 2), null)
+        } else drawTopC("Không có ảnh", padX + imgS / 2, y + imgS / 2 - 7f, phPaint)
+        c.restore()
+
+        val lines = nameLines[i]
+        val blockH = lines.size * lineH + priceGap + priceH
+        var ty = y + (imgS - blockH) / 2f
+        lines.forEachIndexed { k, ln -> drawTopC(ln, tx, ty + k * lineH, namePaint) }
+        ty += lines.size * lineH + priceGap
+
+        // Cột SL/đơn giá căn giữa.
+        var cx = tx
+        drawTopC(fmtQtyA(it.qty), cx + colQty / 2, ty, qtyPaint); cx += colQty
+        if (it.unit.isNotBlank()) drawTopC(it.unit, cx + colUnit / 2, ty, unitPaint)
+        cx += colUnit
+        drawTopC("×", cx + colMul / 2, ty + 2f, mulPaint); cx += colMul
+        drawTopC(fmtMoneyA(it.price), cx + colPrice / 2, ty, pricePaint)
+        // Thành tiền căn phải.
+        drawTopC(fmtMoneyA(it.qty * it.price), w - padX, ty, lineTotalPaint)
+
+        if (i < items.size - 1) {
+            val dp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#eeeeee"); strokeWidth = 1f }
+            c.drawLine(padX, y + rowH + rowGap / 2, w - padX, y + rowH + rowGap / 2, dp)
+        }
+    }
+
+    var cy = padTop + itemsH
+
+    // Bảng tiền — nhãn trái, số căn phải; border-top xám.
+    var my = cy + moneyGapTop
+    c.drawLine(padX, cy + moneyBorderGap, w - padX, cy + moneyBorderGap, grayLine)
+    val mLabelPaint = paint(21f, Color.parseColor("#666666"))
+    val mAmtPaint = paint(24f, Color.parseColor("#111111"), bold, Paint.Align.RIGHT)
+    val mAmtDeduct = paint(24f, Color.parseColor("#c0392b"), bold, Paint.Align.RIGHT)
+    moneyLines.forEach { ln ->
+        drawTopC(ln.label, padX, my + 3f, mLabelPaint)
+        drawTopC(ln.sign + fmtMoneyA(ln.amt), w - padX, my, if (ln.deduct) mAmtDeduct else mAmtPaint)
+        my += moneyLineH
+    }
+    val dy = my + dividerGapAbove
+    c.drawLine(padX, dy, w - padX, dy, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#2f6df6"); strokeWidth = 2f })
+    val ty2 = dy + dividerGapBelow
+    drawTopC("Tổng cộng", padX, ty2 + 6f, paint(23f, Color.parseColor("#111111"), bold))
+    // "đ" vàng nghiêng ở mép phải; số tổng đậm đặt bên trái "đ".
+    val dSymPaint = paint(26f, Color.parseColor("#e0a400"), italic, Paint.Align.RIGHT)
+    drawTopC("đ", w - padX, ty2 + 1f, dSymPaint)
+    val wDsym = paint(26f, 0, italic).measureText("đ")
+    drawTopC(fmtMoneyA(grand), w - padX - wDsym - 8f, ty2, paint(27f, Color.parseColor("#111111"), bold, Paint.Align.RIGHT))
+    cy += moneyBlockH
+
+    // Ảnh xác nhận giao hàng — căn giữa.
+    var attachTopRatio: Float? = null
+    var attachRightRatio: Float? = null
+    if (atts.isNotEmpty()) {
+        var ay = cy + attGapTop
+        drawTopC("Ảnh xác nhận giao hàng", w / 2, ay, paint(16f, Color.parseColor("#888888"), bold, Paint.Align.CENTER))
+        ay += attLabelH + attLabelGap
+        attachTopRatio = (ay + fr) / ch
+        // Mép phải ảnh đính kèm: ax = padX (do dw = maxAttW = w - 2padX) → phải = padX + maxAttW = w - padX.
+        attachRightRatio = (fr + w - padX) / cw
+        val attBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#e5e5e5"); strokeWidth = 1f }
+        for (a in atts) {
+            val ax = (w - a.dw) / 2
+            c.save()
+            c.clipPath(Path().apply { addRoundRect(RectF(ax, ay, ax + a.dw, ay + a.dh), 6f, 6f, Path.Direction.CW) })
+            c.drawBitmap(a.bmp, null, RectF(ax, ay, ax + a.dw, ay + a.dh), null)
+            c.restore()
+            c.drawRoundRect(RectF(ax + 0.5f, ay + 0.5f, ax + a.dw - 0.5f, ay + a.dh - 0.5f), 6f, 6f, attBorder)
+            ay += a.dh + attGap
+        }
+    }
+
+    return Triple(bmp, attachTopRatio, attachRightRatio)
+}
+
+/** Số tiền: làm tròn + locale vi (dấu . ngăn nghìn). */
+private fun fmtMoneyA(n: Double): String {
+    val nf = java.text.NumberFormat.getInstance(java.util.Locale("vi"))
+    nf.maximumFractionDigits = 0
+    return nf.format(Math.round(n))
+}
+
 /** Ngắt text ≤ maxLines dòng vừa maxW, thêm "…" nếu tràn. */
 private fun wrapLines(text: String, maxW: Float, maxLines: Int, p: Paint): List<String> {
     val words = text.split(" ")
@@ -209,17 +396,20 @@ fun fmtBytesA(n: Long): String = when {
     else -> String.format(java.util.Locale.US, "%.2f MB", n / 1024.0 / 1024.0)
 }
 
-/** Lưu bitmap vào thư viện ảnh (Pictures) qua MediaStore. true nếu thành công. */
-fun saveBitmapToGallery(context: android.content.Context, bmp: Bitmap, name: String): Boolean = runCatching {
+/** Lưu bitmap vào thư viện ảnh (Pictures) qua MediaStore. jpeg=true → JPEG q85. true nếu thành công. */
+fun saveBitmapToGallery(context: android.content.Context, bmp: Bitmap, name: String, jpeg: Boolean = false): Boolean = runCatching {
+    val ext = if (jpeg) "jpg" else "png"
     val values = android.content.ContentValues().apply {
-        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
-        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "$name.$ext")
+        put(android.provider.MediaStore.Images.Media.MIME_TYPE, if (jpeg) "image/jpeg" else "image/png")
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q)
             put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES)
     }
     val uri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         ?: return false
-    context.contentResolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    context.contentResolver.openOutputStream(uri)?.use {
+        if (jpeg) bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) else bmp.compress(Bitmap.CompressFormat.PNG, 100, it)
+    }
     true
 }.getOrDefault(false)
 

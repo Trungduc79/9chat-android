@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.contacts
 
+import vn.chat9.app.ui.common.dialogGlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -785,6 +786,7 @@ private fun FriendDetailDialog(
 
     if (confirmUnfriend) {
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { confirmUnfriend = false },
             title = { Text("Hủy kết bạn") },
             text = { Text("Bạn có chắc muốn hủy kết bạn với ${friend.alias ?: friend.username}?") },

@@ -5,7 +5,12 @@
   `shared/` — gallery-viewer share action copies the image here before
   handing a content:// URI to the share chooser. See
   ui/chat/GalleryViewerDialog.shareImage.
+
+  `Download/` (external-files-path) — in-app updater tải APK bản mới về
+  getExternalFilesDir(DIRECTORY_DOWNLOADS) rồi cấp content:// URI cho trình
+  cài đặt hệ thống. Xem update/UpdateManager.kt.
 -->
 <paths>
     <cache-path name="shared" path="shared/" />
+    <external-files-path name="update" path="Download/" />
 </paths>

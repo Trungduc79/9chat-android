@@ -402,11 +402,20 @@ class MainActivity : ComponentActivity() {
                   // bị child consume nên root onTap KHÔNG fire; chỉ tap vùng trống mới clearFocus.
                   val rootFocusManager = LocalFocusManager.current
                   Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { rootFocusManager.clearFocus() }) }) {
+                    // Cập nhật in-app tự-host: mở app → check version.json → nhắc cài bản mới.
+                    vn.chat9.app.update.UpdateGate()
                     val scope = rememberCoroutineScope()
                     var screen by remember {
                         mutableStateOf(if (container.tokenManager.isLoggedIn) "home" else "login")
                     }
                     var selectedRoom by remember { mutableStateOf<Room?>(null) }
+                    var orderDetailId by remember { mutableStateOf(0L) } // thẻ order trong chat → màn chi tiết
+                    var invoiceDir by remember { mutableStateOf("out") } // thẻ invoice → chi tiết HĐ (out/in)
+                    var invoiceId by remember { mutableStateOf(0L) }
+                    var debtPartyType by remember { mutableStateOf("customer") } // thẻ debt → sổ công nợ (customer/supplier)
+                    var debtPartyId by remember { mutableStateOf(0L) }
+                    var productVariantId by remember { mutableStateOf(0L) } // thẻ product → chi tiết SP (variant id)
+                    var txDetailId by remember { mutableStateOf(0L) } // thẻ transaction → chi tiết GD ngân hàng
                     var selectedTab by remember { mutableIntStateOf(0) }
                     var roomRefreshKey by remember { mutableIntStateOf(0) }
                     var scrollToMessageId by remember { mutableStateOf<Int?>(null) }
@@ -454,7 +463,15 @@ class MainActivity : ComponentActivity() {
                     // See: navigation/AppDestination.kt, navigation/DeepLinkRouter.kt
                     // -----------------------------------------------------------
                     val navigateTo: (vn.chat9.app.navigation.AppDestination) -> Unit = { dest ->
-                        when (dest) {
+                        // Gate quyền deep-link thẻ nghiệp vụ: thiếu quyền → không
+                        // chuyển nội app, báo toast. Destination thường luôn cho qua.
+                        if (!vn.chat9.app.navigation.DeepLinkAccess.canOpen(dest, container.permissions)) {
+                            android.widget.Toast.makeText(
+                                this@MainActivity,
+                                "Bạn không có quyền xem mục này",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else when (dest) {
                             is vn.chat9.app.navigation.AppDestination.Home -> {
                                 selectedTab = dest.tab.index
                                 selectedRoom = null
@@ -516,6 +533,28 @@ class MainActivity : ComponentActivity() {
                             }
                             is vn.chat9.app.navigation.AppDestination.GroupMembers -> {
                                 screen = "group_members"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.OrderDetail -> {
+                                orderDetailId = dest.orderId
+                                screen = "order_detail"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.InvoiceDetail -> {
+                                invoiceDir = dest.dir
+                                invoiceId = dest.id
+                                screen = "invoice_detail"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.DebtDetail -> {
+                                debtPartyType = dest.partyType
+                                debtPartyId = dest.id
+                                screen = "debt_detail"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.ProductDetail -> {
+                                productVariantId = dest.variantId
+                                screen = "product_detail"
+                            }
+                            is vn.chat9.app.navigation.AppDestination.TransactionDetail -> {
+                                txDetailId = dest.id
+                                screen = "transaction_detail"
                             }
                         }
                     }
@@ -1101,6 +1140,11 @@ class MainActivity : ComponentActivity() {
                                         navigateTo(vn.chat9.app.navigation.AppDestination.Wall(uid))
                                     },
                                     onChatOptions = { screen = "chat_options" },
+                                    onOpenDeeplink = { dl ->
+                                        val dest = vn.chat9.app.navigation.DeepLinkRouter.parseUri(android.net.Uri.parse(dl))
+                                        if (dest != null) navigateTo(dest)
+                                        else android.widget.Toast.makeText(this@MainActivity, "Chưa hỗ trợ mở loại này", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
                                     onRoomChanged = {
                                         // Re-fetch room detail sau khi admin đổi
                                         // tên / avatar / thành viên trong onboarding
@@ -1136,6 +1180,38 @@ class MainActivity : ComponentActivity() {
                                     onViewMembers = { screen = "group_members" },
                                 )
                             }
+                        }
+                        "order_detail" -> SwipeBack(onBack = { screen = "chat" }) {
+                            vn.chat9.app.ui.order.OrderRoute(
+                                orderId = orderDetailId,
+                                onClose = { screen = "chat" },
+                            )
+                        }
+                        "invoice_detail" -> SwipeBack(onBack = { screen = "chat" }) {
+                            vn.chat9.app.ui.invoice.InvoiceDetailScreen(
+                                dir = invoiceDir,
+                                id = invoiceId,
+                                onClose = { screen = "chat" },
+                            )
+                        }
+                        "debt_detail" -> SwipeBack(onBack = { screen = "chat" }) {
+                            vn.chat9.app.ui.modules.accounting.DebtRoute(
+                                partyType = debtPartyType,
+                                partyId = debtPartyId,
+                                onClose = { screen = "chat" },
+                            )
+                        }
+                        "product_detail" -> SwipeBack(onBack = { screen = "chat" }) {
+                            vn.chat9.app.ui.product.ProductDetailScreen(
+                                variantId = productVariantId,
+                                onClose = { screen = "chat" },
+                            )
+                        }
+                        "transaction_detail" -> SwipeBack(onBack = { screen = "chat" }) {
+                            vn.chat9.app.ui.transaction.TransactionDetailScreen(
+                                txId = txDetailId,
+                                onClose = { screen = "chat" },
+                            )
                         }
                         "wall" -> {
                             // Back from Wall: prefer the remembered return

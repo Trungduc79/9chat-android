@@ -1,5 +1,7 @@
 package vn.chat9.app.ui.modules.warehouse
 
+import vn.chat9.app.ui.common.dialogGlow
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -21,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warehouse
@@ -30,6 +34,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -83,6 +89,8 @@ fun WarehouseScreen(onBack: () -> Unit) {
     var photosOpen by rememberSaveable { mutableStateOf(false) }   // Ảnh chụp: mở từ menu 3 chấm (không còn là tab)
     var siblingIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var forward by remember { mutableStateOf(true) }
+    var quickCreateOpen by remember { mutableStateOf(false) }   // FAB "+" tạo đơn giao nhanh
+    var quickEditId by remember { mutableStateOf<Long?>(null) } // sửa đơn NHÁP có sẵn (click card nháp)
 
     var confirmed by remember { mutableStateOf<List<OrderDto>>(emptyList()) }
     var done by remember { mutableStateOf<List<OrderDto>>(emptyList()) }
@@ -104,10 +112,16 @@ fun WarehouseScreen(onBack: () -> Unit) {
     }
 
     // Reload đơn confirmed khi đổi kho làm việc (key=warehouseId).
+    // Confirmed + đơn NHÁP có ảnh (đơn giao nhanh chưa hoàn thiện) — nháp lên đầu.
+    suspend fun loadConfirmedList(): List<OrderDto> {
+        val conf = repo.listOrders("confirmed", selectedWarehouseId)
+        val drafts = try { repo.listOrders("draft", selectedWarehouseId).filter { it.thumbUrl != null } } catch (_: Exception) { emptyList() }
+        return drafts + conf
+    }
     LaunchedEffect(selectedWarehouseId) {
         if (selectedWarehouseId == null) return@LaunchedEffect
         loading = true; error = null; doneLoaded = false
-        try { confirmed = repo.listOrders("confirmed", selectedWarehouseId) }
+        try { confirmed = loadConfirmedList() }
         catch (e: Exception) { error = "Không tải được đơn" }
         loading = false
     }
@@ -137,10 +151,12 @@ fun WarehouseScreen(onBack: () -> Unit) {
         if (selectedWarehouseId == null && warehouses.isNotEmpty()) pickerOpen = true
     }
 
-    val saleList = remember(confirmed) { confirmed.filter { !isPurchaseOrder(it) }.sortedBy(::sentToWhTime) }
-    val purchaseList = remember(confirmed) { confirmed.filter { isPurchaseOrder(it) }.sortedBy(::sentToWhTime) }
+    // Nháp (status=draft) xếp LÊN ĐẦU, còn lại theo thời gian gửi kho.
+    val saleList = remember(confirmed) { confirmed.filter { !isPurchaseOrder(it) }.sortedWith(compareBy({ if (it.status == "draft") 0 else 1 }, ::sentToWhTime)) }
+    val purchaseList = remember(confirmed) { confirmed.filter { isPurchaseOrder(it) }.sortedWith(compareBy({ if (it.status == "draft") 0 else 1 }, ::sentToWhTime)) }
     val doneList = remember(done) {
-        val seeAll = container.permissions.isBypass || container.permissions.hasRole("manager")
+        // Admin toàn quyền (owner bypass_all HOẶC '*' vapi) hoặc manager → xem MỌI đơn đã hoàn thành.
+        val seeAll = container.permissions.has("*") || container.permissions.hasRole("manager")
         val myId = container.tokenManager.user?.id?.toLong()
         done.filter { isToday(it.fulfilledRealTime) && (seeAll || it.meta?.fulfillment?.byUserId == myId) }
             .sortedByDescending { it.fulfilledRealTime ?: "" }
@@ -163,7 +179,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
             try {
                 when {
                     photosOpen -> { photos = repo.allPhotos(); photosLoaded = true }
-                    tab == 0 || tab == 1 -> confirmed = repo.listOrders("confirmed", selectedWarehouseId)
+                    tab == 0 || tab == 1 -> confirmed = loadConfirmedList()
                     tab == 2 -> {
                         done = repo.listOrders("delivered", selectedWarehouseId) +
                             repo.listOrders("received", selectedWarehouseId)
@@ -181,7 +197,7 @@ fun WarehouseScreen(onBack: () -> Unit) {
     fun reloadAfterFulfill() {
         scope.launch {
             try {
-                confirmed = repo.listOrders("confirmed", selectedWarehouseId)
+                confirmed = loadConfirmedList()
                 done = repo.listOrders("delivered", selectedWarehouseId) +
                     repo.listOrders("received", selectedWarehouseId)
                 doneLoaded = true
@@ -192,6 +208,12 @@ fun WarehouseScreen(onBack: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
     val userName = container.tokenManager.user?.username ?: "—"
 
+    // Hiện/ẩn D-pad điều hướng ở tab Kiểm kho — toggle qua menu 3 chấm, nhớ qua prefs.
+    val ctx = LocalContext.current
+    val whPrefs = remember(ctx) { ctx.getSharedPreferences("stocktake_cache", Context.MODE_PRIVATE) }
+    var dpadVisible by remember { mutableStateOf(whPrefs.getBoolean("dpad_visible", true)) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().background(AdminColors.Bg).statusBarsPadding()) {
         // TabRow + 3-dot menu cuối (mirror NTabs #suffix của web). Bỏ status row trên cùng.
         Row(
@@ -256,6 +278,17 @@ fun WarehouseScreen(onBack: () -> Unit) {
                             onClick = { menuOpen = false; refresh() },
                             colors = itemColors,
                         )
+                        // Chỉ tab Kiểm kho mới có D-pad → toggle hiện/ẩn.
+                        if (tab == 3) DropdownMenuItem(
+                            text = { Text(if (dpadVisible) "Ẩn D-pad" else "Hiện D-pad", fontSize = 14.sp) },
+                            onClick = {
+                                menuOpen = false
+                                dpadVisible = !dpadVisible
+                                whPrefs.edit().putBoolean("dpad_visible", dpadVisible).apply()
+                            },
+                            leadingIcon = { Icon(Icons.Default.Gamepad, null, tint = AdminColors.Primary) },
+                            colors = itemColors,
+                        )
                     }
                 }
             }
@@ -285,7 +318,12 @@ fun WarehouseScreen(onBack: () -> Unit) {
                     )
                 } else if (!ph && t == 3) {
                     // Tab Kiểm kho — màn tự chứa (header + list + nút lưu), không qua PullToRefreshBox chung.
-                    WarehouseStocktake(warehouseId = selectedWarehouseId, warehouseName = currentWarehouse?.name)
+                    WarehouseStocktake(
+                        warehouseId = selectedWarehouseId,
+                        warehouseName = currentWarehouse?.name,
+                        dpadVisible = dpadVisible,
+                        onHideDpad = { dpadVisible = false; whPrefs.edit().putBoolean("dpad_visible", false).apply() },
+                    )
                 } else {
                     PullToRefreshBox(
                         isRefreshing = refreshing,
@@ -316,7 +354,15 @@ fun WarehouseScreen(onBack: () -> Unit) {
                                 loading = loading,
                                 error = error,
                                 warehouseName = currentWarehouse?.name,
-                                onOpenOrder = { id, ids -> siblingIds = ids; forward = true; openOrderId = id },
+                                onOpenOrder = { id, ids ->
+                                    // Đơn NHÁP → mở EDITOR (thêm hàng/thông tin); đơn khác → màn giao đơn.
+                                    if (listFor(t).firstOrNull { it.id == id }?.status == "draft") quickEditId = id
+                                    else { siblingIds = ids; forward = true; openOrderId = id }
+                                },
+                                onDeleteDraft = { id -> scope.launch {
+                                    try { container.vapi.deleteOrder(id); confirmed = loadConfirmedList() }
+                                    catch (e: Exception) { error = "Xoá thất bại" }
+                                } },
                                 onTabDelta = { d -> goTab(tab + d) },
                                 onExitModule = onBack,
                             )
@@ -327,9 +373,31 @@ fun WarehouseScreen(onBack: () -> Unit) {
         }
     }
 
+    // FAB "+" tạo đơn giao nhanh — chỉ ở list đơn bán, không xem chi tiết/ảnh.
+    if (selectedWarehouseId != null && openOrderId == null && !photosOpen && tab == 0 && !quickCreateOpen && quickEditId == null) {
+        FloatingActionButton(
+            onClick = { quickCreateOpen = true },
+            containerColor = AdminColors.Primary,
+            contentColor = Color.White,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+        ) { Icon(Icons.Default.Add, "Tạo đơn giao nhanh") }
+    }
+    // Overlay: màn đơn giao nhanh (tạo mới / sửa nháp) — phủ toàn màn.
+    if (quickCreateOpen || quickEditId != null) {
+        WarehouseQuickOrderScreen(
+            editOrderId = quickEditId,
+            warehouseId = selectedWarehouseId,
+            warehouseName = currentWarehouse?.name,
+            onClose = { quickCreateOpen = false; quickEditId = null; scope.launch { try { confirmed = loadConfirmedList() } catch (_: Exception) {} } },
+            onSaved = { reloadAfterFulfill() },
+        )
+    }
+    }   // /Box overlay
+
     // Dialog chọn kho làm việc — auto mở khi chưa chọn; KHÔNG cho dismiss nếu null.
     if (pickerOpen) {
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { if (selectedWarehouseId != null) pickerOpen = false },
             title = { Text("Chọn kho làm việc", color = AdminColors.Text) },
             text = {
@@ -386,10 +454,10 @@ private fun WhTab(selected: Boolean, label: String, count: Int, badgeColor: Colo
                         modifier = Modifier.offset(x = 10.dp, y = (-6).dp),
                     ) { Text("$count", fontSize = 9.sp) }
                 }) {
-                    Text(label, fontSize = 13.sp, maxLines = 1, softWrap = false)
+                    Text(label, fontSize = 12.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
                 }
             } else {
-                Text(label, fontSize = 13.sp, maxLines = 1, softWrap = false)
+                Text(label, fontSize = 12.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
             }
         },
     )

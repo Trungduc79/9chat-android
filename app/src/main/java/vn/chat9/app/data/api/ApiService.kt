@@ -65,6 +65,11 @@ interface ApiService {
     @POST("messages/pin-to-top.php")
     suspend fun pinToTop(@Body body: Map<String, Int>): ApiResponse<Any>
 
+    // Phản hồi tin "xác nhận hành động AI" (type=action_confirm) → forward vapi.
+    // body: { message_id, action_key, decision: confirm|reject, values: {k:v} }
+    @POST("messages/action-respond.php")
+    suspend fun respondActionConfirm(@Body body: @JvmSuppressWildcards Map<String, Any>): ApiResponse<Any>
+
     @GET("messages/search-global.php")
     suspend fun searchMessages(@Query("q") query: String, @Query("limit") limit: Int = 10, @Query("before_id") beforeId: Int? = null): ApiResponse<List<MessageSearchResult>>
 

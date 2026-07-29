@@ -1,5 +1,6 @@
 package vn.chat9.app.ui.modules.sale
 
+import vn.chat9.app.ui.common.dialogGlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -81,24 +82,34 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
         scope.launch {
             loading = true; error = null
             try {
-                // Admin/full quyền (bypass_all): xem MỌI đơn bán, không lọc theo người tạo.
-                val scopeUserId = if (container.permissions.isBypass) null else userId
-                val res = container.vapi.listOrders(status = "", createdByUserId = scopeUserId, type = "sale", perPage = 100)
+                // Admin toàn quyền (owner bypass_all HOẶC quyền '*' vapi): xem MỌI đơn bán,
+                // không lọc theo người tạo. NV sale thường chỉ thấy đơn mình tạo.
+                val scopeUserId = if (container.permissions.has("*")) null else userId
+                // Search chạy SERVER-side: list chỉ tải 100 đơn mới nhất, lọc tại máy sẽ
+                // không thấy đơn cũ hơn (vd ORD-000171 ở vị trí 154).
+                val res = container.vapi.listOrders(
+                    status = "", createdByUserId = scopeUserId, type = "sale",
+                    search = query.trim().ifEmpty { null }, perPage = 100,
+                )
                 orders = res.data ?: emptyList()
             } catch (e: Exception) {
                 error = "Tải đơn thất bại: ${e.message}"
             } finally { loading = false }
         }
     }
-    LaunchedEffect(userId) { load() }
+    // Load lần đầu + mỗi lần đổi query. Gõ xong 350ms mới gọi API (tránh mỗi ký tự 1 request);
+    // query rỗng = lần mở màn → load ngay, không chờ.
+    LaunchedEffect(userId, query) {
+        if (query.isNotEmpty()) kotlinx.coroutines.delay(350)
+        load()
+    }
 
     val dayFmt = SimpleDateFormat("dd/MM", Locale("vi"))
     val keyFmt = SimpleDateFormat("yyyyMMdd", Locale("vi"))
     fun dayKey(ms: Long): Int = keyFmt.format(Date(ms)).toInt()
     val filtered = orders.filter { o ->
-        // Khớp tên KH cả khi gõ không dấu (đa số NV search không dấu).
-        val q = vnNoAccent(query.trim())
-        val matchQ = q.isEmpty() || vnNoAccent(o.partyName).contains(q)
+        // Query đã lọc ở server (mã đơn | id | tên KH không dấu) → KHÔNG lọc lại tại máy,
+        // nếu không đơn khớp theo mã đơn sẽ bị loại vì tên KH không chứa query.
         // Lọc theo KHOẢNG ngày (so theo ngày, bỏ giờ). Chỉ start = từ ngày đó; chỉ end = đến ngày đó.
         val matchDate = if (startDateMs == null && endDateMs == null) true else {
             val d = o.completedAt ?: o.orderedAt
@@ -108,7 +119,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
                 (startDateMs?.let { ok >= dayKey(it) } ?: true) && (endDateMs?.let { ok <= dayKey(it) } ?: true)
             }
         }
-        matchQ && matchDate
+        matchDate
     }.sortedWith(
         // Nháp trên cùng → đã duyệt → đã giao; trong mỗi nhóm theo thời gian giao GIẢM DẦN.
         compareBy<OrderDto> { statusRank(it.status) }.thenByDescending { deliveryTimeMs(it) },
@@ -122,7 +133,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
                     value = query, onValueChange = { query = it },
                     textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp),
                     cursorBrush = SolidColor(AdminColors.Primary), singleLine = true,
-                    decorationBox = { inner -> if (query.isEmpty()) Text("Tìm đơn theo tên KH", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
+                    decorationBox = { inner -> if (query.isEmpty()) Text("Tìm theo tên KH / mã đơn", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -227,6 +238,7 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
     // Dialog xác nhận xoá đơn (chỉ nháp/đã duyệt).
     pendingDelete?.let { del ->
         AlertDialog(
+            modifier = Modifier.dialogGlow(),
             onDismissRequest = { pendingDelete = null },
             title = { Text("Xoá đơn", color = AdminColors.Text) },
             text = { Text("Xoá đơn ${del.code} (${del.partyName})? Không hoàn tác được.", color = AdminColors.TextMuted) },
@@ -249,14 +261,6 @@ fun SaleOrdersList(onTapOrder: (Long) -> Unit = {}, listState: LazyListState = r
         )
     }
 }
-
-/** Bỏ dấu tiếng Việt + lowercase để search không dấu khớp có dấu. NFD tách dấu thanh/mũ;
- *  đ/Đ KHÔNG bị NFD tách nên thay tay. */
-private fun vnNoAccent(s: String): String =
-    java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
-        .replace(Regex("\\p{Mn}+"), "")
-        .replace('đ', 'd').replace('Đ', 'D')
-        .lowercase()
 
 /** Card đơn — layout port từ web SaleOrdersListView: hàng mã+badge, tên KH, dòng "N mặt
  *  hàng · ngày" + tổng tiền. */
