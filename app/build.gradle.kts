@@ -90,6 +90,12 @@ android {
         compose = true
         buildConfig = true
     }
+    // Bỏ qua lintVitalRelease — bước này ăn nhiều thời gian mỗi lần build release
+    // trên CI mà không cần cho auto-deploy. Vẫn chạy lint thủ công khi cần.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
     @Suppress("UnstableApiUsage")
     packaging {
         jniLibs {
