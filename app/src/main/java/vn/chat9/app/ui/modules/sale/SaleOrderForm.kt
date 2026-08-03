@@ -666,6 +666,7 @@ fun SaleOrderForm(orderId: Long? = null, isPurchase: Boolean = false, allowEditA
                         onToggle = { v -> toggleSaleVariant(v) },
                         enabled = selectedCustomer != null,
                         onBlocked = { Toast.makeText(context, "Chọn $partyWord trước", Toast.LENGTH_SHORT).show() },
+                        autoScrolling = autoScrolling,
                     )
                 }
             }
@@ -1424,6 +1425,9 @@ internal fun VariantSearchInline(
     onToggle: (VariantSearchDto) -> Unit,
     enabled: Boolean = true,
     onBlocked: () -> Unit = {},
+    // Cờ auto-scroll của form (SaleOrderForm). Bật lúc mở bàn phím để form KHÔNG hiểu nhầm
+    // bring-into-view (IME đẩy ô lên) là cuộn-tay rồi clearFocus → tắt bàn phím vừa bật.
+    autoScrolling: androidx.compose.runtime.MutableState<Boolean>? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -1458,9 +1462,12 @@ internal fun VariantSearchInline(
     // Double-tap bật bàn phím: đợi readOnly=false (recompose) rồi requestFocus + show IME + bôi đen toàn bộ (gõ đè ngay).
     LaunchedEffect(keyboardOn) {
         if (keyboardOn) {
+            autoScrolling?.value = true   // chặn form clearFocus khi IME mở kéo theo bring-into-view auto-scroll
             runCatching { focusRequester.requestFocus() }
             keyboardController?.show()
             if (tfv.text.isNotEmpty()) tfv = tfv.copy(selection = TextRange(0, tfv.text.length))
+            kotlinx.coroutines.delay(400)  // chờ IME mở + auto-scroll xong rồi mới cho cuộn-tay clearFocus lại
+            autoScrolling?.value = false
         }
     }
     // Cuộn dropdown → tắt bàn phím nhưng GIỮ focus → list vẫn mở.
