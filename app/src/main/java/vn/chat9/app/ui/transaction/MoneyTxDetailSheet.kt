@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.VapiApiService
 import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
+import vn.chat9.app.ui.common.hasPermission
 import vn.chat9.app.ui.explore.AdminColors
 import java.text.NumberFormat
 import java.time.Instant
@@ -116,9 +117,18 @@ private fun transferText(t: MoneyTransactionDto, bankShort: String?): String {
  * (tên NH từ BIN). Header có Copy/Chia sẻ, dưới cùng nút Đóng.
  */
 @Composable
-fun MoneyTxDetailSheet(tx: MoneyTransactionDto, feeLabel: String? = null, onClose: () -> Unit) {
+fun MoneyTxDetailSheet(
+    tx: MoneyTransactionDto,
+    feeLabel: String? = null,
+    onClose: () -> Unit,
+    /** Bấm "Gán khách hàng" — parent tự mở sheet hành động (ReconcileInSheet). Null = ẩn nút. */
+    onAction: ((MoneyTransactionDto) -> Unit)? = null,
+) {
     val ctx = LocalContext.current
     val vapi = (ctx.applicationContext as App).container.vapi
+    // Phase 1: chỉ "Gán khách hàng" (tiền vào) — "Phân bổ" (tiền ra) chưa port, ẩn nút cho tới lúc đó.
+    val showActionBtn = onAction != null && tx.direction != "out" &&
+        hasPermission("reconciliation.match") && MoneyTxActionRules.canOpenAction(tx)
 
     var casherLabel by remember(tx.id) { mutableStateOf<String?>(null) }
     var banksReady by remember(tx.id) { mutableStateOf(false) }
@@ -185,13 +195,24 @@ fun MoneyTxDetailSheet(tx: MoneyTransactionDto, feeLabel: String? = null, onClos
                 if (tx.autoMatched) MiniTag("Tự đối soát", AdminColors.Success)
             }
 
-            // Nút đóng: trong nội dung, căn giữa.
-            Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+            // Nút đóng (+ nút hành động nếu có): trong nội dung, căn giữa.
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) {
                 Text(
                     "Đóng", color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onClose() }
                         .padding(horizontal = 20.dp, vertical = 8.dp),
                 )
+                if (showActionBtn) {
+                    Text(
+                        "Gán khách hàng", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(AdminColors.Primary)
+                            .clickable { onAction?.invoke(tx) }
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
             }
         }
     }

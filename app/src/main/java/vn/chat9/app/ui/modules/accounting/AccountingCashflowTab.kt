@@ -61,7 +61,9 @@ import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.PayExpenseRequest
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
+import vn.chat9.app.ui.transaction.MoneyTxActionRules
 import vn.chat9.app.ui.transaction.MoneyTxDetailSheet
+import vn.chat9.app.ui.transaction.ReconcileInSheet
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -162,6 +164,8 @@ fun AccountingCashflowTab() {
     fun casherOf(id: Long?): CasherDto? = cashers.firstOrNull { it.id == id }
 
     var detailTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
+    // Sheet hành động "Gán khách hàng" — mở từ nút trong sheet chi tiết (Phase 1: chỉ tiền vào).
+    var actionTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var formMode by remember { mutableStateOf<String?>(null) }   // null | "in_customer" | "out_expense"
 
@@ -259,9 +263,22 @@ fun AccountingCashflowTab() {
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
         ) { Icon(Icons.Default.Add, "Tạo giao dịch tiền mặt") }
 
-        // ===== Overlay chi tiết GD (read-only) — drawer DÙNG CHUNG với tích xanh ship ở đơn hàng =====
+        // ===== Overlay chi tiết GD — drawer DÙNG CHUNG với tích xanh ship ở đơn hàng =====
         detailTx?.let { tx ->
-            MoneyTxDetailSheet(tx = tx, onClose = { detailTx = null })
+            MoneyTxDetailSheet(
+                tx = tx, onClose = { detailTx = null },
+                onAction = { detailTx = null; actionTx = it },
+            )
+        }
+
+        // ===== Sheet "Gán khách hàng" (mở từ nút hành động trong sheet chi tiết) =====
+        actionTx?.let { tx ->
+            ReconcileInSheet(
+                tx = tx, mode = MoneyTxActionRules.inPanelMode(tx),
+                onClose = { actionTx = null },
+                onResolved = { actionTx = null; refreshTick++ },
+                onChanged = { refreshTick++ },
+            )
         }
 
         // ===== Overlay menu chọn loại GD =====

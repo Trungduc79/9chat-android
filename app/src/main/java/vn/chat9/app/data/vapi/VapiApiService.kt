@@ -12,6 +12,12 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import vn.chat9.app.data.vapi.dto.AllocateRequest
 import vn.chat9.app.data.vapi.dto.AllocateResultDto
+import vn.chat9.app.data.vapi.dto.AddVatInvoicePaymentRequest
+import vn.chat9.app.data.vapi.dto.AutoMatchApplyRequest
+import vn.chat9.app.data.vapi.dto.CorrectMoneyTxRequest
+import vn.chat9.app.data.vapi.dto.MatchResultDto
+import vn.chat9.app.data.vapi.dto.UpdateMoneyTxPartyRequest
+import vn.chat9.app.data.vapi.dto.VatReceivableInvoiceDto
 import vn.chat9.app.data.vapi.dto.AttachmentDto
 import vn.chat9.app.data.vapi.dto.CasherDto
 import vn.chat9.app.data.vapi.dto.CategoryDto
@@ -596,6 +602,39 @@ interface VapiApiService {
     /** Phân bổ GD tiền ra đa purpose (hoàn ứng ship = line customer_debt). */
     @POST("v1/money-transactions/{id}/allocate")
     suspend fun allocateMoneyTx(@Path("id") id: Long, @Body body: AllocateRequest): VapiResponse<AllocateResultDto>
+
+    // ===== Gán khách hàng GD tiền vào (mirror web ReconcileInPanel) =====
+
+    /** Gợi ý khách theo nội dung CK (đối soát tự động). */
+    @GET("v1/money-transactions/{id}/auto-match")
+    suspend fun suggestMoneyTxMatch(@Path("id") id: Long): VapiResponse<MatchResultDto>
+
+    /** Gán khách cho GD pending (+ tuỳ chọn đơn/sổ quỹ). */
+    @retrofit2.http.PATCH("v1/money-transactions/{id}/auto-match/apply")
+    suspend fun applyAutoMatch(@Path("id") id: Long, @Body body: AutoMatchApplyRequest): VapiResponse<MoneyTransactionDto>
+
+    /** Đổi/huỷ khách của GD đã gán nhưng CHƯA chốt nợ (partyId=null → huỷ gán). */
+    @retrofit2.http.PATCH("v1/money-transactions/{id}")
+    suspend fun updateMoneyTxParty(@Path("id") id: Long, @Body body: UpdateMoneyTxPartyRequest): VapiResponse<MoneyTransactionDto>
+
+    /** GD ĐÃ CHỐT NỢ gán sai khách → đảo nợ khách cũ đúng ngày GD, post lại khách mới. */
+    @retrofit2.http.PATCH("v1/money-transactions/{id}/correct")
+    suspend fun correctMoneyTxParty(@Path("id") id: Long, @Body body: CorrectMoneyTxRequest): VapiResponse<MoneyTransactionDto>
+
+    /** HĐ VAT còn nợ của 1 khách, gần near_amount nhất trước — để chọn gán thanh toán. */
+    @GET("v1/vat-output-invoices/receivable-for-customer")
+    suspend fun vatReceivableForCustomer(
+        @Query("customer_id") customerId: Long,
+        @Query("near_amount") nearAmount: Double,
+    ): VapiResponse<List<VatReceivableInvoiceDto>>
+
+    /** Ghi thu 1 HĐ VAT, gắn money_tx_id → tất toán cho GD này. */
+    @POST("v1/vat-output-invoices/{id}/payments")
+    suspend fun addVatInvoicePayment(@Path("id") id: Long, @Body body: AddVatInvoicePaymentRequest): VapiResponse<Unit>
+
+    /** Huỷ 1 phiếu thu HĐ VAT đã gắn GD này (giải phóng tiền GD để gán lại). */
+    @DELETE("v1/vat-invoice-payments/{paymentId}")
+    suspend fun deleteVatInvoicePayment(@Path("paymentId") paymentId: Long): VapiResponse<Unit>
 
     // ===== QR chuyển khoản: trả phí ship bằng cách quét QR người nhận =====
 

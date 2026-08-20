@@ -284,14 +284,25 @@ data class MoneyTransactionDto(
     @SerializedName("money_calc") val moneyCalc: String? = null,
     @SerializedName("auto_matched") val autoMatched: Boolean = false,
     val meta: MoneyTxMetaDto? = null,          // payee_* đóng dấu khi khớp mã QR trả phí
+    @SerializedName("vat_invoice_payments") val vatInvoicePayments: List<VatInvoicePaymentLinkDto>? = null,
 )
 
-/** Phần meta cần dùng của GD: TK người nhận (suy ngược "đã trả tới ai"). */
+/** Phần meta cần dùng của GD: TK người nhận (suy ngược "đã trả tới ai") + cờ GD nội bộ. */
 data class MoneyTxMetaDto(
     @SerializedName("payee_account") val payeeAccount: String? = null,
     @SerializedName("payee_bank_bin") val payeeBankBin: String? = null,
     @SerializedName("payee_name") val payeeName: String? = null,
+    @SerializedName("internal_transfer") val internalTransfer: Boolean = false,
 )
+
+/** 1 HĐ VAT đã gán thanh toán bằng GD này (hiện trong drawer, cho huỷ gán lại). */
+data class VatInvoicePaymentLinkDto(
+    val id: Long = 0,
+    @SerializedName("vat_output_invoice_id") val vatOutputInvoiceId: Long = 0,
+    val amount: Double = 0.0,
+    val invoice: VatInvoiceRefDto? = null,
+)
+data class VatInvoiceRefDto(val id: Long = 0, val number: String? = null)
 
 /** 1 ngân hàng từ GET /v1/vietqr/banks — chỉ giữ field cần để suy tên viết tắt từ BIN. */
 data class VietqrBankDto(
@@ -432,6 +443,62 @@ data class AllocateLineDto(
 )
 data class AllocateRequest(val lines: List<AllocateLineDto>)
 data class AllocateResultDto(val transaction: MoneyTransactionDto? = null)
+
+// ----- Gán khách hàng GD tiền vào (mirror web ReconcileInPanel) -----
+
+/** Gợi ý khách theo nội dung CK (GET .../auto-match). */
+data class MatchSuggestionDto(
+    @SerializedName("order_id") val orderId: Long? = null,
+    @SerializedName("order_code") val orderCode: String? = null,
+    @SerializedName("customer_id") val customerId: Long? = null,
+    @SerializedName("customer_name") val customerName: String? = null,
+    val score: Int = 0,
+    val reasons: List<String> = emptyList(),
+)
+data class MatchResultDto(
+    val matched: Boolean = false,
+    @SerializedName("best_score") val bestScore: Int = 0,
+    val threshold: Int = 0,
+    @SerializedName("top_match") val topMatch: MatchSuggestionDto? = null,
+    val suggestions: List<MatchSuggestionDto> = emptyList(),
+)
+
+/** HĐ VAT đã ký + chưa trả đủ của 1 khách, sắp gần near_amount nhất trước. */
+data class VatReceivableInvoiceDto(
+    val id: Long = 0,
+    val number: String? = null,
+    val total: Double = 0.0,
+    @SerializedName("paid_amount") val paidAmount: Double = 0.0,
+    val remaining: Double = 0.0,
+)
+
+/** PATCH auto-match/apply — gán khách cho GD pending (+ tuỳ chọn đơn/sổ quỹ). */
+data class AutoMatchApplyRequest(
+    @SerializedName("customer_id") val customerId: Long,
+    @SerializedName("order_id") val orderId: Long? = null,
+    @SerializedName("casher_id") val casherId: Long? = null,
+)
+
+/** PATCH GD — đổi/huỷ khách của GD đã gán nhưng CHƯA chốt nợ (partyId=null → huỷ gán). */
+data class UpdateMoneyTxPartyRequest(
+    @SerializedName("party_id") val partyId: Long?,
+    @SerializedName("party_type") val partyType: String?,
+)
+
+/** PATCH .../correct — GD ĐÃ CHỐT NỢ gán sai khách: đảo nợ khách cũ, post lại khách mới. */
+data class CorrectMoneyTxRequest(
+    @SerializedName("party_id") val partyId: Long,
+    val reason: String,
+)
+
+/** POST vat-output-invoices/{id}/payments — ghi thu 1 HĐ, gắn money_tx_id để tất toán GD này. */
+data class AddVatInvoicePaymentRequest(
+    val amount: Double,
+    @SerializedName("paid_at") val paidAt: String,
+    val method: String = "bank",
+    val note: String? = null,
+    @SerializedName("money_tx_id") val moneyTxId: Long? = null,
+)
 
 data class DebtPendingDto(
     @SerializedName("pending_count") val pendingCount: Int = 0,
