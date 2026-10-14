@@ -64,6 +64,7 @@ import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.transaction.MoneyTxActionRules
 import vn.chat9.app.ui.transaction.MoneyTxDetailSheet
 import vn.chat9.app.ui.transaction.ReconcileInSheet
+import vn.chat9.app.ui.transaction.ReconcileOutSheet
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -164,7 +165,7 @@ fun AccountingCashflowTab() {
     fun casherOf(id: Long?): CasherDto? = cashers.firstOrNull { it.id == id }
 
     var detailTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
-    // Sheet hành động "Gán khách hàng" — mở từ nút trong sheet chi tiết (Phase 1: chỉ tiền vào).
+    // Sheet hành động — mở từ nút trong sheet chi tiết: tiền vào → Gán khách hàng, tiền ra → Phân bổ.
     var actionTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var formMode by remember { mutableStateOf<String?>(null) }   // null | "in_customer" | "out_expense"
@@ -271,14 +272,21 @@ fun AccountingCashflowTab() {
             )
         }
 
-        // ===== Sheet "Gán khách hàng" (mở từ nút hành động trong sheet chi tiết) =====
+        // ===== Sheet hành động (mở từ nút trong sheet chi tiết) =====
         actionTx?.let { tx ->
-            ReconcileInSheet(
-                tx = tx, mode = MoneyTxActionRules.inPanelMode(tx),
-                onClose = { actionTx = null },
-                onResolved = { actionTx = null; refreshTick++ },
-                onChanged = { refreshTick++ },
-            )
+            if (tx.direction == "out") {
+                ReconcileOutSheet(
+                    tx = tx, onClose = { actionTx = null },
+                    onResolved = { actionTx = null; refreshTick++ },
+                )
+            } else {
+                ReconcileInSheet(
+                    tx = tx, mode = MoneyTxActionRules.inPanelMode(tx),
+                    onClose = { actionTx = null },
+                    onResolved = { actionTx = null; refreshTick++ },
+                    onChanged = { refreshTick++ },
+                )
+            }
         }
 
         // ===== Overlay menu chọn loại GD =====

@@ -204,6 +204,8 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
     var previewPages by remember { mutableStateOf<List<String>>(emptyList()) }
     var signing by remember { mutableStateOf(false) }
     var vatBlocked by remember { mutableStateOf<String?>(null) }   // chi tiết 422 VAT_ISSUE_BLOCKED (gate 3 kiểm tra)
+    var arisingStale by remember { mutableStateOf<String?>(null) } // 422 VAT_ARISING_DATE_STALE — phải đồng bộ ngày lập mới ký được
+    var syncingArising by remember { mutableStateOf(false) }
     var creatingDraft by remember { mutableStateOf(false) }
     var copyingImage by remember { mutableStateOf(false) }
     var sharingImage by remember { mutableStateOf(false) }
@@ -549,7 +551,9 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             } catch (e: retrofit2.HttpException) {
                 val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
                 val j = try { org.json.JSONObject(body ?: "") } catch (_: Exception) { null }
-                if (j?.optString("code") == "VAT_ISSUE_BLOCKED") {
+                if (j?.optString("code") == "VAT_ARISING_DATE_STALE") {
+                    arisingStale = arisingStaleText(j.optJSONObject("errors"))
+                } else if (j?.optString("code") == "VAT_ISSUE_BLOCKED") {
                     vatBlocked = vatBlockedText(j.optJSONObject("errors"))
                 } else {
                     Toast.makeText(context, j?.optString("error").orEmpty().ifBlank { "Ký phát hành thất bại. Kiểm tra quyền & đăng nhập EI." }, Toast.LENGTH_LONG).show()
@@ -1127,6 +1131,40 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
             }
         }
 
+        // Khoá ký: ngày lập ≠ ngày ký → bắt buộc đồng bộ ngày lập, rồi xem lại preview + ký lại.
+        if (arisingStale != null) {
+            MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
+                AlertDialog(
+                    modifier = Modifier.dialogGlow(),
+                    onDismissRequest = { if (!syncingArising) arisingStale = null },
+                    confirmButton = {
+                        TextButton(enabled = !syncingArising, onClick = {
+                            val id = currentOrderId ?: return@TextButton
+                            scope.launch {
+                                syncingArising = true
+                                try {
+                                    container.vapi.syncVatArisingDate(id).data?.let { linkedVat = it }
+                                    arisingStale = null
+                                    Toast.makeText(context, "Đã đồng bộ ngày lập về hôm nay — kiểm tra lại rồi bấm ký.", Toast.LENGTH_LONG).show()
+                                    openPreview()
+                                } catch (e: retrofit2.HttpException) {
+                                    val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                                    val msg = try { org.json.JSONObject(body ?: "").optString("error") } catch (_: Exception) { "" }
+                                    Toast.makeText(context, msg.ifBlank { "Đồng bộ ngày lập thất bại" }, Toast.LENGTH_LONG).show()
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Đồng bộ ngày lập thất bại", Toast.LENGTH_LONG).show()
+                                } finally { syncingArising = false }
+                            }
+                        }) { Text(if (syncingArising) "Đang đồng bộ…" else "Đồng bộ ngày lập", color = AdminColors.Primary) }
+                    },
+                    dismissButton = { TextButton(enabled = !syncingArising, onClick = { arisingStale = null }) { Text("Huỷ", color = AdminColors.TextMuted) } },
+                    title = { Text("Chưa thể ký — ngày lập khác ngày ký", color = AdminColors.Text) },
+                    text = { Text(arisingStale ?: "", color = AdminColors.Text, fontSize = 13.sp) },
+                    containerColor = AdminColors.Card,
+                )
+            }
+        }
+
         // Gate 3 kiểm tra trước phát hành chặn cứng → dialog liệt kê chi tiết.
         if (vatBlocked != null) {
             MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
@@ -1285,6 +1323,19 @@ private fun VatFormConfirmOverlay(title: String, message: String, onCancel: () -
 }
 
 private val WARN_VAT = Color(0xFFE2A03F)
+
+/** Format 422 VAT_ARISING_DATE_STALE (errors.arising_date/today/cross_*) → text dialog. */
+private fun arisingStaleText(errors: org.json.JSONObject?): String {
+    fun dmy(s: String?) = s?.take(10)?.split("-")?.reversed()?.joinToString("/") ?: "?"
+    val period = when {
+        errors?.optBoolean("cross_quarter") == true -> " — KHÁC QUÝ"
+        errors?.optBoolean("cross_month") == true -> " — khác tháng"
+        else -> ""
+    }
+    return "Ngày lập HĐ nháp: ${dmy(errors?.optString("arising_date"))}\n" +
+        "Ngày ký (hôm nay): ${dmy(errors?.optString("today"))}$period\n\n" +
+        "HĐ chỉ được ký khi ngày lập trùng ngày ký. Đồng bộ ngày lập về hôm nay, kiểm tra lại bản xem trước rồi bấm ký."
+}
 
 /** Format 422 VAT_ISSUE_BLOCKED (errors=categories) → text nhiều dòng, chỉ nhóm đang chặn cứng. */
 private fun vatBlockedText(errors: org.json.JSONObject?): String {

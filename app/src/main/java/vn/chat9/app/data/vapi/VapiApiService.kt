@@ -15,7 +15,11 @@ import vn.chat9.app.data.vapi.dto.AllocateResultDto
 import vn.chat9.app.data.vapi.dto.AddVatInvoicePaymentRequest
 import vn.chat9.app.data.vapi.dto.AutoMatchApplyRequest
 import vn.chat9.app.data.vapi.dto.CorrectMoneyTxRequest
+import vn.chat9.app.data.vapi.dto.ExpenseListItemDto
+import vn.chat9.app.data.vapi.dto.InternalToCashRequest
+import vn.chat9.app.data.vapi.dto.LoanDto
 import vn.chat9.app.data.vapi.dto.MatchResultDto
+import vn.chat9.app.data.vapi.dto.OffsetTransferRequest
 import vn.chat9.app.data.vapi.dto.UpdateMoneyTxPartyRequest
 import vn.chat9.app.data.vapi.dto.VatReceivableInvoiceDto
 import vn.chat9.app.data.vapi.dto.AttachmentDto
@@ -247,6 +251,10 @@ interface VapiApiService {
         @Query("search") q: String,
         @Query("per_page") perPage: Int = 20,
     ): VapiResponse<List<CustomerDto>>
+
+    /** 1 khách theo ID — hiện TÊN (không phải ID trơ) khi GD đã có sẵn party_id (reassign/vat_only). */
+    @GET("v1/customers/{id}")
+    suspend fun getCustomer(@Path("id") id: Long): VapiResponse<CustomerDto>
 
     /** KH có đơn bán ĐÃ GIAO hôm nay (giao muộn nhất trước) — gợi ý thu tiền mặt. */
     @GET("v1/customers/delivered-today")
@@ -558,6 +566,10 @@ interface VapiApiService {
     @POST("v1/orders/{id}/issue-vat")
     suspend fun issueVat(@Path("id") id: Long, @Body body: VatDraftReq): VapiResponse<VatOutputInvoiceDto>
 
+    /** Đổi ngày lập HĐ nháp về hôm nay — mở khoá ký khi 422 VAT_ARISING_DATE_STALE. */
+    @POST("v1/orders/{id}/sync-vat-arising-date")
+    suspend fun syncVatArisingDate(@Path("id") id: Long): VapiResponse<VatOutputInvoiceDto>
+
     @POST("v1/orders/{id}/update-vat-draft")
     suspend fun updateVatDraft(@Path("id") id: Long, @Body body: VatDraftReq): VapiResponse<VatOutputInvoiceDto>
 
@@ -581,6 +593,10 @@ interface VapiApiService {
         @Query("from") from: String? = null,
         @Query("to") to: String? = null,
         @Query("casher_id") casherId: Long? = null,
+        // 3 param dưới: dò GD tiền ĐẾN ứng viên đối trừ nội bộ (purpose=internal_transfer).
+        @Query("channel") channel: String? = null,
+        @Query("direction") direction: String? = null,
+        @Query("unsettled") unsettled: Boolean? = null,
     ): VapiResponse<List<MoneyTransactionDto>>
 
     /** Danh sách ngân hàng (bin → shortName) — cache client để suy tên NH từ BIN. */
@@ -602,6 +618,25 @@ interface VapiApiService {
     /** Phân bổ GD tiền ra đa purpose (hoàn ứng ship = line customer_debt). */
     @POST("v1/money-transactions/{id}/allocate")
     suspend fun allocateMoneyTx(@Path("id") id: Long, @Body body: AllocateRequest): VapiResponse<AllocateResultDto>
+
+    /** Đối trừ GD chuyển nội bộ (bank-out ↔ các bank-in cùng lệnh chuyển) — mirror web offsetTransfer. */
+    @POST("v1/money-transactions/{id}/offset-transfer")
+    suspend fun offsetTransfer(@Path("id") id: Long, @Body body: OffsetTransferRequest): VapiResponse<MoneyTransactionDto>
+
+    /** Rút NH nhập quỹ tiền mặt thủ công — chiều ngược offset-transfer. */
+    @POST("v1/money-transactions/{id}/internal-to-cash")
+    suspend fun internalToCash(@Path("id") id: Long, @Body body: InternalToCashRequest): VapiResponse<MoneyTransactionDto>
+
+    /** Khoản vay còn dư nợ (dropdown "Trả góp"). */
+    @GET("v1/loans")
+    suspend fun listLoans(@Query("per_page") perPage: Int = 200): VapiResponse<List<LoanDto>>
+
+    /** Chi phí chưa trả hết (existing-mode "Chi phí · Gắn có sẵn"). */
+    @GET("v1/expenses")
+    suspend fun listUnpaidExpenses(
+        @Query("unpaid") unpaid: Boolean = true,
+        @Query("per_page") perPage: Int = 50,
+    ): VapiResponse<List<ExpenseListItemDto>>
 
     // ===== Gán khách hàng GD tiền vào (mirror web ReconcileInPanel) =====
 

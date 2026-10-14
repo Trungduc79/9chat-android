@@ -126,9 +126,8 @@ fun MoneyTxDetailSheet(
 ) {
     val ctx = LocalContext.current
     val vapi = (ctx.applicationContext as App).container.vapi
-    // Phase 1: chỉ "Gán khách hàng" (tiền vào) — "Phân bổ" (tiền ra) chưa port, ẩn nút cho tới lúc đó.
-    val showActionBtn = onAction != null && tx.direction != "out" &&
-        hasPermission("reconciliation.match") && MoneyTxActionRules.canOpenAction(tx)
+    val showActionBtn = onAction != null && hasPermission("reconciliation.match") && MoneyTxActionRules.canOpenAction(tx)
+    val actionLabel = if (tx.direction == "out") "Phân bổ" else "Gán khách hàng"
 
     var casherLabel by remember(tx.id) { mutableStateOf<String?>(null) }
     var banksReady by remember(tx.id) { mutableStateOf(false) }
@@ -207,7 +206,7 @@ fun MoneyTxDetailSheet(
                 )
                 if (showActionBtn) {
                     Text(
-                        "Gán khách hàng", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        actionLabel, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(AdminColors.Primary)
                             .clickable { onAction?.invoke(tx) }
                             .padding(horizontal = 20.dp, vertical = 8.dp),

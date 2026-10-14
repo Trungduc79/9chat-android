@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -91,6 +92,10 @@ fun ReconcileInSheet(
 
     LaunchedEffect(Unit) {
         payments.addAll(tx.vatInvoicePayments ?: emptyList())
+        // Khách hiện tại (reassign/vat_only): GD chỉ có party_id, cần tra tên để KHÔNG hiện "#123".
+        tx.partyId?.let { pid ->
+            try { manualCustomerLabel = vapi.getCustomer(pid).data?.name } catch (_: Exception) {}
+        }
         matching = true
         try {
             match = vapi.suggestMoneyTxMatch(tx.id).data
@@ -224,7 +229,14 @@ fun ReconcileInSheet(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = onClose)) {
+    // Bàn phím mở (ô tìm khách / lý do đổi khách) → đẩy dialog lên, không để che mất
+    // (mirror AccSheet: padBottom = imeBottom − offset, hụt bớt để thẻ nổi trên bàn phím).
+    val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val imeOffsetPx = with(density) { 48.dp.toPx() }
+    val padBottom = with(density) { (imeBottomPx - imeOffsetPx).coerceAtLeast(0f).toDp() }
+
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).padding(bottom = padBottom).clickable(onClick = onClose)) {
         Column(
             Modifier.fillMaxWidth().align(Alignment.Center).padding(12.dp)
                 .clip(RoundedCornerShape(16.dp)).background(AdminColors.Card)
@@ -307,7 +319,7 @@ fun ReconcileInSheet(
                             .clickable { manualCustomerId = null; manualCustomerLabel = null }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(manualCustomerLabel ?: "#$manualCustomerId", color = AdminColors.Text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        Text(manualCustomerLabel ?: "Đang tải…", color = AdminColors.Text, fontSize = 14.sp, modifier = Modifier.weight(1f))
                         Text("Đổi", color = AdminColors.Primary, fontSize = 12.sp)
                     }
                 } else {

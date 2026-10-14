@@ -244,6 +244,8 @@ data class AttachmentDto(
     val id: Long = 0,
     val url: String? = null,
     @SerializedName("attachable_id") val attachableId: Long = 0,
+    // false = đơn đã giao/nhận và user không phải chủ (BE chặn xoá)
+    @SerializedName("can_delete") val canDelete: Boolean = false,
 )
 
 // ----- cashers (quỹ thu tiền) -----
@@ -435,14 +437,62 @@ data class ExpensePaymentCandidateDto(
     @SerializedName("casher_id") val casherId: Long? = null,
 )
 data class PaymentCandidatesDto(val candidates: List<ExpensePaymentCandidateDto> = emptyList())
+/**
+ * 1 dòng phân bổ GD tiền ra (POST .../allocate). 4 field đầu giữ nguyên thứ tự/tên cũ
+ * (chỗ dùng positional args ở AccountingDebtsTab hoàn ứng ship KHÔNG được đổi) — field
+ * mới của Phase 2 "Phân bổ tiền ra" (ReconcileOutSheet) nối phía sau, có default null.
+ * `target_type`/`target_id` (đối tượng phân bổ) CHỦ Ý bỏ qua — BE tự lấy default của
+ * danh mục chi phí khi trống (xem SettlementService::resolveExpenseForOut).
+ */
 data class AllocateLineDto(
     val purpose: String,
     @SerializedName("party_id") val partyId: Long?,
     @SerializedName("order_id") val orderId: Long?,
     val amount: Double,
+    @SerializedName("expense_id") val expenseId: Long? = null,
+    @SerializedName("category_id") val categoryId: Long? = null,
+    @SerializedName("payee_type") val payeeType: String? = null,
+    @SerializedName("payee_id") val payeeId: Long? = null,
+    val note: String? = null,
+    val description: String? = null,
+    @SerializedName("non_business") val nonBusiness: Boolean? = null,
+    @SerializedName("loan_id") val loanId: Long? = null,
+    @SerializedName("create_loan") val createLoan: CreateLoanDto? = null,
+    val method: String? = null,
+    @SerializedName("item_ids") val itemIds: List<Long>? = null,
+)
+data class CreateLoanDto(
+    @SerializedName("counterparty_type") val counterpartyType: String = "external",
+    @SerializedName("counterparty_name") val counterpartyName: String,
 )
 data class AllocateRequest(val lines: List<AllocateLineDto>)
 data class AllocateResultDto(val transaction: MoneyTransactionDto? = null)
+
+/** Khoản vay còn dư nợ — dropdown "Trả góp" (loan_pay). */
+data class LoanDto(
+    val id: Long = 0,
+    val code: String = "",
+    @SerializedName("counterparty_name") val counterpartyName: String? = null,
+    @SerializedName("outstanding_principal") val outstandingPrincipal: Double = 0.0,
+)
+
+/** 1 khoản chi chưa trả hết (existing-mode "Chi phí · Gắn có sẵn"). */
+data class ExpenseListItemDto(
+    val id: Long = 0,
+    val code: String = "",
+    val description: String? = null,
+    val amount: Double = 0.0,
+    @SerializedName("paid_amount") val paidAmount: Double = 0.0,
+    @SerializedName("remaining_amount") val remainingAmount: Double = 0.0,
+    val category: ExpenseCategoryDto? = null,
+    @SerializedName("expense_date") val expenseDate: String? = null,
+)
+
+/** POST .../offset-transfer — đối trừ GD tiền ra với các GD tiền ĐẾN cùng lệnh chuyển. */
+data class OffsetTransferRequest(@SerializedName("counter_tx_ids") val counterTxIds: List<Long>)
+
+/** POST .../internal-to-cash — rút NH nhập quỹ tiền mặt (chiều ngược offset-transfer). */
+data class InternalToCashRequest(@SerializedName("casher_id") val casherId: Long?)
 
 // ----- Gán khách hàng GD tiền vào (mirror web ReconcileInPanel) -----
 
@@ -1169,6 +1219,7 @@ data class PendingAdvanceDto(
     @SerializedName("advance_id") val advanceId: Long,
     @SerializedName("code") val code: String? = null,
     @SerializedName("customer_id") val customerId: Long? = null,
+    @SerializedName("customer_name") val customerName: String? = null,
     @SerializedName("order_id") val orderId: Long? = null,
     @SerializedName("order_code") val orderCode: String? = null,
     @SerializedName("amount") val amount: Double? = null,

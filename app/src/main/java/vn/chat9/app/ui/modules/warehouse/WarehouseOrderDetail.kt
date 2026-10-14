@@ -498,7 +498,7 @@ fun WarehouseOrderDetail(
                             items(photos, key = { it.id }) { p ->
                                 Box(Modifier.padding(2.dp)) {
                                     AsyncImage(model = p.url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(8.dp)).clickable { viewerUrl = p.url })
-                                    if (canFulfill) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(50)).background(Color(0x99000000)).clickable {
+                                    if (canFulfill || (p.canDelete && photos.size > 1)) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(50)).background(Color(0x99000000)).clickable {
                                         scope.launch { try { repo.deletePhoto(p.id); photos = photos.filter { it.id != p.id } } catch (_: Exception) {} }
                                     }) { Icon(Icons.Default.Close, "Xoá", tint = Color.White, modifier = Modifier.size(18.dp).padding(2.dp)) }
                                 }
