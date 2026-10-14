@@ -619,6 +619,10 @@ interface VapiApiService {
     @POST("v1/money-transactions/{id}/allocate")
     suspend fun allocateMoneyTx(@Path("id") id: Long, @Body body: AllocateRequest): VapiResponse<AllocateResultDto>
 
+    /** Huỷ phân bổ GD tiền ra (chưa chốt nợ) → GD về pending để phân bổ lại. */
+    @DELETE("v1/money-transactions/{id}/allocation")
+    suspend fun unallocateMoneyTx(@Path("id") id: Long): VapiResponse<AllocateResultDto>
+
     /** Đối trừ GD chuyển nội bộ (bank-out ↔ các bank-in cùng lệnh chuyển) — mirror web offsetTransfer. */
     @POST("v1/money-transactions/{id}/offset-transfer")
     suspend fun offsetTransfer(@Path("id") id: Long, @Body body: OffsetTransferRequest): VapiResponse<MoneyTransactionDto>

@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,6 +43,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,6 +63,7 @@ import vn.chat9.app.data.vapi.dto.CustomerDto
 import vn.chat9.app.data.vapi.dto.ExpenseCategoryDto
 import vn.chat9.app.data.vapi.dto.MoneyTransactionDto
 import vn.chat9.app.data.vapi.dto.PayExpenseRequest
+import vn.chat9.app.ui.common.dialogGlow
 import vn.chat9.app.ui.explore.AdminColors
 import vn.chat9.app.ui.explore.AdminPullToRefresh
 import vn.chat9.app.ui.transaction.MoneyTxActionRules
@@ -167,6 +172,9 @@ fun AccountingCashflowTab() {
     var detailTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
     // Sheet hành động — mở từ nút trong sheet chi tiết: tiền vào → Gán khách hàng, tiền ra → Phân bổ.
     var actionTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
+    // GD tiền ra đã phân bổ chờ xác nhận "Phân bổ lại" (huỷ phân bổ cũ trước khi mở sheet).
+    var reallocTx by remember { mutableStateOf<MoneyTransactionDto?>(null) }
+    var unallocating by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var formMode by remember { mutableStateOf<String?>(null) }   // null | "in_customer" | "out_expense"
 
@@ -268,8 +276,44 @@ fun AccountingCashflowTab() {
         detailTx?.let { tx ->
             MoneyTxDetailSheet(
                 tx = tx, onClose = { detailTx = null },
-                onAction = { detailTx = null; actionTx = it },
+                onAction = {
+                    detailTx = null
+                    // GD tiền ra ĐÃ phân bổ: allocate chỉ cộng thêm → phải huỷ phân bổ cũ trước.
+                    if (it.direction == "out" && it.type != "pending") reallocTx = it else actionTx = it
+                },
             )
+        }
+
+        // ===== Xác nhận phân bổ lại GD tiền ra (huỷ phân bổ cũ → mở sheet) =====
+        reallocTx?.let { tx ->
+            MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text, primary = AdminColors.Primary, onPrimary = Color.White)) {
+                AlertDialog(
+                    modifier = Modifier.dialogGlow(),
+                    onDismissRequest = { if (!unallocating) reallocTx = null },
+                    confirmButton = {
+                        TextButton(enabled = !unallocating, onClick = {
+                            scope.launch {
+                                unallocating = true
+                                try {
+                                    actionTx = container.vapi.unallocateMoneyTx(tx.id).data?.transaction
+                                    reallocTx = null
+                                    refreshTick++
+                                } catch (e: retrofit2.HttpException) {
+                                    val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                                    val msg = try { org.json.JSONObject(body ?: "").optString("error") } catch (_: Exception) { "" }
+                                    Toast.makeText(context, msg.ifBlank { "Huỷ phân bổ thất bại" }, Toast.LENGTH_LONG).show()
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Huỷ phân bổ thất bại", Toast.LENGTH_LONG).show()
+                                } finally { unallocating = false }
+                            }
+                        }) { Text(if (unallocating) "Đang huỷ…" else "Phân bổ lại", color = AdminColors.Primary) }
+                    },
+                    dismissButton = { TextButton(enabled = !unallocating, onClick = { reallocTx = null }) { Text("Huỷ", color = AdminColors.TextMuted) } },
+                    title = { Text("Phân bổ lại", color = AdminColors.Text) },
+                    text = { Text("Huỷ phân bổ hiện tại của ${tx.code} và phân bổ lại từ đầu?", color = AdminColors.Text, fontSize = 13.sp) },
+                    containerColor = AdminColors.Card,
+                )
+            }
         }
 
         // ===== Sheet hành động (mở từ nút trong sheet chi tiết) =====
@@ -375,17 +419,29 @@ fun AccountingCashflowTab() {
     }
 }
 
+/** Đã gán khách (tiền vào) / đã phân bổ (tiền ra) nhưng CHƯA chốt nợ → nền nhấn (mirror web). */
+private fun isResolved(tx: MoneyTransactionDto): Boolean = tx.debtCalc.isNullOrBlank() &&
+    if (tx.direction == "in") tx.partyType == "customer" else tx.type != "pending"
+
+/** Chấm đầu dòng: chốt nợ + chốt quỹ → xám; chốt nợ chưa chốt quỹ → vàng nhạt; còn lại theo chiều tiền. */
+private fun dotColor(tx: MoneyTransactionDto): Color = when {
+    !tx.debtCalc.isNullOrBlank() -> if (!tx.moneyCalc.isNullOrBlank()) AdminColors.TextMuted else Color(0xFFFEF08A)
+    tx.direction == "in" -> AdminColors.Success
+    tx.direction == "out" -> AdminColors.Danger
+    else -> Color(0xFFE2A03F)
+}
+
 @Composable
 private fun TxRow(tx: MoneyTransactionDto, casherName: String?, onClick: () -> Unit) {
+    val closed = !tx.debtCalc.isNullOrBlank()
+    val customerName = tx.partyName?.takeIf { tx.direction == "in" && tx.partyType == "customer" }
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth()
+            .background(if (isResolved(tx)) AdminColors.Primary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(
-            Modifier.padding(top = 5.dp).size(8.dp).clip(CircleShape).background(
-                when (tx.direction) { "in" -> AdminColors.Success; "out" -> AdminColors.Danger; else -> Color(0xFFE2A03F) },
-            ),
-        )
+        Box(Modifier.padding(top = 5.dp).size(8.dp).clip(CircleShape).background(dotColor(tx)))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             // Dòng trên: giờ + badge (trái), số tiền (phải).
@@ -408,7 +464,15 @@ private fun TxRow(tx: MoneyTransactionDto, casherName: String?, onClick: () -> U
             }
             Spacer(Modifier.height(5.dp))
             // Nội dung chuyển khoản: full width, 1 dòng, tràn thì cắt (…).
-            Text(tx.description ?: tx.reference ?: casherName ?: "—", color = AdminColors.TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Tên khách đã gán (xanh) + nội dung; đã chốt nợ → chỉ nội dung mờ, giữ màu tên + số tiền.
+            val content = tx.description ?: tx.reference ?: casherName ?: "—"
+            Text(
+                buildAnnotatedString {
+                    if (customerName != null) withStyle(SpanStyle(color = AdminColors.Primary)) { append("$customerName · ") }
+                    withStyle(SpanStyle(color = if (closed) AdminColors.TextMuted.copy(alpha = 0.5f) else AdminColors.TextMuted)) { append(content) }
+                },
+                fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

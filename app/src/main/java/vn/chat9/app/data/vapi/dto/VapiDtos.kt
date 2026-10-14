@@ -272,6 +272,7 @@ data class MoneyTransactionDto(
     val channel: String = "",                  // bank|cash|internal
     @SerializedName("party_type") val partyType: String? = null,
     @SerializedName("party_id") val partyId: Long? = null,
+    @SerializedName("party_name") val partyName: String? = null,   // tên khách/NCC đã gán (BE list dựng)
     @SerializedName("casher_id") val casherId: Long? = null,
     @SerializedName("bank_name") val bankName: String? = null,
     @SerializedName("bank_account") val bankAccount: String? = null,
