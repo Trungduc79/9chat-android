@@ -1343,3 +1343,22 @@ data class BankAppDto(
     @SerializedName("deeplink") val deeplink: String,
     @SerializedName("autofill") val autofill: Int? = null,
 )
+
+// ===== Đăng nhập TCT / portal EasyInvoice (màn VAT, khi phiên hết hạn) =====
+
+data class TctCredentialStatusDto(
+    @SerializedName("has_credential") val hasCredential: Boolean = false,
+    @SerializedName("has_valid_token") val hasValidToken: Boolean = false,
+)
+
+/** status: none | active | expired */
+data class EiPortalStatusDto(val status: String? = null)
+
+/** Captcha TCT: svg = markup SVG; suggestion = Gemini OCR điền sẵn. */
+data class TctCaptchaDto(val key: String = "", val svg: String = "", val suggestion: String? = null)
+
+/** Captcha EI: captcha = data URL ảnh. */
+data class EiCaptchaDto(val captcha: String = "", val suggestion: String? = null)
+
+data class TctLoginReq(val key: String, val cvalue: String)
+data class EiLoginReq(val captcha: String)

@@ -138,6 +138,7 @@ dependencies {
 
     // Image loading
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
 
     // QR chuyen khoan: sinh OFFLINE (khong goi API ben thu 3 vi payload chua so TK
     // + so tien + noi dung), quet bang ML Kit, camera preview bang CameraX.

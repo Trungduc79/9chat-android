@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -88,6 +89,16 @@ fun AccountingVatTab() {
     var deletingId by remember { mutableStateOf<Long?>(null) }
     var showForm by remember { mutableStateOf(false) }
     var formOrderId by remember { mutableStateOf<Long?>(null) }   // null + showForm = tạo mới
+    // Phiên TCT / EI hết hạn → nút đăng nhập dưới ô tìm kiếm (mirror web SaleVatListView).
+    var tctExpired by remember { mutableStateOf(false) }
+    var eiExpired by remember { mutableStateOf(false) }
+    var loginPortal by remember { mutableStateOf<VatPortal?>(null) }
+    var sessionTick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(refreshTick, sessionTick) {
+        try { tctExpired = container.vapi.tctCredentialStatus().data?.hasValidToken == false } catch (_: Exception) {}
+        try { eiExpired = container.vapi.eiPortalStatus().data?.status.let { it != null && it != "active" } } catch (_: Exception) {}
+    }
 
     LaunchedEffect(refreshTick) {
         loading = true
@@ -148,6 +159,14 @@ fun AccountingVatTab() {
                         decorationBox = { inner -> if (query.isEmpty()) Text("Tìm theo tên đơn vị / khách", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+            }
+
+            // Nút đăng nhập TCT (trái) / EI (phải) — mỗi nút nửa hàng, chỉ hiện khi hết hạn.
+            if (tctExpired || eiExpired) {
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (tctExpired) VatLoginButton("Đăng nhập TCT", Modifier.weight(1f)) { loginPortal = VatPortal.TCT } else Spacer(Modifier.weight(1f))
+                    if (eiExpired) VatLoginButton("Đăng nhập EI", Modifier.weight(1f)) { loginPortal = VatPortal.EI } else Spacer(Modifier.weight(1f))
                 }
             }
 
@@ -227,6 +246,21 @@ fun AccountingVatTab() {
             onCancel = { confirmDelete = null },
             onConfirm = { confirmDelete = null; doDelete(o) },
         )
+    }
+
+    loginPortal?.let { p ->
+        VatPortalLoginOverlay(p, onClose = { loginPortal = null }, onLoggedIn = { loginPortal = null; sessionTick++ })
+    }
+}
+
+@Composable
+private fun VatLoginButton(label: String, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier.clip(RoundedCornerShape(8.dp)).background(WARN.copy(alpha = 0.15f)).clickable(onClick = onClick).padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.AutoMirrored.Filled.Login, null, tint = WARN, modifier = Modifier.size(16.dp))
+        Text(label, color = WARN, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 6.dp))
     }
 }
 

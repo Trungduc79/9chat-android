@@ -11,6 +11,12 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 import vn.chat9.app.data.vapi.dto.AllocateRequest
+import vn.chat9.app.data.vapi.dto.EiCaptchaDto
+import vn.chat9.app.data.vapi.dto.EiLoginReq
+import vn.chat9.app.data.vapi.dto.EiPortalStatusDto
+import vn.chat9.app.data.vapi.dto.TctCaptchaDto
+import vn.chat9.app.data.vapi.dto.TctCredentialStatusDto
+import vn.chat9.app.data.vapi.dto.TctLoginReq
 import vn.chat9.app.data.vapi.dto.AllocateResultDto
 import vn.chat9.app.data.vapi.dto.AddVatInvoicePaymentRequest
 import vn.chat9.app.data.vapi.dto.AutoMatchApplyRequest
@@ -580,6 +586,26 @@ interface VapiApiService {
     /** Tra cứu thông tin doanh nghiệp theo MST (VietQR proxy). */
     @GET("v1/lookup/tax-code/{mst}")
     suspend fun lookupTaxCode(@Path("mst") mst: String): VapiResponse<TaxLookupDto>
+
+    // ===== Đăng nhập TCT / portal EI (tab VAT — hiện nút khi phiên hết hạn) =====
+
+    @GET("v1/vat-input-invoices/credential-status")
+    suspend fun tctCredentialStatus(): VapiResponse<TctCredentialStatusDto>
+
+    @POST("v1/vat-input-invoices/login/captcha")
+    suspend fun tctFetchCaptcha(): VapiResponse<TctCaptchaDto>
+
+    @POST("v1/vat-input-invoices/login/submit")
+    suspend fun tctSubmitLogin(@Body body: TctLoginReq): VapiResponse<com.google.gson.JsonElement>
+
+    @GET("v1/easyinvoice-portal/status")
+    suspend fun eiPortalStatus(): VapiResponse<EiPortalStatusDto>
+
+    @POST("v1/easyinvoice-portal/login/captcha")
+    suspend fun eiFetchCaptcha(): VapiResponse<EiCaptchaDto>
+
+    @POST("v1/easyinvoice-portal/login/submit")
+    suspend fun eiSubmitLogin(@Body body: EiLoginReq): VapiResponse<com.google.gson.JsonElement>
 
     // ===== Module Kế toán (Tab Khám phá → Kế toán) — Phase 1: Dòng tiền =====
 
