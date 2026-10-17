@@ -499,6 +499,12 @@ interface VapiApiService {
     @GET("v1/vat-output-invoices/{id}")
     suspend fun getVatOutputInvoice(@Path("id") id: Long): VapiResponse<VatOutputInvoiceDto>
 
+    /** List HĐ VAT ĐẦU VÀO (tab VAT → Mua vào). */
+    @GET("v1/vat-input-invoices")
+    suspend fun listVatInputInvoices(
+        @Query("per_page") perPage: Int = 200,
+    ): VapiResponse<List<vn.chat9.app.data.vapi.dto.VatInputInvoiceDto>>
+
     /** HĐ VAT ĐẦU VÀO (mua) — thẻ invoice dir=in mở chi tiết. */
     @GET("v1/vat-input-invoices/{id}")
     suspend fun getVatInputInvoice(@Path("id") id: Long): VapiResponse<vn.chat9.app.data.vapi.dto.VatInputInvoiceDto>

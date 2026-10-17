@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import vn.chat9.app.App
 import vn.chat9.app.data.vapi.dto.OrderDto
+import vn.chat9.app.data.vapi.dto.VatInputInvoiceDto
 import vn.chat9.app.data.vapi.dto.VatOutputInvoiceDto
 import vn.chat9.app.ui.common.partyColor
 import vn.chat9.app.ui.explore.AdminColors
@@ -94,6 +95,15 @@ fun AccountingVatTab() {
     var eiExpired by remember { mutableStateOf(false) }
     var loginPortal by remember { mutableStateOf<VatPortal?>(null) }
     var sessionTick by remember { mutableStateOf(0) }
+    // Tab Bán ra (mặc định) / Mua vào — mirror web /accounting/vat.
+    var dirTab by remember { mutableStateOf(0) }   // 0 = Bán ra, 1 = Mua vào
+    var inputs by remember { mutableStateOf<List<VatInputInvoiceDto>>(emptyList()) }
+    var inputLoading by remember { mutableStateOf(false) }
+    var inputLoadedTick by remember { mutableStateOf(-1) }
+    var openInputId by remember { mutableStateOf<Long?>(null) }
+    val tabSwipeBlocked = LocalTabSwipeBlocked.current
+    LaunchedEffect(openInputId) { tabSwipeBlocked?.value = openInputId != null }
+    DisposableEffect(Unit) { onDispose { tabSwipeBlocked?.value = false } }
 
     LaunchedEffect(refreshTick, sessionTick) {
         try { tctExpired = container.vapi.tctCredentialStatus().data?.hasValidToken == false } catch (_: Exception) {}
@@ -110,6 +120,14 @@ fun AccountingVatTab() {
         loading = false
     }
 
+    // Mua vào: tải lười khi mở tab lần đầu / kéo làm mới.
+    LaunchedEffect(dirTab, refreshTick) {
+        if (dirTab != 1 || inputLoadedTick == refreshTick) return@LaunchedEffect
+        inputLoading = true
+        try { inputs = container.vapi.listVatInputInvoices(200).data ?: emptyList(); inputLoadedTick = refreshTick } catch (_: Exception) {}
+        inputLoading = false
+    }
+
     val q = noAccentVat(query.trim())
     val fInvoices = invoices
         .filter { q.isBlank() || noAccentVat("${it.customerName} ${it.buyerName ?: ""}").contains(q) }
@@ -119,6 +137,9 @@ fun AccountingVatTab() {
                 .thenByDescending { if (it.signed) 0L else tsVat(it.createdAt) }
                 .thenByDescending { if (it.signed) (it.number?.toLongOrNull() ?: 0L) else 0L }
         )
+    val fInputs = inputs
+        .filter { q.isBlank() || noAccentVat("${it.sellerName ?: ""} ${it.sellerTaxCode ?: ""} ${it.number ?: ""}").contains(q) }
+        .sortedByDescending { it.issueDate ?: "" }
     val fDrafts = drafts
         .filter { q.isBlank() || noAccentVat(it.partyName).contains(q) }
         // Tier 1: theo thời gian tạo đơn ↓.
@@ -145,10 +166,17 @@ fun AccountingVatTab() {
         return
     }
 
+    // Chi tiết HĐ mua vào (chỉ xem).
+    openInputId?.let { id ->
+        VatInputDetail(id, onBack = { openInputId = null })
+        return
+    }
+
     var confirmDelete by remember { mutableStateOf<OrderDto?>(null) }
 
     Box(Modifier.fillMaxSize().background(AdminColors.Bg)) {
         Column(Modifier.fillMaxSize()) {
+            VatDirTabs(dirTab) { dirTab = it }
             // Thanh tìm kiếm
             Box(Modifier.fillMaxWidth().background(AdminColors.Card).padding(12.dp)) {
                 Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AdminColors.Bg).padding(horizontal = 10.dp, vertical = 8.dp)) {
@@ -156,7 +184,7 @@ fun AccountingVatTab() {
                         value = query, onValueChange = { query = it },
                         textStyle = TextStyle(color = AdminColors.Text, fontSize = 14.sp),
                         cursorBrush = SolidColor(AdminColors.Primary), singleLine = true,
-                        decorationBox = { inner -> if (query.isEmpty()) Text("Tìm theo tên đơn vị / khách", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
+                        decorationBox = { inner -> if (query.isEmpty()) Text(if (dirTab == 1) "Tìm theo người bán / MST / số HĐ" else "Tìm theo tên đơn vị / khách", color = AdminColors.TextMuted, fontSize = 13.sp); inner() },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -170,7 +198,8 @@ fun AccountingVatTab() {
                 }
             }
 
-            AdminPullToRefresh(isRefreshing = loading, onRefresh = { refreshTick++ }, modifier = Modifier.weight(1f)) {
+            AdminPullToRefresh(isRefreshing = if (dirTab == 1) inputLoading else loading, onRefresh = { refreshTick++ }, modifier = Modifier.weight(1f)) {
+                if (dirTab == 1) VatInputList(fInputs, inputLoading) { openInputId = it.id } else
                 if (loading && invoices.isEmpty() && drafts.isEmpty()) {
                     Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
                 } else if (fInvoices.isEmpty() && fDrafts.isEmpty()) {
@@ -231,7 +260,7 @@ fun AccountingVatTab() {
         }
 
         // FAB tạo HĐ VAT mới.
-        Box(
+        if (dirTab == 0) Box(
             Modifier.align(Alignment.BottomEnd).padding(20.dp).size(56.dp).clip(RoundedCornerShape(28.dp))
                 .background(AdminColors.Primary).clickable { formOrderId = null; showForm = true },
             contentAlignment = Alignment.Center,
@@ -318,5 +347,62 @@ private fun VatConfirmOverlay(title: String, message: String, onCancel: () -> Un
                 )
             }
         }
+    }
+}
+
+/** Tab Bán ra / Mua vào (gạch chân màu Primary ở tab đang chọn). */
+@Composable
+private fun VatDirTabs(selected: Int, onSelect: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().background(AdminColors.Card)) {
+        listOf("Bán ra", "Mua vào").forEachIndexed { idx, label ->
+            val on = selected == idx
+            Column(Modifier.weight(1f).clickable { onSelect(idx) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(label, color = if (on) AdminColors.Primary else AdminColors.TextMuted, fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 10.dp))
+                Box(Modifier.fillMaxWidth().height(2.dp).background(if (on) AdminColors.Primary else Color.Transparent))
+            }
+        }
+    }
+}
+
+/** List HĐ mua vào — mirror web: người bán · ngày / MST / Số HĐ + đã kiểm · tổng tiền. */
+@Composable
+private fun VatInputList(list: List<VatInputInvoiceDto>, loading: Boolean, onOpen: (VatInputInvoiceDto) -> Unit) {
+    if (loading && list.isEmpty()) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = AdminColors.Primary) }
+        return
+    }
+    if (list.isEmpty()) {
+        Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), Alignment.Center) {
+            Text("Chưa có HĐ mua vào nào", color = AdminColors.TextMuted, fontSize = 14.sp)
+        }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        item { Spacer(Modifier.height(12.dp)) }
+        items(list, key = { "in${it.id}" }) { i ->
+            Column(
+                Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(12.dp))
+                    .border(0.5.dp, AdminColors.Border, RoundedCornerShape(12.dp)).background(AdminColors.Card)
+                    .clickable { onOpen(i) }.padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(i.sellerName ?: "—", color = AdminColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
+                    Text(fmtDateVat(i.issueDate), color = AdminColors.TextMuted, fontSize = 11.sp)
+                }
+                Text("MST ${i.sellerTaxCode ?: ""}", color = AdminColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Số ${i.number ?: "—"}", color = AdminColors.Primary, fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                            lineHeight = 10.sp, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                            modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(AdminColors.Primary.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 0.dp))
+                        if (i.verifiedAt != null) Text("✓ Đã kiểm", color = AdminColors.Success, fontSize = 10.sp)
+                    }
+                    Text(moneyVat(i.total), color = AdminColors.Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text(" đ", color = GOLD_VAT, fontStyle = FontStyle.Italic, fontWeight = FontWeight.Light, fontSize = 14.sp)
+                }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }

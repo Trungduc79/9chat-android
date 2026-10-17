@@ -913,7 +913,29 @@ data class VatInputInvoiceDto(
     @SerializedName("cqt_code") val cqtCode: String? = null,
     @SerializedName("payment_status") val paymentStatus: String? = null,
     @SerializedName("paid_amount") val paidAmount: Double = 0.0,
+    @SerializedName("seller_address") val sellerAddress: String? = null,
+    @SerializedName("verified_at") val verifiedAt: String? = null,
+    val items: List<VatInputItemDto>? = null,   // chỉ có ở API show
 )
+
+/** Dòng HĐ mua vào. order_unit/image_url = SP khớp tên HĐ (BE attachOrderUnits), null = hiện gốc. */
+data class VatInputItemDto(
+    val id: Long = 0,
+    @SerializedName("line_no") val lineNo: Int = 0,
+    val feature: Int = 1,                 // 4 = dòng ghi chú
+    @SerializedName("item_name") val itemName: String? = null,
+    val unit: String? = null,
+    val quantity: Double = 0.0,
+    @SerializedName("unit_price") val unitPrice: Double = 0.0,
+    val subtotal: Double = 0.0,
+    @SerializedName("vat_rate") val vatRate: Double = 0.0,
+    @SerializedName("vat_amount") val vatAmount: Double = 0.0,
+    @SerializedName("order_unit") val orderUnit: VatOrderUnitDto? = null,
+    @SerializedName("image_url") val imageUrl: String? = null,
+)
+
+/** Đơn vị trên đơn hàng: SL quy đổi = quantity × ratio. */
+data class VatOrderUnitDto(val name: String = "", val ratio: Double = 1.0)
 
 /** Kết quả Upload PO → AI tạo HĐ VAT nháp. */
 data class PoDraftResultDto(
