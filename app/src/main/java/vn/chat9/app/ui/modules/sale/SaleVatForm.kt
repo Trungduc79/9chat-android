@@ -6,6 +6,7 @@ import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -792,7 +793,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                             if (headerBusy) CircularProgressIndicator(Modifier.padding(start = 4.dp).size(18.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
                             else Icon(Icons.Default.MoreVert, "Tùy chọn", tint = AdminColors.Text, modifier = Modifier.clickable { headerMenuOpen = true }.padding(start = 2.dp).size(22.dp))
                             MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text)) {
-                                DropdownMenu(expanded = headerMenuOpen, onDismissRequest = { headerMenuOpen = false }) {
+                                DropdownMenu(expanded = headerMenuOpen, onDismissRequest = { headerMenuOpen = false }, border = BorderStroke(1.dp, AdminColors.Primary.copy(alpha = 0.7f))) {
                                     DropdownMenuItem(text = { Text("Sao chép HĐ VAT (nháp)", color = AdminColors.Text) }, onClick = { headerMenuOpen = false; doCopyOrder() })
                                     HorizontalDivider(color = AdminColors.Border)
                                     DropdownMenuItem(text = { Text("Sao chép → đơn bán thường (nháp)", color = AdminColors.Text) }, onClick = { headerMenuOpen = false; doCopyToNormal(false) })
@@ -828,7 +829,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                                     if (updatingDraft) CircularProgressIndicator(Modifier.padding(start = 2.dp, end = 4.dp).size(18.dp), color = AdminColors.Primary, strokeWidth = 2.dp)
                                     else Icon(Icons.Default.MoreVert, "Tùy chọn HĐ", tint = AdminColors.Text, modifier = Modifier.clickable(enabled = !syncing) { vatMenuOpen = true }.padding(start = 2.dp).size(20.dp))
                                     MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text)) {
-                                        DropdownMenu(expanded = vatMenuOpen, onDismissRequest = { vatMenuOpen = false }) {
+                                        DropdownMenu(expanded = vatMenuOpen, onDismissRequest = { vatMenuOpen = false }, border = BorderStroke(1.dp, AdminColors.Primary.copy(alpha = 0.7f))) {
                                             DropdownMenuItem(text = { Text("Thay đơn vị mua HĐ", color = AdminColors.Text) }, onClick = { vatMenuOpen = false; unitPickerOpen = true })
                                             HorizontalDivider(color = AdminColors.Border)
                                             DropdownMenuItem(text = { Text("Tên người mua trên HĐ", color = AdminColors.Text) }, onClick = { vatMenuOpen = false; buyerName = vat.buyerName ?: ""; buyerNameOpen = true })
@@ -871,7 +872,7 @@ fun SaleVatForm(orderId: Long? = null, onDone: () -> Unit) {
                         if (linkedVat != null) Box {
                             Icon(Icons.Default.MoreVert, "Hiển thị giá", tint = AdminColors.Text, modifier = Modifier.clickable { itemsPriceMenuOpen = true }.padding(start = 2.dp).size(20.dp))
                             MaterialTheme(colorScheme = darkColorScheme(surface = AdminColors.Card, onSurface = AdminColors.Text)) {
-                                DropdownMenu(expanded = itemsPriceMenuOpen, onDismissRequest = { itemsPriceMenuOpen = false }) {
+                                DropdownMenu(expanded = itemsPriceMenuOpen, onDismissRequest = { itemsPriceMenuOpen = false }, border = BorderStroke(1.dp, AdminColors.Primary.copy(alpha = 0.7f))) {
                                     DropdownMenuItem(
                                         text = { Text((if (!displayIncVat) "✓ " else "") + "Đơn giá chưa bao gồm VAT", color = AdminColors.Text) },
                                         onClick = { itemsPriceMenuOpen = false; displayIncVat = false },
